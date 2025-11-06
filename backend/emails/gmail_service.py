@@ -1,0 +1,253 @@
+import base64
+import logging
+from datetime import timedelta
+from email.utils import parsedate_to_datetime
+from typing import List, Dict, Optional
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from django.conf import settings
+from django.utils import timezone
+
+from .models import EmailAccount, Email
+
+logger = logging.getLogger(__name__)
+
+# Gmail API scopes
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
+
+
+class GmailService:
+    """Service class for interacting with Gmail API"""
+
+    @staticmethod
+    def get_authorization_url():
+        """Get OAuth2 authorization URL for Gmail"""
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": settings.GMAIL_CLIENT_ID,
+                    "client_secret": settings.GMAIL_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [settings.GMAIL_REDIRECT_URI],
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=settings.GMAIL_REDIRECT_URI,
+        )
+        authorization_url, state = flow.authorization_url(
+            access_type="offline", include_granted_scopes="true", prompt="consent"
+        )
+        return authorization_url, state
+
+    @staticmethod
+    def exchange_code_for_tokens(code: str):
+        """Exchange authorization code for access and refresh tokens"""
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": settings.GMAIL_CLIENT_ID,
+                    "client_secret": settings.GMAIL_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [settings.GMAIL_REDIRECT_URI],
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=settings.GMAIL_REDIRECT_URI,
+        )
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        # Ensure token_expiry is timezone-aware
+        expiry = credentials.expiry
+        if expiry and expiry.tzinfo is None:
+            expiry = timezone.make_aware(expiry)
+        
+        return {
+            "access_token": credentials.token,
+            "refresh_token": credentials.refresh_token,
+            "token_expiry": expiry,
+        }
+
+    @staticmethod
+    def get_credentials(email_account: EmailAccount) -> Credentials:
+        """Get valid credentials for an email account, refreshing if needed"""
+        credentials = Credentials(
+            token=email_account.access_token,
+            refresh_token=email_account.refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=settings.GMAIL_CLIENT_ID,
+            client_secret=settings.GMAIL_CLIENT_SECRET,
+        )
+
+        # Refresh token if expired or about to expire
+        # Ensure token_expiry is timezone-aware for comparison
+        token_expiry = email_account.token_expiry
+        if token_expiry and token_expiry.tzinfo is None:
+            token_expiry = timezone.make_aware(token_expiry)
+        
+        should_refresh = credentials.expired
+        if not should_refresh and token_expiry:
+            # Compare with timezone-aware datetime
+            should_refresh = token_expiry <= timezone.now() + timedelta(minutes=5)
+        
+        if should_refresh:
+            credentials.refresh(Request())
+            email_account.access_token = credentials.token
+            if credentials.refresh_token:
+                email_account.refresh_token = credentials.refresh_token
+            
+            # Ensure expiry is timezone-aware before saving
+            expiry = credentials.expiry
+            if expiry and expiry.tzinfo is None:
+                expiry = timezone.make_aware(expiry)
+            email_account.token_expiry = expiry
+            email_account.save()
+
+        return credentials
+
+    @staticmethod
+    def get_service(email_account: EmailAccount):
+        """Get Gmail API service instance"""
+        credentials = GmailService.get_credentials(email_account)
+        return build("gmail", "v1", credentials=credentials)
+
+    @staticmethod
+    def get_user_email(email_account: EmailAccount) -> str:
+        """Get the email address associated with the account"""
+        service = GmailService.get_service(email_account)
+        profile = service.users().getProfile(userId="me").execute()
+        return profile.get("emailAddress", "")
+
+    @staticmethod
+    def parse_email_message(message_data: Dict) -> Dict:
+        """Parse Gmail API message format into our Email model format"""
+        payload = message_data.get("payload", {})
+        headers = payload.get("headers", [])
+
+        # Extract headers
+        header_dict = {h["name"].lower(): h["value"] for h in headers}
+        subject = header_dict.get("subject", "")
+        sender = header_dict.get("from", "")
+        sender_name = sender.split("<")[0].strip().strip('"') if "<" in sender else sender
+        sender_email = (
+            sender.split("<")[1].strip(">") if "<" in sender else sender
+        )
+
+        # Parse recipients
+        recipients_to = header_dict.get("to", "")
+        recipients_cc = header_dict.get("cc", "")
+        recipients_bcc = header_dict.get("bcc", "")
+
+        # Parse date
+        date_str = header_dict.get("date", "")
+        try:
+            received_at = parsedate_to_datetime(date_str)
+            if received_at.tzinfo is None:
+                received_at = timezone.make_aware(received_at)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse email date '{date_str}': {e}. Using current time.")
+            received_at = timezone.now()
+
+        # Extract body
+        body_text = ""
+        body_html = ""
+        snippet = message_data.get("snippet", "")
+
+        def extract_body(part):
+            """Recursively extract body from message parts"""
+            nonlocal body_text, body_html
+            if part.get("mimeType") == "text/plain":
+                data = part.get("body", {}).get("data", "")
+                if data:
+                    body_text = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            elif part.get("mimeType") == "text/html":
+                data = part.get("body", {}).get("data", "")
+                if data:
+                    body_html = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            elif part.get("parts"):
+                for subpart in part.get("parts", []):
+                    extract_body(subpart)
+
+        extract_body(payload)
+
+        # Extract labels
+        labels = message_data.get("labelIds", [])
+
+        return {
+            "gmail_id": message_data.get("id"),
+            "thread_id": message_data.get("threadId"),
+            "subject": subject,
+            "sender": sender_email,
+            "sender_name": sender_name,
+            "recipients_to": recipients_to,
+            "recipients_cc": recipients_cc,
+            "recipients_bcc": recipients_bcc,
+            "body_text": body_text,
+            "body_html": body_html,
+            "snippet": snippet,
+            "is_read": "UNREAD" not in labels,
+            "is_starred": "STARRED" in labels,
+            "labels": labels,
+            "received_at": received_at,
+        }
+
+    @staticmethod
+    def sync_emails(email_account: EmailAccount, max_results: int = 50):
+        """Sync emails from Gmail for an account"""
+        try:
+            service = GmailService.get_service(email_account)
+
+            # Get list of messages
+            results = (
+                service.users()
+                .messages()
+                .list(userId="me", maxResults=max_results)
+                .execute()
+            )
+            messages = results.get("messages", [])
+
+            synced_count = 0
+            for msg in messages:
+                try:
+                    # Get full message details
+                    message = (
+                        service.users()
+                        .messages()
+                        .get(userId="me", id=msg["id"], format="full")
+                        .execute()
+                    )
+
+                    # Parse message
+                    email_data = GmailService.parse_email_message(message)
+
+                    # Create or update email in database
+                    email_obj, created = Email.objects.update_or_create(
+                        account=email_account,
+                        gmail_id=email_data["gmail_id"],
+                        defaults=email_data,
+                    )
+                    if created:
+                        synced_count += 1
+                except Exception as e:
+                    logger.error(f"Error syncing message {msg['id']}: {e}", exc_info=True)
+                    continue
+
+            # Update last sync time
+            email_account.last_sync = timezone.now()
+            email_account.save()
+
+            return synced_count
+        except HttpError as error:
+            logger.error(f"An error occurred syncing emails for account {email_account.email}: {error}", exc_info=True)
+            raise
+
