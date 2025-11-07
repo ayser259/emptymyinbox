@@ -27,7 +27,13 @@ SECRET_KEY = "django-insecure-((l6123k#hbk^=84+&%j!yu!7*gc8k^lzx@^2j*-vu!u0&$51(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+
+# CSRF trusted origins - required for cross-origin requests
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 
 # Application definition
@@ -137,7 +143,12 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        # SessionAuthentication removed - we use JWT tokens in Authorization headers
+        # JWT tokens are NOT vulnerable to CSRF (browsers don't auto-send custom headers)
+        # SessionAuthentication would require CSRF protection, but we don't need it
+    ],
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
     ],
 }
 
