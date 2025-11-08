@@ -10,6 +10,8 @@ from .views import (
     login,
     logout,
     user_detail,
+    user_profile_update,
+    LabelsView,
 )
 
 router = DefaultRouter()
@@ -23,10 +25,13 @@ urlpatterns = [
     path("auth/login/", login, name="login"),
     path("auth/logout/", logout, name="logout"),
     path("auth/user/", user_detail, name="user-detail"),
+    path("auth/profile/", user_profile_update, name="user-profile-update"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     # Gmail OAuth endpoints
     path("auth/gmail/start/", gmail_auth_start, name="gmail-auth-start"),
     path("auth/gmail/callback/", gmail_auth_callback, name="gmail-auth-callback"),
+    # Labels endpoint
+    path("labels/", LabelsView.as_view(), name="labels"),
 ]
 
 

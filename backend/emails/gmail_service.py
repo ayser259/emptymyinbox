@@ -206,8 +206,9 @@ class GmailService:
         """Sync emails from Gmail for an account"""
         try:
             service = GmailService.get_service(email_account)
+            synced_count = 0
 
-            # Get list of messages
+            # Get list of recent messages
             results = (
                 service.users()
                 .messages()
@@ -216,7 +217,6 @@ class GmailService:
             )
             messages = results.get("messages", [])
 
-            synced_count = 0
             for msg in messages:
                 try:
                     # Get full message details
@@ -242,6 +242,10 @@ class GmailService:
                     logger.error(f"Error syncing message {msg['id']}: {e}", exc_info=True)
                     continue
 
+            # Also sync all starred emails
+            starred_count = GmailService.sync_starred_emails(email_account)
+            synced_count += starred_count
+
             # Update last sync time
             email_account.last_sync = timezone.now()
             email_account.save()
@@ -249,5 +253,109 @@ class GmailService:
             return synced_count
         except HttpError as error:
             logger.error(f"An error occurred syncing emails for account {email_account.email}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def sync_starred_emails(email_account: EmailAccount, max_results: int = 500):
+        """Sync all starred emails from Gmail for an account"""
+        try:
+            service = GmailService.get_service(email_account)
+
+            # Get all starred messages
+            results = (
+                service.users()
+                .messages()
+                .list(userId="me", q="is:starred", maxResults=max_results)
+                .execute()
+            )
+            messages = results.get("messages", [])
+
+            synced_count = 0
+            for msg in messages:
+                try:
+                    # Get full message details
+                    message = (
+                        service.users()
+                        .messages()
+                        .get(userId="me", id=msg["id"], format="full")
+                        .execute()
+                    )
+
+                    # Parse message
+                    email_data = GmailService.parse_email_message(message)
+
+                    # Create or update email in database (ensuring is_starred is set)
+                    email_data["is_starred"] = True  # Ensure starred flag is set
+                    email_obj, created = Email.objects.update_or_create(
+                        account=email_account,
+                        gmail_id=email_data["gmail_id"],
+                        defaults=email_data,
+                    )
+                    if created:
+                        synced_count += 1
+                    elif not email_obj.is_starred:
+                        # Update existing email to mark as starred
+                        email_obj.is_starred = True
+                        email_obj.save()
+                except Exception as e:
+                    logger.error(f"Error syncing starred message {msg['id']}: {e}", exc_info=True)
+                    continue
+
+            return synced_count
+        except HttpError as error:
+            logger.error(f"An error occurred syncing starred emails for account {email_account.email}: {error}", exc_info=True)
+            # Don't raise - starred sync failure shouldn't break regular sync
+            return 0
+
+    @staticmethod
+    def modify_email_labels(email_account: EmailAccount, gmail_id: str, add_labels: List[str] = None, remove_labels: List[str] = None):
+        """Modify labels on a Gmail message"""
+        try:
+            service = GmailService.get_service(email_account)
+            
+            body = {}
+            if add_labels:
+                body["addLabelIds"] = add_labels
+            if remove_labels:
+                body["removeLabelIds"] = remove_labels
+            
+            if not body:
+                return
+            
+            result = (
+                service.users()
+                .messages()
+                .modify(userId="me", id=gmail_id, body=body)
+                .execute()
+            )
+            return result
+        except HttpError as error:
+            logger.error(f"An error occurred modifying labels for message {gmail_id}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def get_all_labels(email_account: EmailAccount) -> Dict[str, str]:
+        """Get all Gmail labels for an account, returning a dict of label_id -> label_name"""
+        try:
+            service = GmailService.get_service(email_account)
+            results = service.users().labels().list(userId="me").execute()
+            labels = results.get("labels", [])
+            
+            # Return dict of label_id -> label_name
+            # Filter out system labels that we don't want to show
+            system_labels = {"INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"}
+            label_dict = {}
+            for label in labels:
+                label_id = label.get("id")
+                label_name = label.get("name")
+                label_type = label.get("type", "user")  # "user" or "system"
+                
+                # Only include user labels and some system labels
+                if label_type == "user" or label_id in system_labels:
+                    label_dict[label_id] = label_name
+            
+            return label_dict
+        except HttpError as error:
+            logger.error(f"An error occurred fetching labels for account {email_account.email}: {error}", exc_info=True)
             raise
 

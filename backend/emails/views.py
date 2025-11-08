@@ -9,15 +9,18 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailAccount, Email
+from .models import EmailAccount, Email, UserProfile
 from .serializers import (
     EmailAccountSerializer,
     EmailSerializer,
     EmailListSerializer,
     UserRegistrationSerializer,
     UserSerializer,
+    UserProfileSerializer,
+    LabelSerializer,
 )
 from .gmail_service import GmailService
+from django.db.models import Q, Count
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +38,42 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
         """Manually trigger email sync for an account"""
         account = self.get_object()
         try:
-            count = GmailService.sync_emails(account)
+            count = GmailService.sync_emails(account, max_results=500)
             return Response({"synced": count, "message": f"Synced {count} new emails"})
         except Exception as e:
             return Response(
                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=False, methods=["post"])
+    def sync_all(self, request):
+        """Sync all accounts for the current user"""
+        user_accounts = self.get_queryset()
+        total_synced = 0
+        errors = []
+        
+        for account in user_accounts:
+            try:
+                count = GmailService.sync_emails(account, max_results=500)
+                total_synced += count
+            except Exception as e:
+                errors.append(f"Error syncing {account.email}: {str(e)}")
+                logger.error(f"Error syncing account {account.email}: {e}", exc_info=True)
+        
+        # Get most recent email timestamp
+        user_account_ids = [acc.id for acc in user_accounts]
+        most_recent_email = Email.objects.filter(account__in=user_account_ids).order_by('-received_at').first()
+        
+        response_data = {
+            "synced": total_synced,
+            "message": f"Synced {total_synced} new emails",
+            "most_recent_email_at": most_recent_email.received_at.isoformat() if most_recent_email else None,
+        }
+        
+        if errors:
+            response_data["errors"] = errors
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class EmailViewSet(viewsets.ReadOnlyModelViewSet):
@@ -59,12 +92,127 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
         is_read = self.request.query_params.get("is_read", None)
         if is_read is not None:
             queryset = queryset.filter(is_read=is_read.lower() == "true")
+        is_starred = self.request.query_params.get("is_starred", None)
+        if is_starred is not None:
+            queryset = queryset.filter(is_starred=is_starred.lower() == "true")
+        
+        # Filter by label ID
+        label_id = self.request.query_params.get("label", None)
+        if label_id:
+            if label_id == "__UNCATEGORIZED__":
+                # For uncategorized, exclude emails that have any user labels
+                user_account_ids = [acc.id for acc in user_accounts]
+                # Get all user label IDs (excluding system labels)
+                system_label_ids = {"INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"}
+                user_label_ids = []
+                for account in user_accounts:
+                    try:
+                        gmail_labels = GmailService.get_all_labels(account)
+                        user_label_ids.extend([lid for lid in gmail_labels.keys() if lid not in system_label_ids])
+                    except Exception as e:
+                        logger.error(f"Error fetching labels for account {account.email}: {e}", exc_info=True)
+                        continue
+                
+                if user_label_ids:
+                    # Exclude emails that have any user labels
+                    queryset = queryset.exclude(Q(labels__overlap=user_label_ids))
+                # If no user labels exist, all emails are uncategorized
+            else:
+                # Filter emails that contain this label ID
+                queryset = queryset.filter(labels__contains=[label_id])
+        
         return queryset
 
     def get_serializer_class(self):
         if self.action == "list":
             return EmailListSerializer
         return EmailSerializer
+
+    @action(detail=True, methods=["post"])
+    def star(self, request, pk=None):
+        """Star an email in Gmail and update local database"""
+        email = self.get_object()
+        try:
+            # Update Gmail
+            GmailService.modify_email_labels(
+                email.account,
+                email.gmail_id,
+                add_labels=["STARRED"]
+            )
+            
+            # Update local database
+            email.is_starred = True
+            # Update labels list
+            if email.labels and "STARRED" not in email.labels:
+                email.labels.append("STARRED")
+            elif not email.labels:
+                email.labels = ["STARRED"]
+            email.save()
+            
+            serializer = self.get_serializer(email)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error starring email {email.id}: {e}", exc_info=True)
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def unstar(self, request, pk=None):
+        """Unstar an email in Gmail and update local database"""
+        email = self.get_object()
+        try:
+            # Update Gmail
+            GmailService.modify_email_labels(
+                email.account,
+                email.gmail_id,
+                remove_labels=["STARRED"]
+            )
+            
+            # Update local database
+            email.is_starred = False
+            # Update labels list
+            if email.labels and "STARRED" in email.labels:
+                email.labels.remove("STARRED")
+            email.save()
+            
+            serializer = self.get_serializer(email)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error unstarring email {email.id}: {e}", exc_info=True)
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def mark_read(self, request, pk=None):
+        """Mark an email as read in Gmail and update local database"""
+        email = self.get_object()
+        try:
+            # Update Gmail - remove UNREAD label
+            GmailService.modify_email_labels(
+                email.account,
+                email.gmail_id,
+                remove_labels=["UNREAD"]
+            )
+            
+            # Update local database
+            email.is_read = True
+            # Update labels list
+            if email.labels and "UNREAD" in email.labels:
+                email.labels.remove("UNREAD")
+            email.save()
+            
+            serializer = self.get_serializer(email)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error marking email {email.id} as read: {e}", exc_info=True)
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @api_view(["GET"])
@@ -286,6 +434,114 @@ class UserDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+class UserProfileUpdateView(APIView):
+    """Update user profile (state, zip_code)"""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        profile, created = UserProfile.objects.get_or_create(user=request.user)
+        serializer = UserProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            # Return updated user data
+            user_serializer = UserSerializer(request.user)
+            return Response(user_serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LabelsView(APIView):
+    """Get all Gmail labels with unread counts"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            # Get all active email accounts for the user
+            user_accounts = EmailAccount.objects.filter(user=request.user, is_active=True)
+            
+            if not user_accounts.exists():
+                return Response([], status=status.HTTP_200_OK)
+            
+            # Collect all labels from all accounts
+            all_labels = {}  # label_id -> {"name": label_name, "unread_count": count}
+            
+            for account in user_accounts:
+                try:
+                    # Get all labels from Gmail
+                    gmail_labels = GmailService.get_all_labels(account)
+                    
+                    # Initialize labels if not seen before
+                    for label_id, label_name in gmail_labels.items():
+                        if label_id not in all_labels:
+                            all_labels[label_id] = {
+                                "id": label_id,
+                                "name": label_name,
+                                "unread_count": 0
+                            }
+                    
+                    # Count unread emails for each label
+                    for label_id in gmail_labels.keys():
+                        unread_count = Email.objects.filter(
+                            account=account,
+                            labels__contains=[label_id],
+                            is_read=False
+                        ).count()
+                        all_labels[label_id]["unread_count"] += unread_count
+                except Exception as e:
+                    logger.error(f"Error fetching labels for account {account.email}: {e}", exc_info=True)
+                    continue
+            
+            # Count uncategorized emails (emails with no user labels)
+            # System labels like INBOX, SENT, etc. don't count as "categorization"
+            system_label_ids = {"INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"}
+            user_label_ids = [lid for lid in all_labels.keys() if lid not in system_label_ids]
+            
+            uncategorized_count = 0
+            for account in user_accounts:
+                # Get all unread emails for this account
+                all_unread = Email.objects.filter(account=account, is_read=False)
+                
+                # Count emails that have no user labels
+                # Use JSONField contains lookup to check if email has any user labels
+                if user_label_ids:
+                    # Emails that don't contain any user labels
+                    uncategorized = all_unread.exclude(
+                        Q(labels__overlap=user_label_ids)
+                    )
+                else:
+                    # If no user labels exist, all unread emails are uncategorized
+                    uncategorized = all_unread
+                
+                uncategorized_count += uncategorized.count()
+            
+            # Add uncategorized label if there are uncategorized emails
+            if uncategorized_count > 0:
+                all_labels["__UNCATEGORIZED__"] = {
+                    "id": "__UNCATEGORIZED__",
+                    "name": "Uncategorized",
+                    "unread_count": uncategorized_count
+                }
+            
+            # Convert to list and sort by name
+            labels_list = list(all_labels.values())
+            labels_list.sort(key=lambda x: x["name"])
+            
+            # Move "Uncategorized" to the end if it exists
+            uncategorized = [l for l in labels_list if l["id"] == "__UNCATEGORIZED__"]
+            if uncategorized:
+                labels_list = [l for l in labels_list if l["id"] != "__UNCATEGORIZED__"] + uncategorized
+            
+            serializer = LabelSerializer(labels_list, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching labels: {e}", exc_info=True)
+            return Response(
+                {"error": "Failed to fetch labels"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 # Keep function-based views for backward compatibility
 logout = LogoutView.as_view()
 user_detail = UserDetailView.as_view()
+user_profile_update = UserProfileUpdateView.as_view()
