@@ -10,7 +10,20 @@ import Foundation
 class APIService {
     static let shared = APIService()
     
-    private let baseURL = "http://localhost:8000/api"
+    private let baseURL: String = {
+        if let overrideURL = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
+           !overrideURL.isEmpty {
+            return overrideURL
+        }
+
+        let env = ProcessInfo.processInfo.environment
+        if let debugValue = env["DJANGO_DEBUG"]?.lowercased(),
+           ["1", "true", "yes"].contains(debugValue) {
+            return "http://localhost:8000/api"
+        }
+
+        return "https://emptymyinbox-t4zx.onrender.com/api"
+    }()
     private var accessToken: String?
     private var refreshToken: String?
     

@@ -32,8 +32,6 @@ actor EmailActionSynchronizer {
     }
     
     private let queueFileURL: URL
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
     
     private var pendingActions: [PendingAction] = []
     private var isProcessing = false
@@ -49,7 +47,12 @@ actor EmailActionSynchronizer {
         }
         
         queueFileURL = actionDirectory.appendingPathComponent("pending_actions.json")
-        loadQueueFromDisk()
+        pendingActions = Self.loadQueueFromDisk(from: queueFileURL)
+        if !pendingActions.isEmpty {
+            Task {
+                await self.scheduleProcessingIfNeeded()
+            }
+        }
     }
     
     func enqueueStar(emailId: Int, shouldStar: Bool) {
@@ -110,28 +113,30 @@ actor EmailActionSynchronizer {
         }
     }
     
-    private func loadQueueFromDisk() {
-        guard let data = try? Data(contentsOf: queueFileURL) else {
-            pendingActions = []
-            return
-        }
-        
-        do {
-            pendingActions = try decoder.decode([PendingAction].self, from: data)
-        } catch {
-            print("EmailActionSynchronizer loadQueueFromDisk error: \(error)")
-            pendingActions = []
-        }
-    }
-    
     private func persistQueue() {
         do {
+            let encoder = JSONEncoder()
             let data = try encoder.encode(pendingActions)
             try data.write(to: queueFileURL, options: .atomic)
         } catch {
             print("EmailActionSynchronizer persistQueue error: \(error)")
         }
     }
+    
+    private static func loadQueueFromDisk(from url: URL) -> [PendingAction] {
+        guard let data = try? Data(contentsOf: url) else {
+            return []
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            return try decoder.decode([PendingAction].self, from: data)
+        } catch {
+            print("EmailActionSynchronizer loadQueueFromDisk error: \(error)")
+            return []
+        }
+    }
 }
+
 
 
