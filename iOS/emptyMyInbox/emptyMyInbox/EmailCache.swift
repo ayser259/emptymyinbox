@@ -10,7 +10,6 @@ import Foundation
 actor EmailCache {
     static let shared = EmailCache()
     
-    private let fileManager = FileManager.default
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     
@@ -18,19 +17,19 @@ actor EmailCache {
     private let unreadEmailsURL: URL
     
     private init() {
-        let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fileManager.temporaryDirectory
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
         baseDirectoryURL = directory.appendingPathComponent("EmailCache", isDirectory: true)
         unreadEmailsURL = baseDirectoryURL.appendingPathComponent("unread_emails.json")
         
-        if !fileManager.fileExists(atPath: baseDirectoryURL.path) {
-            try? fileManager.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: baseDirectoryURL.path) {
+            try? FileManager.default.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
         }
     }
     
     // MARK: - Unread Emails
     
     func loadUnreadEmails() -> [EmailListItem] {
-        guard fileManager.fileExists(atPath: unreadEmailsURL.path) else {
+        guard FileManager.default.fileExists(atPath: unreadEmailsURL.path) else {
             return []
         }
         
@@ -81,7 +80,7 @@ actor EmailCache {
     
     func loadEmailDetail(emailId: Int) -> EmailDetail? {
         let url = detailURL(for: emailId)
-        guard fileManager.fileExists(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path) else {
             return nil
         }
         
@@ -107,12 +106,12 @@ actor EmailCache {
     
     func deleteEmailDetail(emailId: Int) {
         let url = detailURL(for: emailId)
-        guard fileManager.fileExists(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path) else {
             return
         }
         
         do {
-            try fileManager.removeItem(at: url)
+            try FileManager.default.removeItem(at: url)
         } catch {
             print("EmailCache deleteEmailDetail error: \(error)")
         }
