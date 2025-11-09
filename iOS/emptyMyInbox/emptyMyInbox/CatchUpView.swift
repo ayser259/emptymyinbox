@@ -206,6 +206,7 @@ struct CatchUpView: View {
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .task {
+            await EmailActionSynchronizer.shared.resumePendingActions()
             await loadUnreadEmails()
         }
     }
@@ -214,80 +215,78 @@ struct CatchUpView: View {
         isLoading = true
         defer { isLoading = false }
         
+        let cachedEmails = await EmailCache.shared.loadUnreadEmails()
+        if !cachedEmails.isEmpty {
+            await MainActor.run {
+                self.unreadEmails = cachedEmails
+            }
+            await loadEmailDeck(emails: cachedEmails, useCacheOnly: true)
+        }
+        
         do {
             let emails = try await APIService.shared.getUnreadEmails()
+            await EmailCache.shared.saveUnreadEmails(emails)
             await MainActor.run {
                 self.unreadEmails = emails
             }
             
             // Preload all email details to create the deck
             if !emails.isEmpty {
-                await loadEmailDeck(emails: emails)
+                await loadEmailDeck(emails: emails, useCacheOnly: false)
+            } else {
+                await MainActor.run {
+                    self.emailDeck = []
+                }
             }
         } catch {
             print("Error loading unread emails: \(error)")
         }
     }
     
-    private func loadEmailDeck(emails: [EmailListItem]) async {
-        await MainActor.run {
-            isLoadingDeck = true
-            loadedEmailIds.removeAll()
+    private func loadEmailDeck(emails: [EmailListItem], useCacheOnly: Bool) async {
+        guard !emails.isEmpty else {
+            await MainActor.run {
+                self.emailDeck = []
+                self.isLoadingDeck = false
+                self.loadedEmailIds.removeAll()
+            }
+            return
+        }
+        
+        if useCacheOnly {
+            await MainActor.run {
+                loadedEmailIds.removeAll()
+            }
+        } else {
+            await MainActor.run {
+                isLoadingDeck = true
+                loadedEmailIds.removeAll()
+            }
         }
         
         let priorityCount = min(3, emails.count)
         
         // Phase 1: Load first 3 emails immediately (priority)
-        var priorityDeck: [EmailDetail] = []
-        var priorityDict: [Int: EmailDetail] = [:]
+        var priorityDeck: [EmailDetail?] = Array(repeating: nil, count: priorityCount)
+        var priorityFetchIndexes: [Int] = []
         
-        await withTaskGroup(of: (Int, EmailDetail?).self) { group in
-            for index in 0..<priorityCount {
-                let emailItem = emails[index]
-                group.addTask {
-                    do {
-                        let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
-                        return (index, detail)
-                    } catch {
-                        print("Error loading email details for \(emailItem.id): \(error)")
-                        return (index, nil)
-                    }
-                }
-            }
-            
-            for await (index, emailDetail) in group {
-                if let detail = emailDetail {
-                    priorityDict[index] = detail
-                }
-            }
-        }
-        
-        // Build priority deck maintaining order
         for index in 0..<priorityCount {
-            if let detail = priorityDict[index] {
-                priorityDeck.append(detail)
+            let emailItem = emails[index]
+            if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                priorityDeck[index] = cachedDetail
+            } else if !useCacheOnly {
+                priorityFetchIndexes.append(index)
             }
         }
         
-        // Show first batch immediately
-        await MainActor.run {
-            self.emailDeck = priorityDeck
-            self.emailOffset = .zero
-            self.emailOpacity = 1.0
-            self.loadedEmailIds.removeAll()
-            isLoadingDeck = false // Allow UI to show first batch
-        }
-        
-        // Phase 2: Load remaining emails in background
-        if emails.count > priorityCount {
-            var remainingDict: [Int: EmailDetail] = [:]
-            
+        if !priorityFetchIndexes.isEmpty && !useCacheOnly {
             await withTaskGroup(of: (Int, EmailDetail?).self) { group in
-                for index in priorityCount..<emails.count {
+                for index in priorityFetchIndexes {
                     let emailItem = emails[index]
                     group.addTask {
                         do {
                             let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
+                            await EmailCache.shared.saveEmailDetail(detail)
                             return (index, detail)
                         } catch {
                             print("Error loading email details for \(emailItem.id): \(error)")
@@ -298,13 +297,66 @@ struct CatchUpView: View {
                 
                 for await (index, emailDetail) in group {
                     if let detail = emailDetail {
-                        remainingDict[index] = detail
+                        priorityDeck[index] = detail
+                    }
+                }
+            }
+        }
+        
+        // Build priority deck maintaining order
+        let initialDeck = priorityDeck.compactMap { $0 }
+        
+        // Show first batch immediately
+        await MainActor.run {
+            self.emailDeck = initialDeck
+            self.emailOffset = .zero
+            self.emailOpacity = 1.0
+            self.loadedEmailIds.removeAll()
+            if !useCacheOnly {
+                isLoadingDeck = false // Allow UI to show first batch
+            }
+        }
+        
+        // Phase 2: Load remaining emails in background
+        if emails.count > priorityCount {
+            var remainingDict: [Int: EmailDetail] = [:]
+            var remainingFetchIndexes: [Int] = []
+            
+            for index in priorityCount..<emails.count {
+                let emailItem = emails[index]
+                if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                    remainingDict[index] = cachedDetail
+                } else if !useCacheOnly {
+                    remainingFetchIndexes.append(index)
+                }
+            }
+            
+            if !remainingFetchIndexes.isEmpty && !useCacheOnly {
+                await withTaskGroup(of: (Int, EmailDetail?).self) { group in
+                    for index in remainingFetchIndexes {
+                        let emailItem = emails[index]
+                        group.addTask {
+                            do {
+                                let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
+                                await EmailCache.shared.saveEmailDetail(detail)
+                                return (index, detail)
+                            } catch {
+                                print("Error loading email details for \(emailItem.id): \(error)")
+                                return (index, nil)
+                            }
+                        }
+                    }
+                    
+                    for await (index, emailDetail) in group {
+                        if let detail = emailDetail {
+                            remainingDict[index] = detail
+                        }
                     }
                 }
             }
             
             // Merge with priority deck maintaining original order
-            var fullDeck = priorityDeck
+            var fullDeck = initialDeck
             for index in priorityCount..<emails.count {
                 if let detail = remainingDict[index] {
                     fullDeck.append(detail)
@@ -391,32 +443,49 @@ struct CatchUpView: View {
         // Wait for animation
         try? await Task.sleep(nanoseconds: 400_000_000) // 0.4 seconds
         
-        do {
-            let updatedEmail: EmailDetail
-            if email.is_starred {
-                updatedEmail = try await APIService.shared.unstarEmail(emailId: email.id)
-            } else {
-                updatedEmail = try await APIService.shared.starEmail(emailId: email.id)
-            }
-            
-            await MainActor.run {
-                // Update the email in the deck
-                if self.currentIndex < self.emailDeck.count {
-                    self.emailDeck[self.currentIndex] = updatedEmail
-                }
-                isProcessing = false
-                isAnimating = false
-            }
-        } catch {
-            print("Error toggling star: \(error)")
-            await MainActor.run {
-                // Reset animation state on error
+        let newStarState = !email.is_starred
+        let updatedEmail = email.updating(isStarred: newStarState)
+        
+        let updatedListItem: EmailListItem? = await MainActor.run {
+            guard self.currentIndex < self.emailDeck.count else {
                 dragOffset = .zero
                 emailOffset = .zero
                 emailOpacity = 1.0
                 isProcessing = false
                 isAnimating = false
+                return nil
             }
+            
+            self.emailDeck[self.currentIndex] = updatedEmail
+            
+            guard self.currentIndex < self.unreadEmails.count else {
+                dragOffset = .zero
+                emailOffset = .zero
+                emailOpacity = 1.0
+                isProcessing = false
+                isAnimating = false
+                return nil
+            }
+            
+            let updatedItem = self.unreadEmails[self.currentIndex].updating(isStarred: newStarState)
+            self.unreadEmails[self.currentIndex] = updatedItem
+            
+            dragOffset = .zero
+            emailOffset = .zero
+            emailOpacity = 1.0
+            isProcessing = false
+            isAnimating = false
+            
+            return updatedItem
+        }
+        
+        await EmailCache.shared.saveEmailDetail(updatedEmail)
+        if let updatedListItem {
+            await EmailCache.shared.upsertUnreadEmail(updatedListItem)
+        }
+        
+        Task {
+            await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
         }
     }
     
@@ -478,37 +547,31 @@ struct CatchUpView: View {
         // Wait for animation
         try? await Task.sleep(nanoseconds: 400_000_000) // 0.4 seconds
         
-        do {
-            _ = try await APIService.shared.markEmailAsRead(emailId: email.id)
+        // Remove from deck and move to next optimistically
+        await MainActor.run {
+            if self.currentIndex < self.emailDeck.count {
+                self.emailDeck.remove(at: self.currentIndex)
+            }
+            if self.currentIndex < self.unreadEmails.count {
+                self.unreadEmails.remove(at: self.currentIndex)
+            }
             
-            // Remove from deck and move to next
-            await MainActor.run {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 if self.currentIndex < self.emailDeck.count {
-                    self.emailDeck.remove(at: self.currentIndex)
-                    self.unreadEmails.remove(at: self.currentIndex)
+                    self.dragOffset = .zero
+                    self.emailOffset = .zero
+                    self.emailOpacity = 1.0
                 }
-                
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                    // Reset animation state for next card
-                    if self.currentIndex < self.emailDeck.count {
-                        self.dragOffset = .zero
-                        self.emailOffset = .zero
-                        self.emailOpacity = 1.0
-                    }
-                }
-                isAnimating = false
-                isProcessing = false
             }
-        } catch {
-            print("Error marking as read: \(error)")
-            await MainActor.run {
-                // Reset animation state on error
-                dragOffset = .zero
-                emailOffset = .zero
-                emailOpacity = 1.0
-                isProcessing = false
-                isAnimating = false
-            }
+            isAnimating = false
+            isProcessing = false
+        }
+        
+        await EmailCache.shared.removeUnreadEmail(emailId: email.id)
+        await EmailCache.shared.deleteEmailDetail(emailId: email.id)
+        
+        Task {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
         }
     }
     
