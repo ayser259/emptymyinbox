@@ -12,7 +12,9 @@ from .views import (
     user_detail,
     user_profile_update,
     LabelsView,
+    LabelFiltersView,
 )
+from .filter_views import create_filter, update_filter, delete_filter
 
 router = DefaultRouter()
 router.register(r"accounts", EmailAccountViewSet, basename="emailaccount")
@@ -32,6 +34,11 @@ urlpatterns = [
     path("auth/gmail/callback/", gmail_auth_callback, name="gmail-auth-callback"),
     # Labels endpoint
     path("labels/", LabelsView.as_view(), name="labels"),
+    path("labels/<str:label_id>/filters/", LabelFiltersView.as_view(), name="label-filters"),
+    # Filter management endpoints
+    path("filters/", create_filter, name="create-filter"),
+    path("filters/<int:filter_id>/", update_filter, name="update-filter"),
+    path("filters/<int:filter_id>/delete/", delete_filter, name="delete-filter"),
 ]
 
 

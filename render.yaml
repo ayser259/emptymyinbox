@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: empty-my-inbox-backend
+    env: python
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r backend/requirements.txt && python backend/manage.py collectstatic --noinput
+    startCommand: gunicorn backend.wsgi:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DJANGO_SETTINGS_MODULE
+        value: backend.settings
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_DIRECT_CONNECT
+        sync: false
+      - key: DB_CONN_MAX_AGE
+        value: "600"
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: "https://<your-service>.onrender.com"
+      - key: DJANGO_CORS_ALLOWED_ORIGINS
+        value: "https://<your-frontend-domain>"
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REDIRECT_URI
+        sync: false
+

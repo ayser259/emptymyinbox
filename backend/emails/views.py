@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailAccount, Email, UserProfile
+from .models import EmailAccount, Email, UserProfile, Filter
 from .serializers import (
     EmailAccountSerializer,
     EmailSerializer,
@@ -18,9 +18,11 @@ from .serializers import (
     UserSerializer,
     UserProfileSerializer,
     LabelSerializer,
+    FilterSerializer,
 )
 from .gmail_service import GmailService
 from django.db.models import Q, Count
+from django.db import connection
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +52,22 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
         """Sync all accounts for the current user"""
         user_accounts = self.get_queryset()
         total_synced = 0
+        total_filters_synced = 0
         errors = []
         
         for account in user_accounts:
             try:
+                # Sync emails
                 count = GmailService.sync_emails(account, max_results=500)
                 total_synced += count
+                
+                # Sync filters
+                try:
+                    filter_count = GmailService.sync_filters(account)
+                    total_filters_synced += filter_count
+                except Exception as filter_error:
+                    logger.warning(f"Error syncing filters for account {account.email}: {filter_error}", exc_info=True)
+                    # Don't fail the whole sync if filters fail
             except Exception as e:
                 errors.append(f"Error syncing {account.email}: {str(e)}")
                 logger.error(f"Error syncing account {account.email}: {e}", exc_info=True)
@@ -66,7 +78,8 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
         
         response_data = {
             "synced": total_synced,
-            "message": f"Synced {total_synced} new emails",
+            "filters_synced": total_filters_synced,
+            "message": f"Synced {total_synced} new emails and {total_filters_synced} filters",
             "most_recent_email_at": most_recent_email.received_at.isoformat() if most_recent_email else None,
         }
         
@@ -96,6 +109,16 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
         if is_starred is not None:
             queryset = queryset.filter(is_starred=is_starred.lower() == "true")
         
+        # Search query
+        search_query = self.request.query_params.get("q", None)
+        if search_query:
+            queryset = queryset.filter(
+                Q(subject__icontains=search_query) |
+                Q(sender__icontains=search_query) |
+                Q(sender_name__icontains=search_query) |
+                Q(snippet__icontains=search_query)
+            )
+        
         # Filter by label ID
         label_id = self.request.query_params.get("label", None)
         if label_id:
@@ -119,7 +142,18 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
                 # If no user labels exist, all emails are uncategorized
             else:
                 # Filter emails that contain this label ID
-                queryset = queryset.filter(labels__contains=[label_id])
+                # For SQLite JSONField, use json_each in a subquery
+                # For PostgreSQL, use contains with array syntax
+                if connection.vendor == 'sqlite':
+                    # SQLite JSON1: Check if label_id exists in the labels JSON array
+                    # Using EXISTS with json_each to check if any element matches
+                    queryset = queryset.extra(
+                        where=["EXISTS (SELECT 1 FROM json_each(emails_email.labels) WHERE json_each.value = %s)"],
+                        params=[label_id]
+                    )
+                else:
+                    # PostgreSQL: use contains with array syntax
+                    queryset = queryset.filter(labels__contains=[label_id])
         
         return queryset
 
@@ -480,11 +514,22 @@ class LabelsView(APIView):
                     
                     # Count unread emails for each label
                     for label_id in gmail_labels.keys():
-                        unread_count = Email.objects.filter(
-                            account=account,
-                            labels__contains=[label_id],
-                            is_read=False
-                        ).count()
+                        if connection.vendor == 'sqlite':
+                            # SQLite JSON1: Check if label_id exists in the labels JSON array
+                            unread_count = Email.objects.filter(
+                                account=account,
+                                is_read=False
+                            ).extra(
+                                where=["EXISTS (SELECT 1 FROM json_each(emails_email.labels) WHERE json_each.value = %s)"],
+                                params=[label_id]
+                            ).count()
+                        else:
+                            # PostgreSQL: use contains with array syntax
+                            unread_count = Email.objects.filter(
+                                account=account,
+                                labels__contains=[label_id],
+                                is_read=False
+                            ).count()
                         all_labels[label_id]["unread_count"] += unread_count
                 except Exception as e:
                     logger.error(f"Error fetching labels for account {account.email}: {e}", exc_info=True)
@@ -536,7 +581,43 @@ class LabelsView(APIView):
         except Exception as e:
             logger.error(f"Error fetching labels: {e}", exc_info=True)
             return Response(
-                {"error": "Failed to fetch labels"}, 
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class LabelFiltersView(APIView):
+    """Get all filters associated with a specific label"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, label_id):
+        try:
+            # Get all active email accounts for the user
+            user_accounts = EmailAccount.objects.filter(user=request.user, is_active=True)
+            
+            if not user_accounts.exists():
+                return Response([], status=status.HTTP_200_OK)
+            
+            # Get all filters from user's accounts that apply this label
+            filters = Filter.objects.filter(
+                account__in=user_accounts
+            )
+            
+            # Filter to only those that have this label in their actions
+            matching_filters = []
+            for filter_obj in filters:
+                # Check if this filter's actions include the label_id
+                add_label_ids = filter_obj.actions.get("addLabelIds", [])
+                if label_id in add_label_ids:
+                    matching_filters.append(filter_obj)
+            
+            serializer = FilterSerializer(matching_filters, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching filters for label {label_id}: {e}", exc_info=True)
+            return Response(
+                {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

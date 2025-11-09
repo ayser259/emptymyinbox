@@ -12,7 +12,9 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-from decouple import config
+
+import dj_database_url
+from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,18 +24,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-((l6123k#hbk^=84+&%j!yu!7*gc8k^lzx@^2j*-vu!u0&$51("
+SECRET_KEY = config("DJANGO_SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config("DJANGO_DEBUG", cast=bool, default=False)
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = config(
+    "DJANGO_ALLOWED_HOSTS",
+    default="localhost,127.0.0.1,.onrender.com",
+    cast=Csv(),
+)
 
 # CSRF trusted origins - required for cross-origin requests
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+_raw_csrf_trusted_origins = config(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    default="http://localhost:3000,http://127.0.0.1:3000,https://*.onrender.com",
+    cast=Csv(),
+)
+CSRF_TRUSTED_ORIGINS = [origin.rstrip("/") for origin in _raw_csrf_trusted_origins]
 
 
 # Application definition
@@ -54,6 +62,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -87,12 +96,28 @@ WSGI_APPLICATION = "backend.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+DATABASE_URL = config("DATABASE_URL", default=None)
+SUPABASE_DIRECT_CONNECT = config("SUPABASE_DIRECT_CONNECT", default=None)
+DB_CONN_MAX_AGE = config("DB_CONN_MAX_AGE", cast=int, default=600)
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=DB_CONN_MAX_AGE,
+            ssl_require=True,
+        )
     }
-}
+elif SUPABASE_DIRECT_CONNECT:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            SUPABASE_DIRECT_CONNECT,
+            conn_max_age=DB_CONN_MAX_AGE,
+            ssl_require=True,
+        )
+    }
+else:
+    raise ValueError("DATABASE_URL or SUPABASE_DIRECT_CONNECT must be set.")
 
 
 # Password validation
@@ -130,6 +155,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -162,12 +189,21 @@ SIMPLE_JWT = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # React dev server
-    "http://127.0.0.1:3000",
-]
+_raw_cors_allowed_origins = config(
+    "DJANGO_CORS_ALLOWED_ORIGINS",
+    default="http://localhost:3000,http://127.0.0.1:3000",
+    cast=Csv(),
+)
+CORS_ALLOWED_ORIGINS = [origin.rstrip("/") for origin in _raw_cors_allowed_origins]
 
 CORS_ALLOW_CREDENTIALS = True
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = config(
+    "DJANGO_SECURE_SSL_REDIRECT",
+    cast=bool,
+    default=not DEBUG,
+)
 
 # Gmail API settings
 GMAIL_CLIENT_ID = config("GMAIL_CLIENT_ID", default="")
@@ -175,5 +211,11 @@ GMAIL_CLIENT_SECRET = config("GMAIL_CLIENT_SECRET", default="")
 GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI", default="http://localhost:8000/api/auth/gmail/callback")
 
 # Celery Configuration (for background tasks)
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+CELERY_BROKER_URL = config(
+    "CELERY_BROKER_URL",
+    default="redis://localhost:6379/0",
+)
+CELERY_RESULT_BACKEND = config(
+    "CELERY_RESULT_BACKEND",
+    default=CELERY_BROKER_URL,
+)
