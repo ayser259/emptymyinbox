@@ -143,6 +143,7 @@ struct GmailStyleEmailRow: View {
         snippet: "This is a test email snippet",
         is_read: false,
         is_starred: false,
+        labels: [],
         received_at: "2024-01-01T12:00:00Z",
         account_email: "user@example.com"
     ))

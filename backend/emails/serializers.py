@@ -1,7 +1,7 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import EmailAccount, Email, UserProfile
+from .models import EmailAccount, Email, UserProfile, Filter
 
 
 class EmailAccountSerializer(serializers.ModelSerializer):
@@ -66,6 +66,7 @@ class EmailListSerializer(serializers.ModelSerializer):
             "snippet",
             "is_read",
             "is_starred",
+            "labels",
             "received_at",
             "account_email",
         ]
@@ -144,6 +145,21 @@ class LabelSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
     unread_count = serializers.IntegerField()
+
+
+class FilterSerializer(serializers.ModelSerializer):
+    """Serializer for Gmail filters"""
+    class Meta:
+        model = Filter
+        fields = [
+            "id",
+            "gmail_filter_id",
+            "criteria",
+            "actions",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
 
 

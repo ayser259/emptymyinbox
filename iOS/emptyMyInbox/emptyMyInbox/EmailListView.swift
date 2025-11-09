@@ -169,9 +169,33 @@ struct RefreshStatusView: View {
     }
     
     private func formatRefreshTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // If refreshed within the last minute, show "just now"
+        if calendar.dateComponents([.second], from: date, to: now).second ?? 0 < 60 {
+            return "just now"
+        }
+        
+        // If refreshed today, show time
+        if calendar.isDateInToday(date) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.timeStyle = .short
+            return "Today at \(timeFormatter.string(from: date))"
+        }
+        
+        // If refreshed yesterday, show yesterday and time
+        if calendar.isDateInYesterday(date) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.timeStyle = .short
+            return "Yesterday at \(timeFormatter.string(from: date))"
+        }
+        
+        // Otherwise show full date and time
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        return dateFormatter.string(from: date)
     }
     
     private func formatEmailTime(_ date: Date) -> String {

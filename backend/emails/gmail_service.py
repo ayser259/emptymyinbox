@@ -13,7 +13,7 @@ from googleapiclient.errors import HttpError
 from django.conf import settings
 from django.utils import timezone
 
-from .models import EmailAccount, Email
+from .models import EmailAccount, Email, Filter
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic",  # For filter management
 ]
 
 
@@ -236,6 +237,11 @@ class GmailService:
                         gmail_id=email_data["gmail_id"],
                         defaults=email_data,
                     )
+                    # Always update labels even for existing emails to ensure they're current
+                    # This is important because labels can change in Gmail
+                    if not created:
+                        email_obj.labels = email_data.get("labels", [])
+                        email_obj.save(update_fields=["labels"])
                     if created:
                         synced_count += 1
                 except Exception as e:
@@ -291,12 +297,13 @@ class GmailService:
                         gmail_id=email_data["gmail_id"],
                         defaults=email_data,
                     )
+                    # Always update labels even for existing emails
+                    if not created:
+                        email_obj.labels = email_data.get("labels", [])
+                        email_obj.is_starred = True
+                        email_obj.save(update_fields=["labels", "is_starred"])
                     if created:
                         synced_count += 1
-                    elif not email_obj.is_starred:
-                        # Update existing email to mark as starred
-                        email_obj.is_starred = True
-                        email_obj.save()
                 except Exception as e:
                     logger.error(f"Error syncing starred message {msg['id']}: {e}", exc_info=True)
                     continue
@@ -357,5 +364,72 @@ class GmailService:
             return label_dict
         except HttpError as error:
             logger.error(f"An error occurred fetching labels for account {email_account.email}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def get_all_filters(email_account: EmailAccount) -> List[Dict]:
+        """Get all Gmail filters for an account"""
+        try:
+            service = GmailService.get_service(email_account)
+            results = service.users().settings().filters().list(userId="me").execute()
+            filters = results.get("filter", [])
+            return filters
+        except HttpError as error:
+            logger.error(f"An error occurred fetching filters for account {email_account.email}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def sync_filters(email_account: EmailAccount) -> int:
+        """Sync filters from Gmail for an account"""
+        try:
+            gmail_filters = GmailService.get_all_filters(email_account)
+            synced_count = 0
+            
+            for filter_data in gmail_filters:
+                gmail_filter_id = filter_data.get("id")
+                criteria = filter_data.get("criteria", {})
+                action = filter_data.get("action", {})
+                
+                # Create or update filter in database
+                Filter.objects.update_or_create(
+                    account=email_account,
+                    gmail_filter_id=gmail_filter_id,
+                    defaults={
+                        "criteria": criteria,
+                        "actions": action,
+                    }
+                )
+                synced_count += 1
+            
+            return synced_count
+        except HttpError as error:
+            logger.error(f"An error occurred syncing filters for account {email_account.email}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def create_filter(email_account: EmailAccount, filter_data: Dict) -> Dict:
+        """Create a new Gmail filter"""
+        try:
+            service = GmailService.get_service(email_account)
+            result = service.users().settings().filters().create(
+                userId="me",
+                body=filter_data
+            ).execute()
+            return result
+        except HttpError as error:
+            logger.error(f"An error occurred creating filter for account {email_account.email}: {error}", exc_info=True)
+            raise
+
+    @staticmethod
+    def delete_filter(email_account: EmailAccount, filter_id: str):
+        """Delete a Gmail filter"""
+        try:
+            service = GmailService.get_service(email_account)
+            service.users().settings().filters().delete(
+                userId="me",
+                id=filter_id
+            ).execute()
+        except HttpError as error:
+            logger.error(f"An error occurred deleting filter {filter_id} for account {email_account.email}: {error}", exc_info=True)
             raise
 

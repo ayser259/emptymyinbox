@@ -211,15 +211,94 @@ class APIService {
         return try await performRequest(request, responseType: [Label].self)
     }
     
+    func getFiltersForLabel(labelId: String) async throws -> [GmailFilter] {
+        guard let encodedLabelId = labelId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw APIError.invalidRequest
+        }
+        guard let request = createRequest(endpoint: "/labels/\(encodedLabelId)/filters/", method: "GET") else {
+            throw APIError.invalidRequest
+        }
+        
+        return try await performRequest(request, responseType: [GmailFilter].self)
+    }
+    
+    // MARK: - Filter Management
+    
+    struct CreateFilterRequest: Codable {
+        let account_id: Int
+        let criteria: FilterCriteria
+        let actions: FilterActions
+    }
+    
+    func createFilter(accountId: Int, criteria: FilterCriteria, actions: FilterActions) async throws -> GmailFilter {
+        let requestBody = CreateFilterRequest(account_id: accountId, criteria: criteria, actions: actions)
+        guard let jsonData = try? JSONEncoder().encode(requestBody) else {
+            throw APIError.invalidRequest
+        }
+        guard let request = createRequest(endpoint: "/filters/", method: "POST", body: jsonData) else {
+            throw APIError.invalidRequest
+        }
+        
+        return try await performRequest(request, responseType: GmailFilter.self)
+    }
+    
+    struct UpdateFilterRequest: Codable {
+        let criteria: FilterCriteria
+        let actions: FilterActions
+    }
+    
+    func updateFilter(filterId: Int, criteria: FilterCriteria, actions: FilterActions) async throws -> GmailFilter {
+        let requestBody = UpdateFilterRequest(criteria: criteria, actions: actions)
+        guard let jsonData = try? JSONEncoder().encode(requestBody) else {
+            throw APIError.invalidRequest
+        }
+        guard let request = createRequest(endpoint: "/filters/\(filterId)/", method: "PUT", body: jsonData) else {
+            throw APIError.invalidRequest
+        }
+        
+        return try await performRequest(request, responseType: GmailFilter.self)
+    }
+    
+    func deleteFilter(filterId: Int) async throws {
+        guard let request = createRequest(endpoint: "/filters/\(filterId)/delete/", method: "DELETE") else {
+            throw APIError.invalidRequest
+        }
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        
+        if httpResponse.statusCode == 401, refreshToken != nil {
+            try await refreshAccessToken()
+            var retryRequest = request
+            if let newToken = accessToken {
+                retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+            }
+            let (_, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+            guard let retryHttpResponse = retryResponse as? HTTPURLResponse,
+                  (200...299).contains(retryHttpResponse.statusCode) else {
+                throw APIError.invalidResponse
+            }
+        } else if !(200...299).contains(httpResponse.statusCode) {
+            throw APIError.invalidResponse
+        }
+    }
+    
     // MARK: - Emails
     
-    func getEmails(accountId: Int? = nil, isRead: Bool? = nil) async throws -> [EmailListItem] {
+    func getEmails(accountId: Int? = nil, isRead: Bool? = nil, searchQuery: String? = nil) async throws -> [EmailListItem] {
         var queryItems: [String] = []
         if let accountId = accountId {
             queryItems.append("account=\(accountId)")
         }
         if let isRead = isRead {
             queryItems.append("is_read=\(isRead)")
+        }
+        if let searchQuery = searchQuery, !searchQuery.isEmpty {
+            if let encodedQuery = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                queryItems.append("q=\(encodedQuery)")
+            }
         }
         
         let queryString = queryItems.isEmpty ? "" : "?\(queryItems.joined(separator: "&"))"
@@ -228,6 +307,10 @@ class APIService {
         }
         
         return try await performRequest(request, responseType: [EmailListItem].self)
+    }
+    
+    func searchEmails(query: String) async throws -> [EmailListItem] {
+        return try await getEmails(searchQuery: query)
     }
     
     func getStarredEmails() async throws -> [EmailListItem] {
@@ -254,6 +337,13 @@ class APIService {
             throw APIError.invalidRequest
         }
         return try await performRequest(request, responseType: [EmailListItem].self)
+    }
+    
+    func getEmailsBySender(senderEmail: String) async throws -> [EmailListItem] {
+        // Note: Backend doesn't support sender filtering yet, so we fetch all and filter client-side
+        // This could be optimized later with backend support
+        let allEmails = try await getEmails()
+        return allEmails.filter { $0.sender == senderEmail }
     }
     
     func getEmailDetails(emailId: Int) async throws -> EmailDetail {
@@ -362,6 +452,7 @@ struct EmailListItem: Codable {
     let snippet: String
     let is_read: Bool
     let is_starred: Bool
+    let labels: [String]
     let received_at: String
     let account_email: String
 }
@@ -370,6 +461,167 @@ struct Label: Codable, Hashable {
     let id: String
     let name: String
     let unread_count: Int
+}
+
+struct GmailFilter: Codable, Identifiable {
+    let id: Int
+    let gmail_filter_id: String
+    let criteria: FilterCriteria
+    let actions: FilterActions
+    let created_at: String
+    let updated_at: String
+}
+
+struct FilterCriteria: Codable {
+    let from: String?
+    let to: String?
+    let subject: String?
+    let query: String?
+    let negatedQuery: String?
+    let hasAttachment: Bool?
+    let excludeChats: Bool?
+    let size: Int?  // Size in bytes
+    let sizeComparison: String?  // "larger" or "smaller"
+    
+    enum CodingKeys: String, CodingKey {
+        case from
+        case to
+        case subject
+        case query
+        case negatedQuery
+        case hasAttachment
+        case excludeChats
+        case size
+        case sizeComparison
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        from = try container.decodeIfPresent(String.self, forKey: .from)
+        to = try container.decodeIfPresent(String.self, forKey: .to)
+        subject = try container.decodeIfPresent(String.self, forKey: .subject)
+        query = try container.decodeIfPresent(String.self, forKey: .query)
+        negatedQuery = try container.decodeIfPresent(String.self, forKey: .negatedQuery)
+        hasAttachment = try container.decodeIfPresent(Bool.self, forKey: .hasAttachment)
+        excludeChats = try container.decodeIfPresent(Bool.self, forKey: .excludeChats)
+        size = try container.decodeIfPresent(Int.self, forKey: .size)
+        sizeComparison = try container.decodeIfPresent(String.self, forKey: .sizeComparison)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(from, forKey: .from)
+        try container.encodeIfPresent(to, forKey: .to)
+        try container.encodeIfPresent(subject, forKey: .subject)
+        try container.encodeIfPresent(query, forKey: .query)
+        try container.encodeIfPresent(negatedQuery, forKey: .negatedQuery)
+        try container.encodeIfPresent(hasAttachment, forKey: .hasAttachment)
+        try container.encodeIfPresent(excludeChats, forKey: .excludeChats)
+        try container.encodeIfPresent(size, forKey: .size)
+        try container.encodeIfPresent(sizeComparison, forKey: .sizeComparison)
+    }
+    
+    // Convenience initializer for creating new criteria
+    init(
+        from: String? = nil,
+        to: String? = nil,
+        subject: String? = nil,
+        query: String? = nil,
+        negatedQuery: String? = nil,
+        hasAttachment: Bool? = nil,
+        excludeChats: Bool? = nil,
+        size: Int? = nil,
+        sizeComparison: String? = nil
+    ) {
+        self.from = from
+        self.to = to
+        self.subject = subject
+        self.query = query
+        self.negatedQuery = negatedQuery
+        self.hasAttachment = hasAttachment
+        self.excludeChats = excludeChats
+        self.size = size
+        self.sizeComparison = sizeComparison
+    }
+}
+
+struct FilterActions: Codable {
+    let addLabelIds: [String]?
+    let removeLabelIds: [String]?
+    let forward: String?
+    let markAsRead: Bool?
+    let archive: Bool?
+    let delete: Bool?
+    let alwaysMarkAsRead: Bool?
+    let neverMarkAsRead: Bool?
+    let neverSpam: Bool?
+    let star: Bool?
+    
+    enum CodingKeys: String, CodingKey {
+        case addLabelIds
+        case removeLabelIds
+        case forward
+        case markAsRead
+        case archive
+        case delete
+        case alwaysMarkAsRead
+        case neverMarkAsRead
+        case neverSpam
+        case star
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        addLabelIds = try container.decodeIfPresent([String].self, forKey: .addLabelIds)
+        removeLabelIds = try container.decodeIfPresent([String].self, forKey: .removeLabelIds)
+        forward = try container.decodeIfPresent(String.self, forKey: .forward)
+        markAsRead = try container.decodeIfPresent(Bool.self, forKey: .markAsRead)
+        archive = try container.decodeIfPresent(Bool.self, forKey: .archive)
+        delete = try container.decodeIfPresent(Bool.self, forKey: .delete)
+        alwaysMarkAsRead = try container.decodeIfPresent(Bool.self, forKey: .alwaysMarkAsRead)
+        neverMarkAsRead = try container.decodeIfPresent(Bool.self, forKey: .neverMarkAsRead)
+        neverSpam = try container.decodeIfPresent(Bool.self, forKey: .neverSpam)
+        star = try container.decodeIfPresent(Bool.self, forKey: .star)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(addLabelIds, forKey: .addLabelIds)
+        try container.encodeIfPresent(removeLabelIds, forKey: .removeLabelIds)
+        try container.encodeIfPresent(forward, forKey: .forward)
+        try container.encodeIfPresent(markAsRead, forKey: .markAsRead)
+        try container.encodeIfPresent(archive, forKey: .archive)
+        try container.encodeIfPresent(delete, forKey: .delete)
+        try container.encodeIfPresent(alwaysMarkAsRead, forKey: .alwaysMarkAsRead)
+        try container.encodeIfPresent(neverMarkAsRead, forKey: .neverMarkAsRead)
+        try container.encodeIfPresent(neverSpam, forKey: .neverSpam)
+        try container.encodeIfPresent(star, forKey: .star)
+    }
+    
+    // Convenience initializer for creating new actions
+    init(
+        addLabelIds: [String]? = nil,
+        removeLabelIds: [String]? = nil,
+        forward: String? = nil,
+        markAsRead: Bool? = nil,
+        archive: Bool? = nil,
+        delete: Bool? = nil,
+        alwaysMarkAsRead: Bool? = nil,
+        neverMarkAsRead: Bool? = nil,
+        neverSpam: Bool? = nil,
+        star: Bool? = nil
+    ) {
+        self.addLabelIds = addLabelIds
+        self.removeLabelIds = removeLabelIds
+        self.forward = forward
+        self.markAsRead = markAsRead
+        self.archive = archive
+        self.delete = delete
+        self.alwaysMarkAsRead = alwaysMarkAsRead
+        self.neverMarkAsRead = neverMarkAsRead
+        self.neverSpam = neverSpam
+        self.star = star
+    }
 }
 
 struct EmailDetail: Codable {

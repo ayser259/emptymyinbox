@@ -35,3 +35,4 @@ EmptyMyInbox/
 
 This is a SwiftUI-based iOS application. The app uses modern SwiftUI patterns and follows iOS design guidelines.
 
+

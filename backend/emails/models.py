@@ -74,3 +74,35 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
+
+
+class Filter(models.Model):
+    """Represents a Gmail filter rule"""
+    account = models.ForeignKey(EmailAccount, on_delete=models.CASCADE, related_name="filters")
+    gmail_filter_id = models.CharField(max_length=255, db_index=True)  # Gmail's filter ID
+    criteria = models.JSONField(default=dict)  # Filter criteria (from, subject, hasAttachment, etc.)
+    actions = models.JSONField(default=dict)  # Filter actions (addLabelIds, removeLabelIds, etc.)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            UniqueConstraint(fields=["account", "gmail_filter_id"], name="unique_account_filter_id")
+        ]
+        indexes = [
+            models.Index(fields=["account"]),
+        ]
+
+    def __str__(self):
+        # Try to create a readable description
+        criteria_parts = []
+        if self.criteria.get("from"):
+            criteria_parts.append(f"from: {self.criteria['from']}")
+        if self.criteria.get("subject"):
+            criteria_parts.append(f"subject: {self.criteria['subject']}")
+        if self.criteria.get("hasAttachment"):
+            criteria_parts.append("has attachment")
+        
+        criteria_str = ", ".join(criteria_parts) if criteria_parts else "no criteria"
+        return f"Filter: {criteria_str}"
