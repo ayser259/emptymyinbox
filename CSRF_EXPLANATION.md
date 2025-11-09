@@ -134,3 +134,4 @@ response.set_cookie(
 
 **You're doing it right!** The current approach is appropriate for a JWT-based API.
 
+
