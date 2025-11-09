@@ -1,13 +1,13 @@
-const debugValue =
+const djangoDebug =
   (process.env.REACT_APP_DJANGO_DEBUG || process.env.DJANGO_DEBUG || '')
     .toLowerCase();
 
-const DEFAULT_DEV_URL = 'http://localhost:8000/api';
-const DEFAULT_PROD_URL = 'https://emptymyinbox-t4zx.onrender.com/api';
+const DEFAULT_PROD_URL = 'https://emptymyinbox-t4zx.onrender.com';
+const DEFAULT_DEV_URL = 'http://localhost:8000';
 
 const API_BASE_URL =
   process.env.REACT_APP_API_URL ||
-  (['1', 'true', 'yes'].includes(debugValue) ? DEFAULT_DEV_URL : DEFAULT_PROD_URL);
+  (['1', 'true', 'yes'].includes(djangoDebug) ? DEFAULT_DEV_URL : DEFAULT_PROD_URL);
 
 class ApiService {
   constructor() {
