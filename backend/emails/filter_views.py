@@ -154,3 +154,4 @@ def delete_filter(request, filter_id):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+
