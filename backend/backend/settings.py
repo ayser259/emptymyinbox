@@ -119,6 +119,14 @@ elif SUPABASE_DIRECT_CONNECT:
 else:
     raise ValueError("DATABASE_URL or SUPABASE_DIRECT_CONNECT must be set.")
 
+default_db = DATABASES["default"]
+default_db.setdefault("OPTIONS", {})
+default_db["OPTIONS"].setdefault("sslmode", "require")
+
+host = default_db.get("HOST") or ""
+if "pooler.supabase.com" in host:
+    default_db["OPTIONS"]["prepare_threshold"] = 0
+
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
