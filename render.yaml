@@ -5,7 +5,7 @@ services:
     plan: starter
     autoDeploy: true
     buildCommand: pip install -r backend/requirements.txt && python backend/manage.py collectstatic --noinput
-    startCommand: gunicorn backend.wsgi:application
+    startCommand: gunicorn backend.wsgi:application --chdir backend
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
