@@ -22,7 +22,7 @@ class APIService {
             return "http://localhost:8000/api"
         }
 
-        return "https://emptymyinbox-t4zx.onrender.com/api"
+        return "https://emptymyinbox-sgwq.onrender.com/api"
     }()
     private var accessToken: String?
     private var refreshToken: String?
