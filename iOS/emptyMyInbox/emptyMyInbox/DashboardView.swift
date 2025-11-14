@@ -20,6 +20,7 @@ struct DashboardView: View {
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
     @State private var labels: [Label] = []
+    @State private var isLoadingInitialCache = true
     @State private var isLoading = false
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
@@ -373,6 +374,9 @@ struct DashboardView: View {
             MenuView()
                 .environmentObject(authManager)
         }
+        .task {
+            await loadCachedData()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
                 await loadData(shouldSync: false) // Refresh without full sync
@@ -510,7 +514,7 @@ struct DashboardView: View {
     private func loadData(shouldSync: Bool = false) async {
         if shouldSync {
             isRefreshing = true
-        } else {
+        } else if !hasCachedData {
             isLoading = true
         }
         defer {
@@ -551,6 +555,11 @@ struct DashboardView: View {
                 self.lastRefreshTime = Date()
                 print("Loaded \(fetchedLabels.count) labels, \(fetchedEmails.count) recent emails, \(fetchedAllEmails.count) total emails")
             }
+            await DashboardCache.shared.saveSnapshot(accounts: fetchedAccounts,
+                                                     emails: fetchedEmails,
+                                                     allEmails: fetchedAllEmails,
+                                                     starredEmails: starredEmails,
+                                                     labels: fetchedLabels)
         } catch {
             print("Error loading data: \(error.localizedDescription)")
             await MainActor.run {
@@ -560,6 +569,24 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+    
+    private var hasCachedData: Bool {
+        !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty)
+    }
+    
+    private func loadCachedData() async {
+        if let snapshot = await DashboardCache.shared.loadSnapshot() {
+            await MainActor.run {
+                self.accounts = snapshot.accounts
+                self.emails = snapshot.emails
+                self.allEmails = snapshot.allEmails
+                self.starredEmails = snapshot.starredEmails
+                self.labels = snapshot.labels
+                self.lastRefreshTime = snapshot.timestamp
+            }
+        }
+        await loadData(shouldSync: false)
     }
 }
 

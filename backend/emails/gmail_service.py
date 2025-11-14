@@ -46,7 +46,9 @@ class GmailService:
             redirect_uri=redirect_uri,
         )
         authorization_url, state = flow.authorization_url(
-            access_type="offline", include_granted_scopes="true", prompt="consent"
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent select_account",
         )
         return authorization_url, state
 
