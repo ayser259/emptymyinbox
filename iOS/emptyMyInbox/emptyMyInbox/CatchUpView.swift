@@ -21,8 +21,8 @@ struct CatchUpView: View {
     @State private var emailOffset: CGSize = .zero
     @State private var emailOpacity: Double = 1.0
     @State private var isAnimating = false
-    @State private var dragOffset: CGSize = .zero
-    @State private var isDragging = false
+    @State private var reviewedCount: Int = 0 // Track locally reviewed emails
+    @State private var lastReviewedEmailId: Int? // Track last reviewed email for visual indicator
     private let maxVisibleCards = 2 // Show only the current card and one peeking behind
     
     var body: some View {
@@ -42,9 +42,18 @@ struct CatchUpView: View {
                             // Top bar with unread counter (centered)
                             HStack {
                                 Spacer()
-                                Text("\(unreadEmails.count - currentIndex) left to review")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(AppTheme.accent)
+                                HStack(spacing: 8) {
+                                    Text("\(max(0, unreadEmails.count - currentIndex - reviewedCount)) left to review")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(AppTheme.accent)
+                                    
+                                    // Show check icon if we've reviewed emails
+                                    if reviewedCount > 0 {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 16))
+                                            .foregroundColor(AppTheme.accent)
+                                    }
+                                }
                                 Spacer()
                             }
                             .padding(.horizontal, AppTheme.spacingMedium)
@@ -74,7 +83,7 @@ struct CatchUpView: View {
                                             )
                                                 .offset(
                                                     cardIndex == 0 
-                                                        ? CGSize(width: emailOffset.width + dragOffset.width, height: emailOffset.height + dragOffset.height)
+                                                        ? emailOffset
                                                         : CGSize(width: 0, height: (CGFloat(cardIndex) * 16) - (cardIndex == 1 ? 6 : 0))
                                                 )
                                                 .opacity(
@@ -84,21 +93,26 @@ struct CatchUpView: View {
                                                 )
                                                 .scaleEffect(max(0.96, 1.0 - Double(cardIndex) * 0.01))
                                                 .zIndex(Double(maxVisibleCards - cardIndex))
-                                                .gesture(
-                                                    cardIndex == 0 && !isAnimating && !isProcessing
-                                                        ? DragGesture(minimumDistance: 10)
-                                                            .onChanged { value in
-                                                                isDragging = true
-                                                                dragOffset = value.translation
+                                                .overlay(
+                                                    // Show check icon on last reviewed email
+                                                    cardIndex == 0 && lastReviewedEmailId == email.id
+                                                        ? VStack {
+                                                            HStack {
+                                                                Spacer()
+                                                                Image(systemName: "checkmark.circle.fill")
+                                                                    .font(.system(size: 24))
+                                                                    .foregroundColor(AppTheme.accent)
+                                                                    .padding()
+                                                                    .background(AppTheme.secondaryBackground.opacity(0.9))
+                                                                    .clipShape(Circle())
+                                                                    .padding()
                                                             }
-                                                            .onEnded { value in
-                                                                isDragging = false
-                                                                handleSwipeGesture(translation: value.translation, velocity: value.velocity)
-                                                            }
+                                                            Spacer()
+                                                        }
                                                         : nil
                                                 )
                                                 .animation(
-                                                    cardIndex == 0 && !isDragging
+                                                    cardIndex == 0
                                                         ? .spring(response: 0.5, dampingFraction: 0.7) 
                                                         : .spring(response: 0.3, dampingFraction: 0.8),
                                                     value: cardIndex == 0 ? emailOffset : .zero
@@ -209,12 +223,16 @@ struct CatchUpView: View {
             await EmailActionSynchronizer.shared.resumePendingActions()
             await loadUnreadEmails()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            // Dashboard will handle refresh
+        }
     }
     
     private func loadUnreadEmails() async {
         isLoading = true
         defer { isLoading = false }
         
+        // Always load from cache first for instant display
         let cachedEmails = await EmailCache.shared.loadUnreadEmails()
         if !cachedEmails.isEmpty {
             await MainActor.run {
@@ -223,6 +241,7 @@ struct CatchUpView: View {
             await loadEmailDeck(emails: cachedEmails, useCacheOnly: true)
         }
         
+        // Then fetch fresh data from API
         do {
             let emails = try await APIService.shared.getUnreadEmails()
             await EmailCache.shared.saveUnreadEmails(emails)
@@ -240,6 +259,13 @@ struct CatchUpView: View {
             }
         } catch {
             print("Error loading unread emails: \(error)")
+            // If API fails but we have cache, keep using cache
+            if cachedEmails.isEmpty {
+                await MainActor.run {
+                    self.unreadEmails = []
+                    self.emailDeck = []
+                }
+            }
         }
     }
     
@@ -375,49 +401,6 @@ struct CatchUpView: View {
         return emailDeck[currentIndex]
     }
     
-    private func handleSwipeGesture(translation: CGSize, velocity: CGSize) {
-        let swipeThreshold: CGFloat = 100
-        let velocityThreshold: CGFloat = 500
-        
-        // Reset drag offset
-        dragOffset = .zero
-        
-        // Determine swipe direction based on translation and velocity
-        let absX = abs(translation.width)
-        let absY = abs(translation.height)
-        let absVelocityX = abs(velocity.width)
-        let absVelocityY = abs(velocity.height)
-        
-        // Swipe up (star)
-        if translation.height < -swipeThreshold || (absVelocityY > velocityThreshold && velocity.height < 0 && absY > absX) {
-            Task {
-                await handleStar()
-            }
-            return
-        }
-        
-        // Swipe left (keep unread)
-        if translation.width < -swipeThreshold || (absVelocityX > velocityThreshold && velocity.width < 0 && absX > absY) {
-            Task {
-                await handleKeepUnread()
-            }
-            return
-        }
-        
-        // Swipe right (mark as read)
-        if translation.width > swipeThreshold || (absVelocityX > velocityThreshold && velocity.width > 0 && absX > absY) {
-            Task {
-                await handleMarkAsRead()
-            }
-            return
-        }
-        
-        // If no clear swipe, reset position
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            emailOffset = .zero
-        }
-    }
-    
     private func handleStar() async {
         guard let email = currentEmail, !isAnimating else { return }
         
@@ -433,7 +416,6 @@ struct CatchUpView: View {
         
         // Animate email shooting up
         await MainActor.run {
-            dragOffset = .zero // Reset drag offset
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                 emailOffset = CGSize(width: 0, height: -UIScreen.main.bounds.height)
                 emailOpacity = 0
@@ -446,46 +428,47 @@ struct CatchUpView: View {
         let newStarState = !email.is_starred
         let updatedEmail = email.updating(isStarred: newStarState)
         
-        let updatedListItem: EmailListItem? = await MainActor.run {
-            guard self.currentIndex < self.emailDeck.count else {
-                dragOffset = .zero
-                emailOffset = .zero
-                emailOpacity = 1.0
-                isProcessing = false
-                isAnimating = false
-                return nil
+        // Remove from deck and unread list, but keep as unread
+        await MainActor.run {
+            // Remove from deck
+            if self.currentIndex < self.emailDeck.count {
+                self.emailDeck.remove(at: self.currentIndex)
             }
             
-            self.emailDeck[self.currentIndex] = updatedEmail
-            
-            guard self.currentIndex < self.unreadEmails.count else {
-                dragOffset = .zero
-                emailOffset = .zero
-                emailOpacity = 1.0
-                isProcessing = false
-                isAnimating = false
-                return nil
+            // Remove from unread emails list
+            if self.currentIndex < self.unreadEmails.count {
+                self.unreadEmails.remove(at: self.currentIndex)
             }
             
-            let updatedItem = self.unreadEmails[self.currentIndex].updating(isStarred: newStarState)
-            self.unreadEmails[self.currentIndex] = updatedItem
+            // Track that we reviewed this email
+            self.reviewedCount += 1
+            self.lastReviewedEmailId = email.id
             
-            dragOffset = .zero
-            emailOffset = .zero
-            emailOpacity = 1.0
-            isProcessing = false
-            isAnimating = false
+            // Don't increment currentIndex since we removed the item
+            // Reset animation state for next card
+            if self.currentIndex < self.emailDeck.count {
+                self.emailOffset = .zero
+                self.emailOpacity = 1.0
+            }
             
-            return updatedItem
+            self.isProcessing = false
+            self.isAnimating = false
         }
         
+        // Update cache - keep email but mark as starred
         await EmailCache.shared.saveEmailDetail(updatedEmail)
-        if let updatedListItem {
-            await EmailCache.shared.upsertUnreadEmail(updatedListItem)
-        }
+        // Remove from unread cache since we're removing it from the stack
+        await EmailCache.shared.removeUnreadEmail(emailId: email.id)
         
+        // Enqueue star action
         Task {
             await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
+        }
+        
+        // Refresh unread count from database after a delay to ensure actions are synced
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+            await refreshUnreadCountFromDatabase()
         }
     }
     
@@ -500,7 +483,6 @@ struct CatchUpView: View {
         
         // Animate email going left
         await MainActor.run {
-            dragOffset = .zero // Reset drag offset
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                 emailOffset = CGSize(width: -UIScreen.main.bounds.width, height: 0)
                 emailOpacity = 0
@@ -514,12 +496,11 @@ struct CatchUpView: View {
         await MainActor.run {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 currentIndex += 1
-            // Reset animation state for next card
-            if currentIndex < emailDeck.count {
-                dragOffset = .zero
-                emailOffset = .zero
-                emailOpacity = 1.0
-            }
+                // Reset animation state for next card
+                if currentIndex < emailDeck.count {
+                    emailOffset = .zero
+                    emailOpacity = 1.0
+                }
             }
             isAnimating = false
         }
@@ -537,7 +518,6 @@ struct CatchUpView: View {
         
         // Animate email going right
         await MainActor.run {
-            dragOffset = .zero // Reset drag offset
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                 emailOffset = CGSize(width: UIScreen.main.bounds.width, height: 0)
                 emailOpacity = 0
@@ -556,9 +536,12 @@ struct CatchUpView: View {
                 self.unreadEmails.remove(at: self.currentIndex)
             }
             
+            // Track that we reviewed this email
+            self.reviewedCount += 1
+            self.lastReviewedEmailId = email.id
+            
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 if self.currentIndex < self.emailDeck.count {
-                    self.dragOffset = .zero
                     self.emailOffset = .zero
                     self.emailOpacity = 1.0
                 }
@@ -572,6 +555,33 @@ struct CatchUpView: View {
         
         Task {
             await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
+        }
+        
+        // Refresh unread count from database after a delay to ensure actions are synced
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+            await refreshUnreadCountFromDatabase()
+        }
+    }
+    
+    // Refresh unread count from database after actions complete
+    private func refreshUnreadCountFromDatabase() async {
+        do {
+            let freshUnreadEmails = try await APIService.shared.getUnreadEmails()
+            await MainActor.run {
+                // Update the unread emails list
+                self.unreadEmails = freshUnreadEmails
+                // Reset reviewed count since we have fresh data
+                self.reviewedCount = 0
+                self.lastReviewedEmailId = nil
+            }
+            // Update cache
+            await EmailCache.shared.saveUnreadEmails(freshUnreadEmails)
+            
+            // Post notification to refresh dashboard
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        } catch {
+            print("Error refreshing unread count: \(error)")
         }
     }
     
@@ -600,9 +610,15 @@ struct CatchUpView: View {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
         if let date = formatter.date(from: dateString) {
+            let calendar = Calendar.current
             let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeStyle = .short
+            if calendar.isDateInToday(date) {
+                dateFormatter.dateStyle = .none
+                dateFormatter.timeStyle = .short
+            } else {
+                dateFormatter.dateStyle = .medium
+                dateFormatter.timeStyle = .short
+            }
             return dateFormatter.string(from: date)
         }
         return ""

@@ -31,6 +31,10 @@ struct CelebrationView: View {
         return "catchup\(imageIndex)"
     }
     
+    private var hasGIFResource: Bool {
+        Bundle.main.url(forResource: celebrationImageName, withExtension: "gif") != nil
+    }
+    
     var body: some View {
         ZStack {
             AppTheme.primaryBackground
@@ -48,11 +52,17 @@ struct CelebrationView: View {
                 Spacer()
                 
                 // Celebration image (rotates once per day)
-                Image(celebrationImageName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 300, maxHeight: 300)
-                    .padding()
+                if hasGIFResource {
+                    GIFImageView(resourceName: celebrationImageName)
+                        .frame(maxWidth: 300, maxHeight: 300)
+                        .padding()
+                } else {
+                    Image(celebrationImageName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 300, maxHeight: 300)
+                        .padding()
+                }
                 
                 // Rotating message
                 Text(messages[currentMessageIndex])

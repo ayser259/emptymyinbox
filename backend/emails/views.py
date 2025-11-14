@@ -1,7 +1,9 @@
 import logging
 
 from django.shortcuts import redirect
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.urls import reverse
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.views import APIView
@@ -87,7 +89,7 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
             response_data["errors"] = errors
         
         return Response(response_data, status=status.HTTP_200_OK)
-
+    
 
 class EmailViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing emails"""
@@ -254,10 +256,16 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
 def gmail_auth_start(request):
     """Start Gmail OAuth flow"""
     try:
-        auth_url, state = GmailService.get_authorization_url()
+        callback_url = request.build_absolute_uri(reverse("gmail-auth-callback"))
+        auth_url, state = GmailService.get_authorization_url(redirect_uri=callback_url)
         # Store state and user_id in session for verification
         request.session["gmail_oauth_state"] = state
         request.session["gmail_oauth_user_id"] = request.user.id
+        redirect_uri = request.query_params.get("redirect_uri")
+        if redirect_uri:
+            request.session["gmail_oauth_redirect_uri"] = redirect_uri
+        elif "gmail_oauth_redirect_uri" in request.session:
+            del request.session["gmail_oauth_redirect_uri"]
         return Response({"authorization_url": auth_url})
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -269,6 +277,7 @@ def gmail_auth_callback(request):
     """Handle Gmail OAuth callback"""
     code = request.query_params.get("code")
     state = request.query_params.get("state")
+    callback_url = request.build_absolute_uri(reverse("gmail-auth-callback"))
 
     # Verify state matches session
     session_state = request.session.get("gmail_oauth_state")
@@ -302,7 +311,7 @@ def gmail_auth_callback(request):
 
     try:
         # Exchange code for tokens
-        tokens = GmailService.exchange_code_for_tokens(code)
+        tokens = GmailService.exchange_code_for_tokens(code, redirect_uri=callback_url)
 
         # Get user's email from Gmail
         # Create a temporary account to get the email
@@ -356,9 +365,22 @@ def gmail_auth_callback(request):
         del request.session["gmail_oauth_state"]
         del request.session["gmail_oauth_user_id"]
 
-        # Redirect to frontend with success
-        frontend_url = "http://localhost:3000"
-        return redirect(f"{frontend_url}?account_connected=true")
+        # Detect if request is from iOS app
+        user_agent = request.META.get("HTTP_USER_AGENT", "").lower()
+        is_ios = "iphone" in user_agent or "ipad" in user_agent or "ipod" in user_agent
+        
+        # Check for iOS app redirect parameter (can be passed via state or query param)
+        redirect_param = request.session.pop("gmail_oauth_redirect_uri", None) or request.query_params.get("redirect_uri")
+        if redirect_param:
+            # Use custom redirect URI if provided
+            return redirect(f"{redirect_param}?account_connected=true")
+        elif is_ios:
+            # Default iOS app URL scheme
+            return redirect("emptymyinbox://account_connected=true")
+        else:
+            # Default web redirect
+            frontend_url = settings.FRONTEND_SUCCESS_URL
+            return redirect(f"{frontend_url}?account_connected=true")
 
     except Exception as e:
         return Response(

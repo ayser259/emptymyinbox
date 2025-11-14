@@ -2,7 +2,7 @@ const djangoDebug =
   (process.env.REACT_APP_DJANGO_DEBUG || process.env.DJANGO_DEBUG || '')
     .toLowerCase();
 
-const DEFAULT_PROD_URL = 'https://emptymyinbox-t4zx.onrender.com';
+const DEFAULT_PROD_URL = 'https://emptymyinbox-sgwq.onrender.com';
 const DEFAULT_DEV_URL = 'http://localhost:8000';
 
 const API_BASE_URL =

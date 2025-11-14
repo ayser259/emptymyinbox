@@ -31,14 +31,14 @@ DEBUG = config("DJANGO_DEBUG", cast=bool, default=False)
 
 ALLOWED_HOSTS = config(
     "DJANGO_ALLOWED_HOSTS",
-    default="localhost,127.0.0.1,.onrender.com",
+    default=".onrender.com,emptymyinbox.app",
     cast=Csv(),
 )
 
 # CSRF trusted origins - required for cross-origin requests
 _raw_csrf_trusted_origins = config(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000,https://*.onrender.com",
+    default="https://*.onrender.com,https://emptymyinbox.app",
     cast=Csv(),
 )
 CSRF_TRUSTED_ORIGINS = [origin.rstrip("/") for origin in _raw_csrf_trusted_origins]
@@ -199,7 +199,7 @@ SIMPLE_JWT = {
 # CORS settings
 _raw_cors_allowed_origins = config(
     "DJANGO_CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000",
+    default="https://*.onrender.com,https://emptymyinbox.app",
     cast=Csv(),
 )
 CORS_ALLOWED_ORIGINS = [origin.rstrip("/") for origin in _raw_cors_allowed_origins]
@@ -216,12 +216,13 @@ SECURE_SSL_REDIRECT = config(
 # Gmail API settings
 GMAIL_CLIENT_ID = config("GMAIL_CLIENT_ID", default="")
 GMAIL_CLIENT_SECRET = config("GMAIL_CLIENT_SECRET", default="")
-GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI", default="http://localhost:8000/api/auth/gmail/callback")
+GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI", default="https://emptymyinbox-sgwq.onrender.com/api/auth/gmail/callback")
+FRONTEND_SUCCESS_URL = config("FRONTEND_SUCCESS_URL", default="https://emptymyinbox.app")
 
 # Celery Configuration (for background tasks)
 CELERY_BROKER_URL = config(
     "CELERY_BROKER_URL",
-    default="redis://localhost:6379/0",
+    default="redis://redis:6379/0",
 )
 CELERY_RESULT_BACKEND = config(
     "CELERY_RESULT_BACKEND",

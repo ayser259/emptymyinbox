@@ -29,8 +29,9 @@ class GmailService:
     """Service class for interacting with Gmail API"""
 
     @staticmethod
-    def get_authorization_url():
+    def get_authorization_url(redirect_uri: Optional[str] = None):
         """Get OAuth2 authorization URL for Gmail"""
+        redirect_uri = redirect_uri or settings.GMAIL_REDIRECT_URI
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -38,11 +39,11 @@ class GmailService:
                     "client_secret": settings.GMAIL_CLIENT_SECRET,
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [settings.GMAIL_REDIRECT_URI],
+                    "redirect_uris": [redirect_uri],
                 }
             },
             scopes=SCOPES,
-            redirect_uri=settings.GMAIL_REDIRECT_URI,
+            redirect_uri=redirect_uri,
         )
         authorization_url, state = flow.authorization_url(
             access_type="offline", include_granted_scopes="true", prompt="consent"
@@ -50,8 +51,9 @@ class GmailService:
         return authorization_url, state
 
     @staticmethod
-    def exchange_code_for_tokens(code: str):
+    def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None):
         """Exchange authorization code for access and refresh tokens"""
+        redirect_uri = redirect_uri or settings.GMAIL_REDIRECT_URI
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -59,11 +61,11 @@ class GmailService:
                     "client_secret": settings.GMAIL_CLIENT_SECRET,
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [settings.GMAIL_REDIRECT_URI],
+                    "redirect_uris": [redirect_uri],
                 }
             },
             scopes=SCOPES,
-            redirect_uri=settings.GMAIL_REDIRECT_URI,
+            redirect_uri=redirect_uri,
         )
         flow.fetch_token(code=code)
         credentials = flow.credentials

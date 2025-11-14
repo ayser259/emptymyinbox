@@ -276,7 +276,7 @@ struct DashboardView: View {
                             count: unreadCategoriesCount,
                             isExpanded: $isUnreadCategoriesExpanded
                         ) {
-                            if isLoading {
+                            if isLoading && unreadCategories.isEmpty {
                                 ProgressView()
                                     .frame(maxWidth: .infinity)
                                     .padding()
@@ -305,7 +305,7 @@ struct DashboardView: View {
                             count: allCategoriesCount,
                             isExpanded: $isCategoriesExpanded
                         ) {
-                            if isLoading {
+                            if isLoading && labels.isEmpty {
                                 ProgressView()
                                     .frame(maxWidth: .infinity)
                                     .padding()
@@ -373,8 +373,15 @@ struct DashboardView: View {
             MenuView()
                 .environmentObject(authManager)
         }
-        .task {
-            await loadData()
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            Task {
+                await loadData(shouldSync: false) // Refresh without full sync
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
+            Task {
+                await loadData(shouldSync: true)
+            }
         }
     }
     
@@ -541,9 +548,7 @@ struct DashboardView: View {
                 // Store starred emails separately for accurate count
                 self.starredEmails = starredEmails
                 self.labels = fetchedLabels
-                if shouldSync {
-                    self.lastRefreshTime = Date()
-                }
+                self.lastRefreshTime = Date()
                 print("Loaded \(fetchedLabels.count) labels, \(fetchedEmails.count) recent emails, \(fetchedAllEmails.count) total emails")
             }
         } catch {

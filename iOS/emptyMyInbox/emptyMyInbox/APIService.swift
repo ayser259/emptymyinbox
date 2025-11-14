@@ -17,12 +17,11 @@ class APIService {
         }
 
         let env = ProcessInfo.processInfo.environment
-        if let debugValue = env["DJANGO_DEBUG"]?.lowercased(),
-           ["1", "true", "yes"].contains(debugValue) {
-            return "http://localhost:8000/api"
+        if let apiBase = env["API_BASE_URL"], !apiBase.isEmpty {
+            return apiBase
         }
 
-        return "https://emptymyinbox-t4zx.onrender.com/api"
+        return "https://emptymyinbox-sgwq.onrender.com/api"
     }()
     private var accessToken: String?
     private var refreshToken: String?
@@ -90,22 +89,27 @@ class APIService {
             throw APIError.invalidResponse
         }
         
-        // Handle 401 Unauthorized - try to refresh token
-        if httpResponse.statusCode == 401, refreshToken != nil {
-            do {
-                try await refreshAccessToken()
-                // Retry with new token
-                var retryRequest = request
-                if let newToken = accessToken {
-                    retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+        // Handle 401 Unauthorized - try to refresh token when possible, otherwise force login
+        if httpResponse.statusCode == 401 {
+            if let _ = refreshToken {
+                do {
+                    try await refreshAccessToken()
+                    // Retry with new token
+                    var retryRequest = request
+                    if let newToken = accessToken {
+                        retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+                    }
+                    let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                    guard let retryHttpResponse = retryResponse as? HTTPURLResponse,
+                          (200...299).contains(retryHttpResponse.statusCode) else {
+                        throw APIError.invalidResponse
+                    }
+                    return try JSONDecoder().decode(T.self, from: retryData)
+                } catch {
+                    clearTokens()
+                    throw APIError.unauthorized
                 }
-                let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
-                guard let retryHttpResponse = retryResponse as? HTTPURLResponse,
-                      (200...299).contains(retryHttpResponse.statusCode) else {
-                    throw APIError.invalidResponse
-                }
-                return try JSONDecoder().decode(T.self, from: retryData)
-            } catch {
+            } else {
                 clearTokens()
                 throw APIError.unauthorized
             }
@@ -391,8 +395,14 @@ class APIService {
     
     // MARK: - Gmail OAuth
     
-    func getGmailAuthURL() async throws -> String {
-        guard let request = createRequest(endpoint: "/auth/gmail/start/", method: "GET") else {
+    func getGmailAuthURL(redirectURI: String? = nil) async throws -> String {
+        var endpoint = "/auth/gmail/start/"
+        if let redirectURI = redirectURI,
+           let encoded = redirectURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            endpoint += "?redirect_uri=\(encoded)"
+        }
+        
+        guard let request = createRequest(endpoint: endpoint, method: "GET") else {
             throw APIError.invalidRequest
         }
         
