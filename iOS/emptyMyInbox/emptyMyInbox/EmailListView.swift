@@ -62,9 +62,9 @@ struct AllEmailsView: View {
                             .padding(.vertical, AppTheme.spacingSmall)
                         }
                     }
-                    .refreshable {
-                        await refreshEmails()
-                    }
+                .refreshable {
+                    await refreshEmails()
+                }
                 }
             }
             .navigationTitle("All Emails")

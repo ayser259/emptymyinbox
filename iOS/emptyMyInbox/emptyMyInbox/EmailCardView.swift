@@ -127,19 +127,27 @@ struct EmailCardView: View {
         
         if let date = date {
             let calendar = Calendar.current
-            let day = calendar.component(.day, from: date)
-            let year = calendar.component(.year, from: date)
             
-            // Get abbreviated month name with English locale
-            let monthFormatter = DateFormatter()
-            monthFormatter.locale = Locale(identifier: "en_US_POSIX")
-            monthFormatter.dateFormat = "MMM"
-            let monthString = monthFormatter.string(from: date)
-            
-            // Get two-digit year with apostrophe
-            let yearString = "'\(String(year).suffix(2))"
-            
-            return "\(day) \(monthString) \(yearString)"
+            if calendar.isDateInToday(date) {
+                let timeFormatter = DateFormatter()
+                timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+                timeFormatter.dateFormat = "h:mm a"
+                return timeFormatter.string(from: date)
+            } else {
+                let day = calendar.component(.day, from: date)
+                let year = calendar.component(.year, from: date)
+                
+                // Get abbreviated month name with English locale
+                let monthFormatter = DateFormatter()
+                monthFormatter.locale = Locale(identifier: "en_US_POSIX")
+                monthFormatter.dateFormat = "MMM"
+                let monthString = monthFormatter.string(from: date)
+                
+                // Get two-digit year with apostrophe
+                let yearString = "'\(String(year).suffix(2))"
+                
+                return "\(day) \(monthString) \(yearString)"
+            }
         }
         
         // If all parsing fails, return original string

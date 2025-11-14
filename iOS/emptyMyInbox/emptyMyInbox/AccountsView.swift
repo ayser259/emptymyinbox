@@ -103,6 +103,13 @@ struct AccountsView: View {
         .task {
             await loadAccounts()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountConnected"))) { _ in
+            Task {
+                // Wait a moment for backend to finish processing
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                await loadAccounts()
+            }
+        }
     }
     
     private func loadAccounts() async {
@@ -127,8 +134,9 @@ struct AccountsView: View {
         defer { isAddingAccount = false }
         
         do {
-            // Get Gmail OAuth URL from backend
-            let authURL = try await APIService.shared.getGmailAuthURL()
+            // Get Gmail OAuth URL from backend, include redirect back into the app
+            let redirectURI = "emptymyinbox://account_connected"
+            let authURL = try await APIService.shared.getGmailAuthURL(redirectURI: redirectURI)
             
             // Open URL in Safari/WebView
             if let url = URL(string: authURL) {
