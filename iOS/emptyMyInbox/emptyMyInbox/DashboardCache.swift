@@ -54,6 +54,10 @@ actor DashboardCache {
             starredEmails: starredEmails,
             labels: labels
         )
+        saveSnapshot(snapshot)
+    }
+    
+    func saveSnapshot(_ snapshot: DashboardDataSnapshot) {
         do {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: .atomic)

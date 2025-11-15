@@ -10,7 +10,6 @@ import SwiftUI
 struct AllEmailsView: View {
     @State private var emails: [EmailListItem] = []
     @State private var isLoading = false
-    @State private var isRefreshing = false
     @State private var errorMessage: String?
     @State private var lastRefreshTime: Date?
     @State private var mostRecentEmailTime: Date?
@@ -63,7 +62,7 @@ struct AllEmailsView: View {
                         }
                     }
                 .refreshable {
-                    await refreshEmails()
+                    await performManualRefresh()
                 }
                 }
             }
@@ -72,57 +71,49 @@ struct AllEmailsView: View {
             .customBackButton()
             .primaryBackground()
         .task {
-            await loadEmails()
+            await loadCachedEmails()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            Task {
+                await loadCachedEmails()
+            }
         }
     }
     
-    private func loadEmails() async {
+    private func loadCachedEmails() async {
         isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            let fetchedEmails = try await APIService.shared.getEmails()
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                // Get most recent email time
-                if let mostRecent = fetchedEmails.first {
-                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
-                }
+                applySnapshot(snapshot)
+                errorMessage = nil
             }
-        } catch {
+        }
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func performManualRefresh() async {
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
             await MainActor.run {
-                self.errorMessage = error.localizedDescription
+                applySnapshot(snapshot)
+                errorMessage = nil
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        } else {
+            await MainActor.run {
+                self.errorMessage = "Failed to refresh. Please try again."
             }
         }
     }
     
-    private func refreshEmails() async {
-        isRefreshing = true
-        defer { isRefreshing = false }
-        
-        do {
-            // Sync all accounts first
-            let syncResponse = try await APIService.shared.syncAllAccounts()
-            
-            // Then reload emails
-            let fetchedEmails = try await APIService.shared.getEmails()
-            
-            await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                
-                // Use most recent email time from sync response or from emails
-                if let mostRecentTimeStr = syncResponse.most_recent_email_at {
-                    self.mostRecentEmailTime = parseDate(mostRecentTimeStr)
-                } else if let mostRecent = fetchedEmails.first {
-                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
-                }
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-            }
+    private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
+        self.emails = snapshot.allEmails
+        self.lastRefreshTime = snapshot.timestamp
+        if let mostRecent = snapshot.allEmails.first {
+            self.mostRecentEmailTime = parseDate(mostRecent.received_at)
+        } else {
+            self.mostRecentEmailTime = nil
         }
     }
     
@@ -243,22 +234,41 @@ struct EmailListView: View {
         }
         .primaryBackground()
         .task {
-            await loadEmails()
+            await loadCachedEmails()
+        }
+        .refreshable {
+            await refreshEmails()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            Task {
+                await loadCachedEmails()
+            }
         }
     }
     
-    private func loadEmails() async {
+    private func loadCachedEmails() async {
         isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            let fetchedEmails = try await APIService.shared.getEmails()
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
-                self.emails = fetchedEmails
+                self.emails = snapshot.emails
+                self.errorMessage = nil
             }
-        } catch {
+        }
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func refreshEmails() async {
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
             await MainActor.run {
-                self.errorMessage = error.localizedDescription
+                self.emails = snapshot.emails
+                self.errorMessage = nil
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        } else {
+            await MainActor.run {
+                self.errorMessage = "Unable to refresh emails."
             }
         }
     }

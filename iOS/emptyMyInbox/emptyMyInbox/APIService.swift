@@ -349,11 +349,8 @@ class APIService {
         return try await performRequest(request, responseType: [EmailListItem].self)
     }
     
-    func getUnreadEmails() async throws -> [EmailListItem] {
-        guard let request = createRequest(endpoint: "/emails/?is_read=false", method: "GET") else {
-            throw APIError.invalidRequest
-        }
-        return try await performRequest(request, responseType: [EmailListItem].self)
+    func getUnreadEmails(accountId: Int? = nil) async throws -> [EmailListItem] {
+        try await getEmails(accountId: accountId, isRead: false)
     }
     
     func getEmailsBySender(senderEmail: String) async throws -> [EmailListItem] {

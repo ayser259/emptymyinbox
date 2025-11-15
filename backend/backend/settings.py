@@ -214,10 +214,10 @@ SECURE_SSL_REDIRECT = config(
 )
 
 # Gmail API settings
-GMAIL_CLIENT_ID = config("GMAIL_CLIENT_ID", default="")
-GMAIL_CLIENT_SECRET = config("GMAIL_CLIENT_SECRET", default="")
-GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI", default="https://emptymyinbox-sgwq.onrender.com/api/auth/gmail/callback")
-FRONTEND_SUCCESS_URL = config("FRONTEND_SUCCESS_URL", default="https://emptymyinbox.app")
+GMAIL_CLIENT_ID = config("GMAIL_CLIENT_ID")
+GMAIL_CLIENT_SECRET = config("GMAIL_CLIENT_SECRET")
+GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI")
+FRONTEND_SUCCESS_URL = config("FRONTEND_SUCCESS_URL")
 
 # Celery Configuration (for background tasks)
 CELERY_BROKER_URL = config(
