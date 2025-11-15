@@ -29,7 +29,7 @@ class GmailService:
     """Service class for interacting with Gmail API"""
 
     @staticmethod
-    def get_authorization_url(redirect_uri: Optional[str] = None):
+    def get_authorization_url(redirect_uri: Optional[str] = None, state: Optional[str] = None):
         """Get OAuth2 authorization URL for Gmail"""
         redirect_uri = redirect_uri or settings.GMAIL_REDIRECT_URI
         flow = Flow.from_client_config(
@@ -45,12 +45,14 @@ class GmailService:
             scopes=SCOPES,
             redirect_uri=redirect_uri,
         )
-        authorization_url, state = flow.authorization_url(
+        authorization_url, generated_state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
             prompt="consent select_account",
+            state=state,
         )
-        return authorization_url, state
+        # google-auth will return the explicitly provided state value as generated_state
+        return authorization_url, generated_state
 
     @staticmethod
     def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None):
