@@ -16,6 +16,8 @@ struct AccountsView: View {
     @State private var isAddingAccount = false
     @State private var errorMessage: String?
     @State private var authSession: ASWebAuthenticationSession?
+    @State private var lastRefreshTime: Date?
+    @State private var unreadCountsByEmail: [String: Int] = [:]
     
     private let authSessionCoordinator = AuthenticationSessionCoordinator()
     
@@ -69,6 +71,14 @@ struct AccountsView: View {
                                     .padding(.horizontal, AppTheme.spacingMedium)
                             }
                             
+                            if let lastRefreshTime {
+                                RefreshStatusView(
+                                    lastRefreshTime: lastRefreshTime,
+                                    mostRecentEmailTime: nil
+                                )
+                                .padding(.horizontal, AppTheme.spacingMedium)
+                            }
+                            
                             // Accounts list
                             if accounts.isEmpty {
                                 VStack(spacing: AppTheme.spacingMedium) {
@@ -92,7 +102,11 @@ struct AccountsView: View {
                                         NavigationLink {
                                             AccountDetailView(account: account)
                                         } label: {
-                                            AccountRow(account: account)
+                                            AccountRow(
+                                                account: account,
+                                                unreadCount: unreadCountsByEmail[account.email],
+                                                dashboardRefreshTime: lastRefreshTime
+                                            )
                                         }
                                         .buttonStyle(PlainButtonStyle())
                                     }
@@ -126,8 +140,7 @@ struct AccountsView: View {
         isLoading = accounts.isEmpty
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
-                self.accounts = snapshot.accounts
-                self.errorMessage = nil
+                applySnapshot(snapshot)
             }
         }
         await MainActor.run {
@@ -139,8 +152,7 @@ struct AccountsView: View {
         isLoading = true
         if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
             await MainActor.run {
-                self.accounts = snapshot.accounts
-                self.errorMessage = nil
+                applySnapshot(snapshot)
             }
             NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
@@ -205,6 +217,20 @@ struct AccountsView: View {
         self.authSession = session
         session.start()
     }
+    
+    @MainActor
+    private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
+        self.accounts = snapshot.accounts
+        self.lastRefreshTime = snapshot.timestamp
+        self.unreadCountsByEmail = calculateUnreadCounts(from: snapshot.emails)
+        self.errorMessage = nil
+    }
+    
+    private func calculateUnreadCounts(from emails: [EmailListItem]) -> [String: Int] {
+        let unreadEmails = emails.filter { !$0.is_read }
+        let grouped = Dictionary(grouping: unreadEmails, by: { $0.account_email })
+        return grouped.mapValues { $0.count }
+    }
 }
 
 private final class AuthenticationSessionCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
@@ -221,6 +247,8 @@ private final class AuthenticationSessionCoordinator: NSObject, ASWebAuthenticat
 
 struct AccountRow: View {
     let account: EmailAccount
+    let unreadCount: Int?
+    let dashboardRefreshTime: Date?
     
     var body: some View {
         HStack(spacing: AppTheme.spacingMedium) {
@@ -246,8 +274,14 @@ struct AccountRow: View {
                     }
                 }
                 
+                if let dashboardRefreshTime {
+                    Text("Last refreshed: \(formatDate(dashboardRefreshTime))")
+                        .font(AppTheme.caption)
+                        .foregroundColor(AppTheme.secondaryText.opacity(0.7))
+                }
+                
                 if let lastSync = account.last_sync {
-                    Text("Last synced: \(formatDate(lastSync))")
+                    Text("Gmail sync: \(formatDate(lastSync))")
                         .font(AppTheme.caption)
                         .foregroundColor(AppTheme.secondaryText.opacity(0.7))
                 }
@@ -255,7 +289,7 @@ struct AccountRow: View {
             
             Spacer()
             
-            Text("\(account.email_count)")
+            Text("\(unreadCount ?? account.email_count)")
                 .font(AppTheme.subheadline)
                 .foregroundColor(AppTheme.accent)
                 .padding(.horizontal, AppTheme.spacingUnit)
@@ -270,6 +304,13 @@ struct AccountRow: View {
             RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
     
     private func formatDate(_ dateString: String) -> String {
