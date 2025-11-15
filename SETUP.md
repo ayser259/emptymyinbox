@@ -12,8 +12,7 @@ This guide will walk you through setting up the Gmail integration for your email
 
 1. Python 3.8+ installed
 2. Node.js 14+ and npm installed
-3. Redis (for Celery background tasks - optional for now)
-4. A Google Cloud Project with Gmail API enabled
+3. A Google Cloud Project with Gmail API enabled
 
 ## Step 1: Set Up Google Cloud Project & Gmail API
 
@@ -123,7 +122,6 @@ The frontend will be running at `http://localhost:3000`
 
 3. **Sync Emails**:
    - Click the sync button (↻) next to an account to manually refresh emails
-   - In the future, emails will sync automatically via Celery background tasks
 
 ## API Endpoints
 
@@ -144,7 +142,7 @@ The frontend will be running at `http://localhost:3000`
 
 ## Planned Features
 
-- [ ] Automatic background email sync (Celery)
+- [ ] Automatic background email sync
 - [ ] Real-time email updates (WebSockets)
 - [ ] Mark emails as read/unread
 - [ ] Star/unstar emails
@@ -195,7 +193,7 @@ The frontend will be running at `http://localhost:3000`
 
 ## Next Steps
 
-1. Set up Celery for automatic email syncing
+1. Add scheduled/background email syncing
 2. Add WebSocket support for real-time updates
 3. Build iOS app using the same Django API
 4. Add more email management features (archive, delete, etc.)
