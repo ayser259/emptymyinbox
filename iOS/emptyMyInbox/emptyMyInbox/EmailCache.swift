@@ -14,12 +14,12 @@ actor EmailCache {
     private let decoder = JSONDecoder()
     
     private let baseDirectoryURL: URL
-    private let unreadEmailsURL: URL
+    private let defaultUnreadEmailsURL: URL
     
     private init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
         baseDirectoryURL = directory.appendingPathComponent("EmailCache", isDirectory: true)
-        unreadEmailsURL = baseDirectoryURL.appendingPathComponent("unread_emails.json")
+        defaultUnreadEmailsURL = baseDirectoryURL.appendingPathComponent("unread_emails.json")
         
         if !FileManager.default.fileExists(atPath: baseDirectoryURL.path) {
             try? FileManager.default.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
@@ -28,13 +28,14 @@ actor EmailCache {
     
     // MARK: - Unread Emails
     
-    func loadUnreadEmails() -> [EmailListItem] {
-        guard FileManager.default.fileExists(atPath: unreadEmailsURL.path) else {
+    func loadUnreadEmails(accountId: Int? = nil) -> [EmailListItem] {
+        let url = unreadEmailsURL(for: accountId)
+        guard FileManager.default.fileExists(atPath: url.path) else {
             return []
         }
         
         do {
-            let data = try Data(contentsOf: unreadEmailsURL)
+            let data = try Data(contentsOf: url)
             return try decoder.decode([EmailListItem].self, from: data)
         } catch {
             print("EmailCache loadUnreadEmails error: \(error)")
@@ -42,17 +43,17 @@ actor EmailCache {
         }
     }
     
-    func saveUnreadEmails(_ emails: [EmailListItem]) {
+    func saveUnreadEmails(_ emails: [EmailListItem], accountId: Int? = nil) {
         do {
             let data = try encoder.encode(emails)
-            try data.write(to: unreadEmailsURL, options: .atomic)
+            try data.write(to: unreadEmailsURL(for: accountId), options: .atomic)
         } catch {
             print("EmailCache saveUnreadEmails error: \(error)")
         }
     }
     
-    func upsertUnreadEmail(_ email: EmailListItem) {
-        var storedEmails = loadUnreadEmails()
+    func upsertUnreadEmail(_ email: EmailListItem, accountId: Int? = nil) {
+        var storedEmails = loadUnreadEmails(accountId: accountId)
         
         if let index = storedEmails.firstIndex(where: { $0.id == email.id }) {
             storedEmails[index] = email
@@ -61,14 +62,14 @@ actor EmailCache {
             storedEmails.sort { $0.received_at > $1.received_at }
         }
         
-        saveUnreadEmails(storedEmails)
+        saveUnreadEmails(storedEmails, accountId: accountId)
     }
     
-    func removeUnreadEmail(emailId: Int) {
-        var storedEmails = loadUnreadEmails()
+    func removeUnreadEmail(emailId: Int, accountId: Int? = nil) {
+        var storedEmails = loadUnreadEmails(accountId: accountId)
         if let index = storedEmails.firstIndex(where: { $0.id == emailId }) {
             storedEmails.remove(at: index)
-            saveUnreadEmails(storedEmails)
+            saveUnreadEmails(storedEmails, accountId: accountId)
         }
     }
     
@@ -115,6 +116,15 @@ actor EmailCache {
         } catch {
             print("EmailCache deleteEmailDetail error: \(error)")
         }
+    }
+    
+    // MARK: - Helpers
+    
+    private func unreadEmailsURL(for accountId: Int?) -> URL {
+        guard let accountId = accountId else {
+            return defaultUnreadEmailsURL
+        }
+        return baseDirectoryURL.appendingPathComponent("unread_emails_account_\(accountId).json")
     }
 }
 

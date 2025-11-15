@@ -11,6 +11,8 @@ import UIKit
 import AudioToolbox
 
 struct CatchUpView: View {
+    let accountId: Int?
+    let accountEmail: String?
     @State private var unreadEmails: [EmailListItem] = []
     @State private var emailDeck: [EmailDetail] = [] // Full deck of loaded emails
     @State private var currentIndex: Int = 0
@@ -24,6 +26,11 @@ struct CatchUpView: View {
     @State private var reviewedCount: Int = 0 // Track locally reviewed emails
     @State private var lastReviewedEmailId: Int? // Track last reviewed email for visual indicator
     private let maxVisibleCards = 2 // Show only the current card and one peeking behind
+    
+    init(accountId: Int? = nil, accountEmail: String? = nil) {
+        self.accountId = accountId
+        self.accountEmail = accountEmail
+    }
     
     var body: some View {
         ZStack {
@@ -216,7 +223,7 @@ struct CatchUpView: View {
                 }
             }
         }
-        .navigationTitle("Catch Up")
+        .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .task {
@@ -224,49 +231,29 @@ struct CatchUpView: View {
             await loadUnreadEmails()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            // Dashboard will handle refresh
+            Task {
+                await loadUnreadEmails(fromCacheOnly: true)
+            }
         }
     }
     
-    private func loadUnreadEmails() async {
+    private func loadUnreadEmails(fromCacheOnly: Bool = false) async {
         isLoading = true
         defer { isLoading = false }
         
-        // Always load from cache first for instant display
-        let cachedEmails = await EmailCache.shared.loadUnreadEmails()
-        if !cachedEmails.isEmpty {
-            await MainActor.run {
-                self.unreadEmails = cachedEmails
-            }
-            await loadEmailDeck(emails: cachedEmails, useCacheOnly: true)
+        let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: accountId)
+        await MainActor.run {
+            self.unreadEmails = cachedEmails
         }
         
-        // Then fetch fresh data from API
-        do {
-            let emails = try await APIService.shared.getUnreadEmails()
-            await EmailCache.shared.saveUnreadEmails(emails)
+        if cachedEmails.isEmpty {
             await MainActor.run {
-                self.unreadEmails = emails
+                self.emailDeck = []
             }
-            
-            // Preload all email details to create the deck
-            if !emails.isEmpty {
-                await loadEmailDeck(emails: emails, useCacheOnly: false)
-            } else {
-                await MainActor.run {
-                    self.emailDeck = []
-                }
-            }
-        } catch {
-            print("Error loading unread emails: \(error)")
-            // If API fails but we have cache, keep using cache
-            if cachedEmails.isEmpty {
-                await MainActor.run {
-                    self.unreadEmails = []
-                    self.emailDeck = []
-                }
-            }
+            return
         }
+        
+        await loadEmailDeck(emails: cachedEmails, useCacheOnly: fromCacheOnly)
     }
     
     private func loadEmailDeck(emails: [EmailListItem], useCacheOnly: Bool) async {
@@ -458,18 +445,13 @@ struct CatchUpView: View {
         // Update cache - keep email but mark as starred
         await EmailCache.shared.saveEmailDetail(updatedEmail)
         // Remove from unread cache since we're removing it from the stack
-        await EmailCache.shared.removeUnreadEmail(emailId: email.id)
+        await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         
         // Enqueue star action
         Task {
             await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
         }
         
-        // Refresh unread count from database after a delay to ensure actions are synced
-        Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-            await refreshUnreadCountFromDatabase()
-        }
     }
     
     private func handleKeepUnread() async {
@@ -550,39 +532,13 @@ struct CatchUpView: View {
             isProcessing = false
         }
         
-        await EmailCache.shared.removeUnreadEmail(emailId: email.id)
+        await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         await EmailCache.shared.deleteEmailDetail(emailId: email.id)
         
         Task {
             await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
         }
         
-        // Refresh unread count from database after a delay to ensure actions are synced
-        Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-            await refreshUnreadCountFromDatabase()
-        }
-    }
-    
-    // Refresh unread count from database after actions complete
-    private func refreshUnreadCountFromDatabase() async {
-        do {
-            let freshUnreadEmails = try await APIService.shared.getUnreadEmails()
-            await MainActor.run {
-                // Update the unread emails list
-                self.unreadEmails = freshUnreadEmails
-                // Reset reviewed count since we have fresh data
-                self.reviewedCount = 0
-                self.lastReviewedEmailId = nil
-            }
-            // Update cache
-            await EmailCache.shared.saveUnreadEmails(freshUnreadEmails)
-            
-            // Post notification to refresh dashboard
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
-        } catch {
-            print("Error refreshing unread count: \(error)")
-        }
     }
     
     

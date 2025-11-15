@@ -41,311 +41,12 @@ struct DashboardView: View {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
                 
-                ScrollView {
-                    VStack(spacing: 0) {
-                    // Top bar with logo, greeting, and menu
-                    HStack(alignment: .center) {
-                        // Logo
-                        LogoView(size: 40)
-                        
-                        Spacer()
-                        
-                        // Greeting with user name - scrolling text
-                        if let user = authManager.currentUser {
-                            ScrollingText(
-                                text: "\(greeting), \(user.displayName.formattedAsName)",
-                                font: AppTheme.headline
-                            )
-                            .frame(maxWidth: .infinity)
-                        } else {
-                            Text(greeting)
-                                .font(AppTheme.headline)
-                                .primaryText()
-                        }
-                        
-                        // Hamburger menu
-                        Button {
-                            showMenu = true
-                        } label: {
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 20))
-                                .primaryText()
-                        }
-                        .iconButton()
-                    }
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.vertical, AppTheme.spacingMedium)
-                    
-                    // Search bar
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(AppTheme.secondaryText)
-                        
-                        TextField("Jump, search, or chat", text: $searchText)
-                            .primaryText()
-                            .autocapitalization(.none)
-                            .autocorrectionDisabled()
-                            .onChange(of: searchText) { oldValue, newValue in
-                                performSearch(query: newValue)
-                            }
-                        
-                        if !searchText.isEmpty {
-                            Button {
-                                searchText = ""
-                                searchResults = []
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(AppTheme.secondaryText)
-                            }
-                        }
-                    }
-                    .padding(AppTheme.spacingMedium)
-                    .background(AppTheme.secondaryBackground)
-                    .cornerRadius(AppTheme.cornerRadiusMedium)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.bottom, AppTheme.spacingMedium)
-                    
-                    // Search results
-                    if isSearchActive {
-                        VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                            HStack {
-                                Text("Search Results")
-                                    .font(AppTheme.title3)
-                                    .primaryText()
-                                
-                                Spacer()
-                                
-                                if isSearching {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Text("\(searchResults.count) found")
-                                        .font(AppTheme.caption)
-                                        .secondaryText()
-                                }
-                            }
-                            .padding(.horizontal, AppTheme.spacingMedium)
-                            .padding(.top, AppTheme.spacingMedium)
-                            
-                            if isSearching && searchResults.isEmpty {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            } else if searchResults.isEmpty && !isSearching {
-                                VStack(spacing: AppTheme.spacingMedium) {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 48))
-                                        .foregroundColor(AppTheme.secondaryText)
-                                    
-                                    Text("No results found")
-                                        .font(AppTheme.title3)
-                                        .primaryText()
-                                    
-                                    Text("Try searching with different keywords")
-                                        .font(AppTheme.body)
-                                        .secondaryText()
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, AppTheme.spacingLarge)
-                            } else {
-                                LazyVStack(spacing: 0) {
-                                    ForEach(searchResults, id: \.id) { email in
-                                        NavigationLink(value: email.id) {
-                                            GmailStyleEmailRow(email: email)
-                                                .padding(.horizontal, AppTheme.spacingMedium)
-                                                .padding(.vertical, 4)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                }
-                                .padding(.vertical, AppTheme.spacingSmall)
-                            }
-                        }
-                        .padding(.bottom, AppTheme.spacingMedium)
-                    }
-                    
-                    // Action buttons carousel
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: AppTheme.spacingMedium) {
-                        NavigationLink(value: "catch_up") {
-                            ActionButton(
-                                title: "Catch up",
-                                count: unreadCount,
-                                icon: "envelope.badge"
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        NavigationLink(value: "senders") {
-                            ActionButton(
-                                title: "Senders",
-                                count: unreadSendersCount,
-                                icon: "person.2.fill"
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                            
-                        NavigationLink(value: "all_emails") {
-                            ActionButton(
-                                title: "All emails",
-                                count: emails.count,
-                                icon: "envelope"
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        NavigationLink(value: "accounts") {
-                            ActionButton(
-                                title: "Accounts",
-                                count: accounts.count,
-                                icon: "person.crop.circle"
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        NavigationLink(value: "starred") {
-                            ActionButton(
-                                title: "Saved",
-                                count: savedCount,
-                                icon: "star.fill"
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                            
-                        ActionButton(
-                            title: "Drafts",
-                            count: draftsCount,
-                            icon: "doc.text"
-                        )
-                        
-                        // Refresh button
-                        Button {
-                            Task {
-                                await loadData(shouldSync: true)
-                            }
-                        } label: {
-                            VStack(spacing: AppTheme.spacingSmall) {
-                                if isRefreshing {
-                                    ProgressView()
-                                        .tint(AppTheme.accent)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 24))
-                                        .foregroundColor(AppTheme.accent)
-                                }
-                                
-                                Text("Refresh")
-                                    .font(AppTheme.subheadline)
-                                    .primaryText()
-                                
-                                if let lastRefresh = lastRefreshTime {
-                                    Text(formatLastRefreshTime(lastRefresh))
-                                        .font(AppTheme.caption)
-                                        .secondaryText()
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.8)
-                                } else {
-                                    Text("Never")
-                                        .font(AppTheme.caption)
-                                        .secondaryText()
-                                }
-                            }
-                            .frame(width: 100, height: 100)
-                            .background(AppTheme.secondaryBackground)
-                            .cornerRadius(AppTheme.cornerRadiusMedium)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(isRefreshing)
-                        }
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                    }
-                    .padding(.bottom, AppTheme.spacingMedium)
-                    
-                    // Collapsible sections
-                    VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-                        // Unread - Categories
-                        CollapsibleSection(
-                            title: "Unread - Categories",
-                            count: unreadCategoriesCount,
-                            isExpanded: $isUnreadCategoriesExpanded
-                        ) {
-                            if isLoading && unreadCategories.isEmpty {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            } else if unreadCategories.isEmpty {
-                                Text("No unread categories")
-                                    .font(AppTheme.subheadline)
-                                    .secondaryText()
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, AppTheme.spacingMedium)
-                                    .padding(.vertical, AppTheme.spacingSmall)
-                            } else {
-                                VStack(spacing: 2) {
-                                    ForEach(unreadCategories, id: \.id) { label in
-                                        NavigationLink(value: EmailFilter.category(label: label)) {
-                                            SlackStyleLabelRow(label: label)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Categories
-                        CollapsibleSection(
-                            title: "Categories",
-                            count: allCategoriesCount,
-                            isExpanded: $isCategoriesExpanded
-                        ) {
-                            if isLoading && labels.isEmpty {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            } else if labels.isEmpty {
-                                Text("No categories")
-                                    .font(AppTheme.subheadline)
-                                    .secondaryText()
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, AppTheme.spacingMedium)
-                                    .padding(.vertical, AppTheme.spacingSmall)
-                            } else {
-                                VStack(spacing: 2) {
-                                    ForEach(labels, id: \.id) { label in
-                                        NavigationLink(value: EmailFilter.category(label: label)) {
-                                            SlackStyleLabelRow(label: label)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .padding(.bottom, AppTheme.spacingLarge)
-                    
-                    // Add extra padding at bottom to ensure scrollable content
-                    Spacer()
-                        .frame(height: 100)
-                    }
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                }
-                .refreshable {
-                    await loadData(shouldSync: true)
-                }
+                content
             }
             .navigationDestination(for: EmailFilter.self) { filter in
                 FilteredEmailsView(filter: filter)
             }
             .navigationDestination(for: Label.self) { label in
-                // Keep for backward compatibility, but use FilteredEmailsView
                 FilteredEmailsView(filter: .category(label: label))
             }
             .navigationDestination(for: Int.self) { emailId in
@@ -375,16 +76,342 @@ struct DashboardView: View {
                 .environmentObject(authManager)
         }
         .task {
-            await loadCachedData()
+            await loadInitialData()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
-                await loadData(shouldSync: false) // Refresh without full sync
+                await refreshDashboard(shouldSync: false)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
             Task {
-                await loadData(shouldSync: true)
+                await refreshDashboard(shouldSync: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                topBarSection
+                searchBarSection
+                
+                if isSearchActive {
+                    searchResultsSection
+                }
+                
+                actionButtonsSection
+                    .padding(.bottom, AppTheme.spacingMedium)
+                
+                collapsibleSections
+                    .padding(.bottom, AppTheme.spacingLarge)
+                
+                Spacer()
+                    .frame(height: 100)
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+        }
+        .refreshable {
+            await refreshDashboard(shouldSync: true)
+        }
+    }
+
+    private var topBarSection: some View {
+        HStack(alignment: .center) {
+            LogoView(size: 40)
+            
+            Spacer()
+            
+            if let user = authManager.currentUser {
+                ScrollingText(
+                    text: "\(greeting), \(user.displayName.formattedAsName)",
+                    font: AppTheme.headline
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                Text(greeting)
+                    .font(AppTheme.headline)
+                    .primaryText()
+            }
+            
+            Button {
+                showMenu = true
+            } label: {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 20))
+                    .primaryText()
+            }
+            .iconButton()
+        }
+        .padding(.horizontal, AppTheme.spacingMedium)
+        .padding(.vertical, AppTheme.spacingMedium)
+    }
+
+    private var searchBarSection: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(AppTheme.secondaryText)
+            
+            TextField("Jump, search, or chat", text: $searchText)
+                .primaryText()
+                .autocapitalization(.none)
+                .autocorrectionDisabled()
+                .onChange(of: searchText) { _, newValue in
+                    performSearch(query: newValue)
+                }
+            
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    searchResults = []
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(AppTheme.secondaryText)
+                }
+            }
+        }
+        .padding(AppTheme.spacingMedium)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(AppTheme.cornerRadiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+        .padding(.horizontal, AppTheme.spacingMedium)
+        .padding(.bottom, AppTheme.spacingMedium)
+    }
+
+    @ViewBuilder
+    private var searchResultsSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
+            HStack {
+                Text("Search Results")
+                    .font(AppTheme.title3)
+                    .primaryText()
+                
+                Spacer()
+                
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Text("\(searchResults.count) found")
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                }
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+            .padding(.top, AppTheme.spacingMedium)
+            
+            if isSearching && searchResults.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if searchResults.isEmpty && !isSearching {
+                VStack(spacing: AppTheme.spacingMedium) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 48))
+                        .foregroundColor(AppTheme.secondaryText)
+                    
+                    Text("No results found")
+                        .font(AppTheme.title3)
+                        .primaryText()
+                    
+                    Text("Try searching with different keywords")
+                        .font(AppTheme.body)
+                        .secondaryText()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, AppTheme.spacingLarge)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(searchResults, id: \.id) { email in
+                        NavigationLink(value: email.id) {
+                            GmailStyleEmailRow(email: email)
+                                .padding(.horizontal, AppTheme.spacingMedium)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.vertical, AppTheme.spacingSmall)
+            }
+        }
+        .padding(.bottom, AppTheme.spacingMedium)
+    }
+
+    private var actionButtonsSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AppTheme.spacingMedium) {
+                if shouldPrioritizeRefreshButton {
+                    refreshButton
+                }
+                
+                NavigationLink(value: "catch_up") {
+                    ActionButton(
+                        title: "Catch up",
+                        count: unreadCount,
+                        icon: "envelope.badge"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                NavigationLink(value: "accounts") {
+                    ActionButton(
+                        title: "Accounts",
+                        count: accounts.count,
+                        icon: "person.crop.circle"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                NavigationLink(value: "all_emails") {
+                    ActionButton(
+                        title: "All emails",
+                        count: emails.count,
+                        icon: "envelope"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                NavigationLink(value: "senders") {
+                    ActionButton(
+                        title: "Senders",
+                        count: unreadSendersCount,
+                        icon: "person.2.fill"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                NavigationLink(value: "starred") {
+                    ActionButton(
+                        title: "Saved",
+                        count: savedCount,
+                        icon: "star.fill"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                ActionButton(
+                    title: "Drafts",
+                    count: draftsCount,
+                    icon: "doc.text"
+                )
+                
+                if !shouldPrioritizeRefreshButton {
+                    refreshButton
+                }
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+        }
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task {
+                await refreshDashboard(shouldSync: true)
+            }
+        } label: {
+            VStack(spacing: AppTheme.spacingSmall) {
+                if isRefreshing {
+                    ProgressView()
+                        .tint(AppTheme.accent)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 24))
+                        .foregroundColor(AppTheme.accent)
+                }
+                
+                Text("Refresh")
+                    .font(AppTheme.subheadline)
+                    .primaryText()
+                
+                if let lastRefresh = lastRefreshTime {
+                    Text(formatLastRefreshTime(lastRefresh))
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                } else {
+                    Text("Never")
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                }
+            }
+            .frame(width: 100, height: 100)
+            .background(AppTheme.secondaryBackground)
+            .cornerRadius(AppTheme.cornerRadiusMedium)
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isRefreshing)
+    }
+
+    private var shouldPrioritizeRefreshButton: Bool {
+        guard let lastRefreshTime else { return true }
+        return Date().timeIntervalSince(lastRefreshTime) >= 3600
+    }
+
+    private var collapsibleSections: some View {
+        VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+            CollapsibleSection(
+                title: "Unread - Categories",
+                count: unreadCategoriesCount,
+                isExpanded: $isUnreadCategoriesExpanded
+            ) {
+                if isLoading && unreadCategories.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                } else if unreadCategories.isEmpty {
+                    Text("No unread categories")
+                        .font(AppTheme.subheadline)
+                        .secondaryText()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, AppTheme.spacingMedium)
+                        .padding(.vertical, AppTheme.spacingSmall)
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(unreadCategories, id: \.id) { label in
+                            NavigationLink(value: EmailFilter.category(label: label)) {
+                                SlackStyleLabelRow(label: label)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                }
+            }
+            
+            CollapsibleSection(
+                title: "Categories",
+                count: allCategoriesCount,
+                isExpanded: $isCategoriesExpanded
+            ) {
+                if isLoading && labels.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                } else if labels.isEmpty {
+                    Text("No categories")
+                        .font(AppTheme.subheadline)
+                        .secondaryText()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, AppTheme.spacingMedium)
+                        .padding(.vertical, AppTheme.spacingSmall)
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(labels, id: \.id) { label in
+                            NavigationLink(value: EmailFilter.category(label: label)) {
+                                SlackStyleLabelRow(label: label)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                }
             }
         }
     }
@@ -511,62 +538,41 @@ struct DashboardView: View {
         }
     }
     
-    private func loadData(shouldSync: Bool = false) async {
-        if shouldSync {
-            isRefreshing = true
-        } else if !hasCachedData {
-            isLoading = true
+    private func loadInitialData() async {
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            await MainActor.run {
+                applySnapshot(snapshot)
+            }
         }
-        defer {
-            if shouldSync {
-                isRefreshing = false
-            } else {
-                isLoading = false
+        await refreshDashboard(shouldSync: false)
+    }
+    
+    private func refreshDashboard(shouldSync: Bool) async {
+        if shouldSync {
+            await MainActor.run {
+                isRefreshing = true
+            }
+        } else if !hasCachedData {
+            await MainActor.run {
+                isLoading = true
             }
         }
         
-        do {
-            // If refreshing, sync accounts first
-            if shouldSync {
-                do {
-                    _ = try await APIService.shared.syncAllAccounts()
-                    print("Synced all accounts")
-                } catch {
-                    print("Error syncing accounts: \(error.localizedDescription)")
-                    // Continue loading even if sync fails
+        defer {
+            Task { @MainActor in
+                if shouldSync {
+                    isRefreshing = false
+                } else {
+                    isLoading = false
                 }
             }
-            
-            async let accountsTask = APIService.shared.getAccounts()
-            async let emailsTask = APIService.shared.getEmails() // Get recent emails for display
-            async let allEmailsTask = APIService.shared.getEmails() // Get all emails for sender grouping
-            async let starredEmailsTask = APIService.shared.getStarredEmails() // Get all starred emails for count
-            async let labelsTask = APIService.shared.getLabels()
-            
-            let (fetchedAccounts, fetchedEmails, fetchedAllEmails, starredEmails, fetchedLabels) = try await (accountsTask, emailsTask, allEmailsTask, starredEmailsTask, labelsTask)
-            
+        }
+        
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync) {
             await MainActor.run {
-                self.accounts = fetchedAccounts
-                self.emails = fetchedEmails
-                self.allEmails = fetchedAllEmails // Store all emails for sender grouping
-                // Store starred emails separately for accurate count
-                self.starredEmails = starredEmails
-                self.labels = fetchedLabels
-                self.lastRefreshTime = Date()
-                print("Loaded \(fetchedLabels.count) labels, \(fetchedEmails.count) recent emails, \(fetchedAllEmails.count) total emails")
-            }
-            await DashboardCache.shared.saveSnapshot(accounts: fetchedAccounts,
-                                                     emails: fetchedEmails,
-                                                     allEmails: fetchedAllEmails,
-                                                     starredEmails: starredEmails,
-                                                     labels: fetchedLabels)
-        } catch {
-            print("Error loading data: \(error.localizedDescription)")
-            await MainActor.run {
-                // Show error state
-                if labels.isEmpty {
-                    print("Labels array is empty - check API connection and ensure Gmail account is connected")
-                }
+                applySnapshot(snapshot)
+                lastRefreshTime = snapshot.timestamp
+                NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
             }
         }
     }
@@ -575,18 +581,13 @@ struct DashboardView: View {
         !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty)
     }
     
-    private func loadCachedData() async {
-        if let snapshot = await DashboardCache.shared.loadSnapshot() {
-            await MainActor.run {
-                self.accounts = snapshot.accounts
-                self.emails = snapshot.emails
-                self.allEmails = snapshot.allEmails
-                self.starredEmails = snapshot.starredEmails
-                self.labels = snapshot.labels
-                self.lastRefreshTime = snapshot.timestamp
-            }
-        }
-        await loadData(shouldSync: false)
+    private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
+        self.accounts = snapshot.accounts
+        self.emails = snapshot.emails
+        self.allEmails = snapshot.allEmails
+        self.starredEmails = snapshot.starredEmails
+        self.labels = snapshot.labels
+        self.lastRefreshTime = snapshot.timestamp
     }
 }
 

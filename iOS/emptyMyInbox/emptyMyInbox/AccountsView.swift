@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import UIKit
+import AuthenticationServices
 
 struct AccountsView: View {
     @EnvironmentObject var authManager: AuthManager
@@ -13,6 +15,9 @@ struct AccountsView: View {
     @State private var isLoading = false
     @State private var isAddingAccount = false
     @State private var errorMessage: String?
+    @State private var authSession: ASWebAuthenticationSession?
+    
+    private let authSessionCoordinator = AuthenticationSessionCoordinator()
     
     var body: some View {
         ZStack {
@@ -84,7 +89,12 @@ struct AccountsView: View {
                             } else {
                                 VStack(spacing: AppTheme.spacingSmall) {
                                     ForEach(accounts, id: \.id) { account in
-                                        AccountRow(account: account)
+                                        NavigationLink {
+                                            AccountDetailView(account: account)
+                                        } label: {
+                                            AccountRow(account: account)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
                                     }
                                 }
                                 .padding(.horizontal, AppTheme.spacingMedium)
@@ -93,7 +103,7 @@ struct AccountsView: View {
                         .padding(.bottom, AppTheme.spacingLarge)
                     }
                     .refreshable {
-                        await loadAccounts()
+                        await refreshAccounts()
                     }
                 }
             }
@@ -101,30 +111,45 @@ struct AccountsView: View {
         .navigationBarTitleDisplayMode(.large)
         .customBackButton()
         .task {
-            await loadAccounts()
+            await loadCachedAccounts()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountConnected"))) { _ in
             Task {
                 // Wait a moment for backend to finish processing
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                await loadAccounts()
+                await refreshAccounts()
             }
         }
     }
     
-    private func loadAccounts() async {
+    private func loadCachedAccounts() async {
+        isLoading = accounts.isEmpty
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            await MainActor.run {
+                self.accounts = snapshot.accounts
+                self.errorMessage = nil
+            }
+        }
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func refreshAccounts() async {
         isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            let fetchedAccounts = try await APIService.shared.getAccounts()
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
             await MainActor.run {
-                self.accounts = fetchedAccounts
+                self.accounts = snapshot.accounts
+                self.errorMessage = nil
             }
-        } catch {
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        } else {
             await MainActor.run {
-                self.errorMessage = error.localizedDescription
+                self.errorMessage = "Unable to refresh accounts. Please try again."
             }
+        }
+        await MainActor.run {
+            isLoading = false
         }
     }
     
@@ -138,23 +163,59 @@ struct AccountsView: View {
             let redirectURI = "emptymyinbox://account_connected"
             let authURL = try await APIService.shared.getGmailAuthURL(redirectURI: redirectURI)
             
-            // Open URL in Safari/WebView
-            if let url = URL(string: authURL) {
+            guard let url = URL(string: authURL) else {
                 await MainActor.run {
-                    UIApplication.shared.open(url)
+                    self.errorMessage = "Invalid authorization URL"
                 }
-                
-                // Note: The OAuth callback will be handled by the backend
-                // and the user will be redirected back. We'll need to refresh
-                // accounts after a delay or use a notification
-                try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-                await loadAccounts()
+                return
+            }
+            
+            await MainActor.run {
+                startAuthenticationSession(with: url)
             }
         } catch {
             await MainActor.run {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
         }
+    }
+    
+    @MainActor
+    private func startAuthenticationSession(with url: URL) {
+        let session = ASWebAuthenticationSession(
+            url: url,
+            callbackURLScheme: "emptymyinbox"
+        ) { callbackURL, error in
+            if let error = error as? ASWebAuthenticationSessionError,
+               error.code == .canceledLogin {
+                return
+            }
+            
+            if let error = error {
+                self.errorMessage = "Authentication failed: \(error.localizedDescription)"
+                return
+            }
+            
+            if callbackURL != nil {
+                NotificationCenter.default.post(name: NSNotification.Name("AccountConnected"), object: nil)
+            }
+        }
+        session.presentationContextProvider = authSessionCoordinator
+        session.prefersEphemeralWebBrowserSession = false
+        self.authSession = session
+        session.start()
+    }
+}
+
+private final class AuthenticationSessionCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let window = windowScene.windows.first(where: { $0.isKeyWindow }) else {
+            return ASPresentationAnchor()
+        }
+        return window
     }
 }
 
@@ -222,6 +283,217 @@ struct AccountRow: View {
             return dateFormatter.string(from: date)
         }
         return ""
+    }
+}
+
+struct AccountDetailView: View {
+    let account: EmailAccount
+    @State private var emails: [EmailListItem] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var lastRefreshTime: Date?
+    @State private var mostRecentEmailTime: Date?
+    
+    var body: some View {
+        ZStack {
+            AppTheme.primaryBackground
+                .ignoresSafeArea()
+            
+            if isLoading && emails.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: AppTheme.spacingMedium) {
+                        catchUpEntry
+                        
+                        if let errorMessage = errorMessage {
+                            Text(errorMessage)
+                                .font(AppTheme.caption)
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(AppTheme.spacingMedium)
+                                .background(AppTheme.secondaryBackground)
+                                .cornerRadius(AppTheme.cornerRadiusMedium)
+                        }
+                        
+                        if emails.isEmpty {
+                            VStack(spacing: AppTheme.spacingMedium) {
+                                Image(systemName: "envelope.badge")
+                                    .font(.system(size: 48))
+                                    .foregroundColor(AppTheme.secondaryText)
+                                
+                                Text("No emails yet")
+                                    .font(AppTheme.title3)
+                                    .primaryText()
+                                
+                                Text("We couldn't find any messages for \(account.email).")
+                                    .font(AppTheme.body)
+                                    .secondaryText()
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(AppTheme.spacingXLarge)
+                            .frame(maxWidth: .infinity)
+                            .background(AppTheme.secondaryBackground)
+                            .cornerRadius(AppTheme.cornerRadiusLarge)
+                        } else {
+                            if let lastRefresh = lastRefreshTime {
+                                RefreshStatusView(
+                                    lastRefreshTime: lastRefresh,
+                                    mostRecentEmailTime: mostRecentEmailTime
+                                )
+                                .padding(.horizontal, AppTheme.spacingMedium)
+                            }
+                            
+                            LazyVStack(spacing: 0) {
+                                ForEach(emails, id: \.id) { email in
+                                    GmailStyleEmailRow(email: email)
+                                        .padding(.horizontal, AppTheme.spacingMedium)
+                                        .padding(.vertical, 4)
+                                }
+                            }
+                            .padding(.vertical, AppTheme.spacingSmall)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                                    .fill(AppTheme.secondaryBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                                            .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.top, AppTheme.spacingMedium)
+                    .padding(.bottom, AppTheme.spacingLarge)
+                }
+                .refreshable {
+                    await refreshEmails()
+                }
+            }
+        }
+        .navigationTitle(account.email)
+        .navigationBarTitleDisplayMode(.inline)
+        .customBackButton()
+        .task {
+            await loadCachedEmails()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            Task {
+                await loadCachedEmails()
+            }
+        }
+    }
+    
+    private var catchUpEntry: some View {
+        NavigationLink(
+            destination: CatchUpView(accountId: account.id, accountEmail: account.email)
+        ) {
+            VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
+                HStack {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(AppTheme.accent)
+                        .padding(8)
+                        .background(AppTheme.accent.opacity(0.15))
+                        .clipShape(Circle())
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(AppTheme.secondaryText)
+                }
+                
+                Text("Catch up in this account")
+                    .font(AppTheme.title3)
+                    .primaryText()
+                
+                Text("Process unread emails from \(account.email) without switching contexts.")
+                    .font(AppTheme.subheadline)
+                    .secondaryText()
+                    .multilineTextAlignment(.leading)
+                
+                HStack(spacing: AppTheme.spacingLarge) {
+                    statView(
+                        label: "Total emails",
+                        value: "\(account.email_count)"
+                    )
+                    
+                    statView(
+                        label: "Status",
+                        value: account.is_active ? "Active" : "Paused"
+                    )
+                }
+            }
+            .padding(AppTheme.spacingMedium)
+            .background(AppTheme.secondaryBackground)
+            .cornerRadius(AppTheme.cornerRadiusLarge)
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusLarge)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func statView(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(AppTheme.caption)
+                .foregroundColor(AppTheme.secondaryText.opacity(0.7))
+                .tracking(0.6)
+            
+            Text(value)
+                .font(AppTheme.headline)
+                .primaryText()
+        }
+    }
+    
+    private func loadCachedEmails() async {
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let cachedEmails = snapshot.allEmails.filter { $0.account_email == account.email }
+            await MainActor.run {
+                self.emails = cachedEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = cachedEmails.first {
+                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
+                } else {
+                    self.mostRecentEmailTime = nil
+                }
+            }
+        }
+    }
+    
+    private func refreshEmails() async {
+        isLoading = true
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
+            let filtered = snapshot.allEmails.filter { $0.account_email == account.email }
+            await MainActor.run {
+                self.emails = filtered
+                self.lastRefreshTime = snapshot.timestamp
+                self.errorMessage = nil
+                if let mostRecent = filtered.first {
+                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
+                } else {
+                    self.mostRecentEmailTime = nil
+                }
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        } else {
+            await MainActor.run {
+                self.errorMessage = "Unable to refresh emails. Please try again."
+            }
+        }
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func parseDate(_ dateString: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: dateString)
     }
 }
 

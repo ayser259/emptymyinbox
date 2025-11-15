@@ -86,10 +86,15 @@ struct SendersView: View {
         .navigationBarTitleDisplayMode(.large)
         .primaryBackground()
         .task {
-            await loadEmails()
+            await loadCachedEmails()
         }
         .refreshable {
-            await loadEmails(shouldSync: true)
+            await refreshFromServer()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
+            Task {
+                await loadCachedEmails()
+            }
         }
     }
     
@@ -141,31 +146,24 @@ struct SendersView: View {
     
     // MARK: - Data Loading
     
-    private func loadEmails(shouldSync: Bool = false) async {
+    private func loadCachedEmails() async {
         isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            // If refreshing, sync accounts first
-            if shouldSync {
-                do {
-                    _ = try await APIService.shared.syncAllAccounts()
-                    print("Synced all accounts")
-                } catch {
-                    print("Error syncing accounts: \(error.localizedDescription)")
-                    // Continue loading even if sync fails
-                }
-            }
-            
-            // Get all emails for sender grouping
-            let fetchedEmails = try await APIService.shared.getEmails()
-            
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
-                self.allEmails = fetchedEmails
-                print("Loaded \(fetchedEmails.count) emails for sender grouping")
+                self.allEmails = snapshot.allEmails
             }
-        } catch {
-            print("Error loading emails: \(error.localizedDescription)")
+        }
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func refreshFromServer() async {
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
+            await MainActor.run {
+                self.allEmails = snapshot.allEmails
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         }
     }
 }
