@@ -219,7 +219,7 @@ class GmailService:
             results = (
                 service.users()
                 .messages()
-                .list(userId="me", maxResults=max_results)
+                .list(userId="me", maxResults=max_results, q="is:unread")
                 .execute()
             )
             messages = results.get("messages", [])

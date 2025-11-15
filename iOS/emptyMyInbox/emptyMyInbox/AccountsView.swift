@@ -430,65 +430,18 @@ struct AccountDetailView: View {
         NavigationLink(
             destination: CatchUpView(accountId: account.id, accountEmail: account.email)
         ) {
-            VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                HStack {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(AppTheme.accent)
-                        .padding(8)
-                        .background(AppTheme.accent.opacity(0.15))
-                        .clipShape(Circle())
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(AppTheme.secondaryText)
-                }
-                
-                Text("Catch up in this account")
-                    .font(AppTheme.title3)
-                    .primaryText()
-                
-                Text("Process unread emails from \(account.email) without switching contexts.")
-                    .font(AppTheme.subheadline)
-                    .secondaryText()
-                    .multilineTextAlignment(.leading)
-                
-                HStack(spacing: AppTheme.spacingLarge) {
-                    statView(
-                        label: "Total emails",
-                        value: "\(account.email_count)"
-                    )
-                    
-                    statView(
-                        label: "Status",
-                        value: account.is_active ? "Active" : "Paused"
-                    )
-                }
-            }
-            .padding(AppTheme.spacingMedium)
-            .background(AppTheme.secondaryBackground)
-            .cornerRadius(AppTheme.cornerRadiusLarge)
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusLarge)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            ShortcutActionChip(
+                title: "Catch up",
+                subtitle: "\(unreadCount) unread • \(account.email)",
+                icon: "bolt.fill",
+                badgeText: unreadCount > 0 ? "\(unreadCount)" : nil
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
     
-    private func statView(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased())
-                .font(AppTheme.caption)
-                .foregroundColor(AppTheme.secondaryText.opacity(0.7))
-                .tracking(0.6)
-            
-            Text(value)
-                .font(AppTheme.headline)
-                .primaryText()
-        }
+    private var unreadCount: Int {
+        emails.filter { !$0.is_read }.count
     }
     
     private func loadCachedEmails() async {
@@ -535,6 +488,64 @@ struct AccountDetailView: View {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: dateString)
+    }
+}
+
+struct ShortcutActionChip: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let badgeText: String?
+    
+    var body: some View {
+        HStack(spacing: AppTheme.spacingMedium) {
+            ZStack {
+                Circle()
+                    .fill(AppTheme.accent.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(AppTheme.accent)
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.uppercased())
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(AppTheme.secondaryText.opacity(0.8))
+                    .tracking(0.8)
+                Text(subtitle)
+                    .font(AppTheme.subheadline)
+                    .primaryText()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+            }
+            
+            Spacer()
+            
+            if let badgeText {
+                Text(badgeText)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AppTheme.accent)
+                    .clipShape(Capsule())
+            }
+            
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppTheme.secondaryText.opacity(0.8))
+        }
+        .padding(AppTheme.spacingMedium)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusLarge)
+                .fill(AppTheme.secondaryBackground)
+                .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusLarge)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
     }
 }
 

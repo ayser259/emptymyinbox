@@ -26,7 +26,6 @@ from .serializers import (
     FilterSerializer,
 )
 from .gmail_service import GmailService
-from .tasks import sync_account
 from django.db.models import Q, Count
 from django.db import connection
 
@@ -363,22 +362,15 @@ def gmail_auth_callback(request):
         if temp_account.email == "temp@temp.com":
             temp_account.delete()
 
-        # Perform initial sync asynchronously to avoid request timeouts
+        # Perform initial sync inline
         try:
-            sync_account.delay(email_account.id, max_results=250, include_filters=True)
+            GmailService.sync_emails(email_account, max_results=250)
+            GmailService.sync_filters(email_account)
         except Exception as e:
             logger.error(
-                f"Failed to enqueue initial sync for account {email_account.email}: {e}",
+                f"Initial sync failed for account {email_account.email}: {e}",
                 exc_info=True,
             )
-            # Fallback to inline sync with a smaller batch so the user still has data
-            try:
-                GmailService.sync_emails(email_account, max_results=50)
-            except Exception as inline_error:
-                logger.error(
-                    f"Inline fallback sync failed for account {email_account.email}: {inline_error}",
-                    exc_info=True,
-                )
 
         # Clean up oauth state
         redirect_override = oauth_state.redirect_uri
