@@ -1,9 +1,12 @@
 import logging
+import secrets
+from datetime import timedelta
 
 from django.shortcuts import redirect
 from django.conf import settings
-from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth import authenticate
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.views import APIView
@@ -11,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import EmailAccount, Email, UserProfile, Filter
+from .models import EmailAccount, Email, UserProfile, Filter, GmailOAuthState
 from .serializers import (
     EmailAccountSerializer,
     EmailSerializer,
@@ -23,10 +26,12 @@ from .serializers import (
     FilterSerializer,
 )
 from .gmail_service import GmailService
+from .tasks import sync_account
 from django.db.models import Q, Count
 from django.db import connection
 
 logger = logging.getLogger(__name__)
+GMAIL_OAUTH_STATE_TTL = timedelta(minutes=15)
 
 
 class EmailAccountViewSet(viewsets.ModelViewSet):
@@ -257,15 +262,22 @@ def gmail_auth_start(request):
     """Start Gmail OAuth flow"""
     try:
         callback_url = request.build_absolute_uri(reverse("gmail-auth-callback"))
-        auth_url, state = GmailService.get_authorization_url(redirect_uri=callback_url)
-        # Store state and user_id in session for verification
-        request.session["gmail_oauth_state"] = state
-        request.session["gmail_oauth_user_id"] = request.user.id
-        redirect_uri = request.query_params.get("redirect_uri")
-        if redirect_uri:
-            request.session["gmail_oauth_redirect_uri"] = redirect_uri
-        elif "gmail_oauth_redirect_uri" in request.session:
-            del request.session["gmail_oauth_redirect_uri"]
+        state_token = secrets.token_urlsafe(32)
+
+        # Cleanup any stale tokens for this user to avoid table bloat
+        cutoff = timezone.now() - GMAIL_OAUTH_STATE_TTL
+        GmailOAuthState.objects.filter(user=request.user, created_at__lt=cutoff).delete()
+
+        redirect_uri_override = request.query_params.get("redirect_uri", "")
+        GmailOAuthState.objects.create(
+            state=state_token,
+            user=request.user,
+            redirect_uri=redirect_uri_override or "",
+        )
+
+        auth_url, _ = GmailService.get_authorization_url(
+            redirect_uri=callback_url, state=state_token
+        )
         return Response({"authorization_url": auth_url})
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -279,30 +291,26 @@ def gmail_auth_callback(request):
     state = request.query_params.get("state")
     callback_url = request.build_absolute_uri(reverse("gmail-auth-callback"))
 
-    # Verify state matches session
-    session_state = request.session.get("gmail_oauth_state")
-    if not session_state or session_state != state:
+    if not state:
+        return Response(
+            {"error": "Missing state parameter"}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        oauth_state = GmailOAuthState.objects.get(state=state)
+    except GmailOAuthState.DoesNotExist:
         return Response(
             {"error": "Invalid state parameter"}, status=status.HTTP_400_BAD_REQUEST
         )
 
-    # Get user_id from session (stored during auth_start)
-    user_id = request.session.get("gmail_oauth_user_id")
-    if not user_id:
+    if oauth_state.created_at < timezone.now() - GMAIL_OAUTH_STATE_TTL:
+        oauth_state.delete()
         return Response(
-            {"error": "User session not found. Please start the OAuth flow again."}, 
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "State parameter expired. Please restart the OAuth flow."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Get the user object
-    User = get_user_model()
-    try:
-        user = User.objects.get(id=user_id)
-    except User.DoesNotExist:
-        return Response(
-            {"error": "User not found"}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
+    user = oauth_state.user
 
     if not code:
         return Response(
@@ -355,22 +363,36 @@ def gmail_auth_callback(request):
         if temp_account.email == "temp@temp.com":
             temp_account.delete()
 
-        # Perform initial sync
+        # Perform initial sync asynchronously to avoid request timeouts
         try:
-            GmailService.sync_emails(email_account, max_results=100)
+            sync_account.delay(email_account.id, max_results=250, include_filters=True)
         except Exception as e:
-            logger.error(f"Error during initial sync for account {email_account.email}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to enqueue initial sync for account {email_account.email}: {e}",
+                exc_info=True,
+            )
+            # Fallback to inline sync with a smaller batch so the user still has data
+            try:
+                GmailService.sync_emails(email_account, max_results=50)
+            except Exception as inline_error:
+                logger.error(
+                    f"Inline fallback sync failed for account {email_account.email}: {inline_error}",
+                    exc_info=True,
+                )
 
-        # Clean up session
-        del request.session["gmail_oauth_state"]
-        del request.session["gmail_oauth_user_id"]
+        # Clean up oauth state
+        redirect_override = oauth_state.redirect_uri
+        oauth_state.delete()
 
         # Detect if request is from iOS app
         user_agent = request.META.get("HTTP_USER_AGENT", "").lower()
         is_ios = "iphone" in user_agent or "ipad" in user_agent or "ipod" in user_agent
         
         # Check for iOS app redirect parameter (can be passed via state or query param)
-        redirect_param = request.session.pop("gmail_oauth_redirect_uri", None) or request.query_params.get("redirect_uri")
+        redirect_param = (
+            redirect_override
+            or request.query_params.get("redirect_uri")
+        )
         if redirect_param:
             # Use custom redirect URI if provided
             return redirect(f"{redirect_param}?account_connected=true")

@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -106,3 +108,19 @@ class Filter(models.Model):
         
         criteria_str = ", ".join(criteria_parts) if criteria_parts else "no criteria"
         return f"Filter: {criteria_str}"
+
+
+class GmailOAuthState(models.Model):
+    """Tracks in-flight Gmail OAuth sessions for clients without shared cookies"""
+    state = models.CharField(max_length=255, unique=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="gmail_oauth_states")
+    redirect_uri = models.CharField(max_length=512, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["state"]),
+        ]
+
+    def is_expired(self, ttl: timedelta) -> bool:
+        return self.created_at < timezone.now() - ttl

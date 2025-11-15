@@ -10,24 +10,33 @@ from .gmail_service import GmailService
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def sync_all_accounts():
+@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def sync_all_accounts(self, max_results=50):
     """Sync emails for all active accounts"""
     accounts = EmailAccount.objects.filter(is_active=True)
     for account in accounts:
-        try:
-            GmailService.sync_emails(account, max_results=50)
-        except Exception as e:
-            logger.error(f"Error syncing account {account.email}: {e}", exc_info=True)
+        sync_account.delay(account.id, max_results=max_results)
 
 
-@shared_task
-def sync_account(account_id):
+@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def sync_account(self, account_id, max_results=100, include_filters=False):
     """Sync emails for a specific account"""
     try:
         account = EmailAccount.objects.get(id=account_id, is_active=True)
-        GmailService.sync_emails(account, max_results=100)
     except EmailAccount.DoesNotExist:
         logger.warning(f"Account {account_id} not found")
+        return
+
+    try:
+        GmailService.sync_emails(account, max_results=max_results)
+
+        if include_filters:
+            try:
+                GmailService.sync_filters(account)
+            except Exception as filters_error:
+                logger.warning(
+                    f"Filter sync failed for account {account.email}: {filters_error}",
+                    exc_info=True,
+                )
     except Exception as e:
         logger.error(f"Error syncing account {account_id}: {e}", exc_info=True)
