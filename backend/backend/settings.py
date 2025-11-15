@@ -217,7 +217,10 @@ SECURE_SSL_REDIRECT = config(
 GMAIL_CLIENT_ID = config("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = config("GMAIL_CLIENT_SECRET")
 GMAIL_REDIRECT_URI = config("GMAIL_REDIRECT_URI")
-FRONTEND_SUCCESS_URL = config("FRONTEND_SUCCESS_URL")
+FRONTEND_SUCCESS_URL = config(
+    "FRONTEND_SUCCESS_URL",
+    default="emptymyinbox://account_connected",
+)
 
 # Celery Configuration (for background tasks)
 CELERY_BROKER_URL = config(
