@@ -41,6 +41,22 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return EmailAccount.objects.filter(user=self.request.user, is_active=True)
 
+    @action(detail=False, methods=["post"])
+    def clear_database(self, request):
+        """Delete email records in our database for this user (does not touch Gmail)"""
+        user_accounts = self.get_queryset()
+        account_ids = list(user_accounts.values_list("id", flat=True))
+        if not account_ids:
+            return Response({"deleted": 0}, status=status.HTTP_200_OK)
+        try:
+            deleted_count, _ = Email.objects.filter(account_id__in=account_ids).delete()
+            # Reset last_sync so future syncs run fresh
+            EmailAccount.objects.filter(id__in=account_ids).update(last_sync=None)
+            return Response({"deleted": deleted_count}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error clearing emails for user {request.user.id}: {e}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=["post"])
     def sync(self, request, pk=None):
         """Manually trigger email sync for an account"""

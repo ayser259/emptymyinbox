@@ -26,6 +26,18 @@ actor EmailCache {
         }
     }
     
+    // MARK: - Clear All
+    
+    func clearAll() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: baseDirectoryURL, includingPropertiesForKeys: nil, options: []) else {
+            return
+        }
+        for file in files {
+            try? fm.removeItem(at: file)
+        }
+    }
+    
     // MARK: - Unread Emails
     
     func loadUnreadEmails(accountId: Int? = nil) -> [EmailListItem] {

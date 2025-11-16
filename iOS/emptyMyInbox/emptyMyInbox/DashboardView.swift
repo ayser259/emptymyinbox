@@ -78,6 +78,17 @@ struct DashboardView: View {
         .task {
             await loadInitialData()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CacheCleared"))) { _ in
+            Task { @MainActor in
+                // Clear in-memory state so UI reflects empty cache immediately
+                self.accounts = []
+                self.emails = []
+                self.allEmails = []
+                self.starredEmails = []
+                self.labels = []
+                self.lastRefreshTime = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
                 await refreshDashboard(shouldSync: false)
@@ -816,6 +827,7 @@ struct SlackStyleSenderRow: View {
 struct MenuView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    @State private var showClearedAlert = false
     
     var body: some View {
         NavigationView {
@@ -840,6 +852,23 @@ struct MenuView: View {
                 Section {
                     Button {
                         Task {
+                            await DashboardCache.shared.clear()
+                            await EmailCache.shared.clearAll()
+                            await MainActor.run {
+                                NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                                showClearedAlert = true
+                                // Auto-dismiss the sheet shortly after clearing
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                    dismiss()
+                                }
+                            }
+                        }
+                    } label: {
+                        SwiftUI.Label("Clear Cache", systemImage: "trash")
+                    }
+                    
+                    Button {
+                        Task {
                             await authManager.logout()
                             dismiss()
                         }
@@ -859,6 +888,11 @@ struct MenuView: View {
                     }
                     .textButton()
                 }
+            }
+            .alert("Cache cleared", isPresented: $showClearedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Local cache was removed.")
             }
         }
     }

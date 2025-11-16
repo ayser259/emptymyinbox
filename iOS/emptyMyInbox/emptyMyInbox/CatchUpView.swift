@@ -50,7 +50,7 @@ struct CatchUpView: View {
                             HStack {
                                 Spacer()
                                 HStack(spacing: 8) {
-                                    Text("\(max(0, unreadEmails.count - currentIndex - reviewedCount)) left to review")
+                                    Text("\(max(0, emailDeck.count - currentIndex)) left to review")
                                         .font(.system(size: 15, weight: .semibold))
                                         .foregroundColor(AppTheme.accent)
                                     
@@ -534,6 +534,10 @@ struct CatchUpView: View {
         
         await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         await EmailCache.shared.deleteEmailDetail(emailId: email.id)
+        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        await MainActor.run {
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        }
         
         Task {
             await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
