@@ -828,6 +828,8 @@ struct MenuView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
     @State private var showClearedAlert = false
+    @State private var showConfirmClearDB = false
+    @State private var lastClearDBResult: Int?
     
     var body: some View {
         NavigationView {
@@ -850,6 +852,41 @@ struct MenuView: View {
                 }
                 
                 Section {
+                    Button {
+                        showConfirmClearDB = true
+                    } label: {
+                        SwiftUI.Label("Clear Database (emails)", systemImage: "trash.slash")
+                    }
+                    .confirmationDialog(
+                        "Delete all email records stored in the database for your accounts? This does NOT affect Gmail.",
+                        isPresented: $showConfirmClearDB,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete emails in database", role: .destructive) {
+                            Task {
+                                do {
+                                    let resp = try await APIService.shared.clearDatabaseEmails()
+                                    lastClearDBResult = resp.deleted
+                                    // Also clear local caches for consistency
+                                    await DashboardCache.shared.clear()
+                                    await EmailCache.shared.clearAll()
+                                    await MainActor.run {
+                                        NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                                    }
+                                } catch {
+                                    // No-op: rely on user to retry; could add error toast if desired
+                                }
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        if let count = lastClearDBResult {
+                            Text("Deleted \(count) emails from the database.")
+                        } else {
+                            Text("This removes records from our database only, not Gmail.")
+                        }
+                    }
+                    
                     Button {
                         Task {
                             await DashboardCache.shared.clear()

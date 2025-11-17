@@ -302,6 +302,19 @@ class APIService {
         }
     }
     
+    // MARK: - Maintenance
+    
+    struct ClearDatabaseResponse: Codable {
+        let deleted: Int
+    }
+    
+    func clearDatabaseEmails() async throws -> ClearDatabaseResponse {
+        guard let request = createRequest(endpoint: "/accounts/clear_database/", method: "POST") else {
+            throw APIError.invalidRequest
+        }
+        return try await performRequest(request, responseType: ClearDatabaseResponse.self)
+    }
+    
     // MARK: - Emails
     
     func getEmails(accountId: Int? = nil, isRead: Bool? = nil, searchQuery: String? = nil) async throws -> [EmailListItem] {
