@@ -78,6 +78,17 @@ struct DashboardView: View {
         .task {
             await loadInitialData()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CacheCleared"))) { _ in
+            Task { @MainActor in
+                // Clear in-memory state so UI reflects empty cache immediately
+                self.accounts = []
+                self.emails = []
+                self.allEmails = []
+                self.starredEmails = []
+                self.labels = []
+                self.lastRefreshTime = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
                 await refreshDashboard(shouldSync: false)
@@ -816,6 +827,9 @@ struct SlackStyleSenderRow: View {
 struct MenuView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    @State private var showClearedAlert = false
+    @State private var showConfirmClearDB = false
+    @State private var lastClearDBResult: Int?
     
     var body: some View {
         NavigationView {
@@ -839,6 +853,58 @@ struct MenuView: View {
                 
                 Section {
                     Button {
+                        showConfirmClearDB = true
+                    } label: {
+                        SwiftUI.Label("Clear Database (emails)", systemImage: "trash.slash")
+                    }
+                    .confirmationDialog(
+                        "Delete all email records stored in the database for your accounts? This does NOT affect Gmail.",
+                        isPresented: $showConfirmClearDB,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete emails in database", role: .destructive) {
+                            Task {
+                                do {
+                                    let resp = try await APIService.shared.clearDatabaseEmails()
+                                    lastClearDBResult = resp.deleted
+                                    // Also clear local caches for consistency
+                                    await DashboardCache.shared.clear()
+                                    await EmailCache.shared.clearAll()
+                                    await MainActor.run {
+                                        NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                                    }
+                                } catch {
+                                    // No-op: rely on user to retry; could add error toast if desired
+                                }
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        if let count = lastClearDBResult {
+                            Text("Deleted \(count) emails from the database.")
+                        } else {
+                            Text("This removes records from our database only, not Gmail.")
+                        }
+                    }
+                    
+                    Button {
+                        Task {
+                            await DashboardCache.shared.clear()
+                            await EmailCache.shared.clearAll()
+                            await MainActor.run {
+                                NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                                showClearedAlert = true
+                                // Auto-dismiss the sheet shortly after clearing
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                    dismiss()
+                                }
+                            }
+                        }
+                    } label: {
+                        SwiftUI.Label("Clear Cache", systemImage: "trash")
+                    }
+                    
+                    Button {
                         Task {
                             await authManager.logout()
                             dismiss()
@@ -859,6 +925,11 @@ struct MenuView: View {
                     }
                     .textButton()
                 }
+            }
+            .alert("Cache cleared", isPresented: $showClearedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Local cache was removed.")
             }
         }
     }

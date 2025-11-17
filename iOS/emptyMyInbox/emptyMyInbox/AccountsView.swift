@@ -334,6 +334,7 @@ struct AccountDetailView: View {
     @State private var errorMessage: String?
     @State private var lastRefreshTime: Date?
     @State private var mostRecentEmailTime: Date?
+    @State private var unreadCountForChip: Int = 0
     
     var body: some View {
         ZStack {
@@ -418,10 +419,12 @@ struct AccountDetailView: View {
         .customBackButton()
         .task {
             await loadCachedEmails()
+            await refreshUnreadCountForChip()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
                 await loadCachedEmails()
+                await refreshUnreadCountForChip()
             }
         }
     }
@@ -432,16 +435,19 @@ struct AccountDetailView: View {
         ) {
             ShortcutActionChip(
                 title: "Catch up",
-                subtitle: "\(unreadCount) unread • \(account.email)",
+                subtitle: "\(unreadCountForChip) unread • \(account.email)",
                 icon: "bolt.fill",
-                badgeText: unreadCount > 0 ? "\(unreadCount)" : nil
+                badgeText: unreadCountForChip > 0 ? "\(unreadCountForChip)" : nil
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
     
-    private var unreadCount: Int {
-        emails.filter { !$0.is_read }.count
+    private func refreshUnreadCountForChip() async {
+        let count = await EmailCache.shared.loadUnreadEmails(accountId: account.id).count
+        await MainActor.run {
+            self.unreadCountForChip = count
+        }
     }
     
     private func loadCachedEmails() async {
