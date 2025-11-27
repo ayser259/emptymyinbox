@@ -92,6 +92,57 @@ actor DashboardDataManager {
         
         await DashboardCache.shared.saveSnapshot(updatedSnapshot)
     }
+    
+    func markEmailAsUnread(emailId: Int, accountId: Int?) async {
+        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+            return
+        }
+        
+        func markUnread(in list: [EmailListItem]) -> [EmailListItem] {
+            list.map { item in
+                item.id == emailId ? item.updating(isRead: false) : item
+            }
+        }
+        
+        // Find the email to add to unread cache
+        guard let emailToMark = snapshot.allEmails.first(where: { $0.id == emailId }) else {
+            return
+        }
+        
+        let updatedEmail = emailToMark.updating(isRead: false)
+        
+        // Update allEmails and starredEmails
+        let updatedAllEmails = markUnread(in: snapshot.allEmails)
+        let updatedStarredEmails = markUnread(in: snapshot.starredEmails)
+        
+        // Update unread emails list - add if not already there, or update if it is
+        var updatedUnreadEmails = snapshot.emails
+        if let existingIndex = updatedUnreadEmails.firstIndex(where: { $0.id == emailId }) {
+            updatedUnreadEmails[existingIndex] = updatedEmail
+        } else {
+            // Email wasn't in unread list, so add it and sort by received_at
+            updatedUnreadEmails.append(updatedEmail)
+            updatedUnreadEmails.sort { $0.received_at > $1.received_at }
+        }
+        
+        let updatedSnapshot = DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: snapshot.accounts,
+            emails: updatedUnreadEmails,
+            allEmails: updatedAllEmails,
+            starredEmails: updatedStarredEmails,
+            labels: snapshot.labels
+        )
+        
+        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        
+        // Add to unread cache
+        if let accountId = accountId {
+            await EmailCache.shared.upsertUnreadEmail(updatedEmail, accountId: accountId)
+        }
+        // Also update the default unread cache
+        await EmailCache.shared.upsertUnreadEmail(updatedEmail, accountId: nil)
+    }
 }
 
 

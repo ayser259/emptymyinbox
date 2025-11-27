@@ -387,6 +387,13 @@ class APIService {
         return try await performRequest(request, responseType: EmailDetail.self)
     }
     
+    func markEmailAsUnread(emailId: Int) async throws -> EmailDetail {
+        guard let request = createRequest(endpoint: "/emails/\(emailId)/mark_unread/", method: "POST") else {
+            throw APIError.invalidRequest
+        }
+        return try await performRequest(request, responseType: EmailDetail.self)
+    }
+    
     func starEmail(emailId: Int) async throws -> EmailDetail {
         guard let request = createRequest(endpoint: "/emails/\(emailId)/star/", method: "POST") else {
             throw APIError.invalidRequest

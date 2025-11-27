@@ -63,6 +63,7 @@ struct DashboardView: View {
                     StarredEmailsView()
                 case "catch_up":
                     CatchUpView()
+                        .environmentObject(authManager)
                 case "senders":
                     SendersView()
                 default:

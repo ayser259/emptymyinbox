@@ -100,32 +100,55 @@ DATABASE_URL = config("DATABASE_URL", default=None)
 SUPABASE_DIRECT_CONNECT = config("SUPABASE_DIRECT_CONNECT", default=None)
 DB_CONN_MAX_AGE = config("DB_CONN_MAX_AGE", cast=int, default=600)
 
-if DATABASE_URL:
-    DATABASES = {
-        "default": dj_database_url.parse(
-            DATABASE_URL,
-            conn_max_age=DB_CONN_MAX_AGE,
-            ssl_require=True,
-        )
-    }
-elif SUPABASE_DIRECT_CONNECT:
-    DATABASES = {
-        "default": dj_database_url.parse(
-            SUPABASE_DIRECT_CONNECT,
-            conn_max_age=DB_CONN_MAX_AGE,
-            ssl_require=True,
-        )
-    }
-else:
-    raise ValueError("DATABASE_URL or SUPABASE_DIRECT_CONNECT must be set.")
+# Try to connect to the main database, fallback to SQLite if unavailable
+try:
+    if DATABASE_URL:
+        DATABASES = {
+            "default": dj_database_url.parse(
+                DATABASE_URL,
+                conn_max_age=DB_CONN_MAX_AGE,
+                ssl_require=True,
+            )
+        }
+    elif SUPABASE_DIRECT_CONNECT:
+        DATABASES = {
+            "default": dj_database_url.parse(
+                SUPABASE_DIRECT_CONNECT,
+                conn_max_age=DB_CONN_MAX_AGE,
+                ssl_require=True,
+            )
+        }
+    else:
+        # No database URL provided, use SQLite fallback
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": BASE_DIR / "db.sqlite3",
+            }
+        }
+    
+    # Test the connection
+    from django.db import connection
+    connection.ensure_connection()
+    
+    default_db = DATABASES["default"]
+    default_db.setdefault("OPTIONS", {})
+    default_db["OPTIONS"].setdefault("sslmode", "require")
 
-default_db = DATABASES["default"]
-default_db.setdefault("OPTIONS", {})
-default_db["OPTIONS"].setdefault("sslmode", "require")
-
-host = default_db.get("HOST") or ""
-if "pooler.supabase.com" in host:
-    default_db["OPTIONS"]["prepare_threshold"] = 0
+    host = default_db.get("HOST") or ""
+    if "pooler.supabase.com" in host:
+        default_db["OPTIONS"]["prepare_threshold"] = 0
+except Exception as e:
+    # If connection fails, fallback to SQLite for offline/demo mode
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not connect to main database: {e}. Falling back to SQLite.")
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Password validation

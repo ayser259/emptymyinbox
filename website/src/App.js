@@ -3,6 +3,7 @@ import EmailAccountList from './components/EmailAccountList';
 import EmailList from './components/EmailList';
 import Login from './components/Login';
 import Signup from './components/Signup';
+import ReAuthBanner from './components/ReAuthBanner';
 import api from './services/api';
 import './App.css';
 
@@ -12,6 +13,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [showSignup, setShowSignup] = useState(false);
   const [user, setUser] = useState(null);
+  const [reauthAccount, setReauthAccount] = useState(null); // { email: string } | null
 
   // Check authentication status on mount
   useEffect(() => {
@@ -20,7 +22,8 @@ function App() {
     // Check if we're returning from Gmail OAuth callback
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('account_connected') === 'true') {
-      // Account was successfully connected, refresh to show it
+      // Account was successfully connected, clear any re-auth banner and refresh
+      setReauthAccount(null);
       window.location.href = window.location.pathname;
     }
   }, []);
@@ -59,6 +62,21 @@ function App() {
     setIsAuthenticated(false);
     setUser(null);
     setSelectedAccountId(null);
+    setReauthAccount(null);
+  };
+
+  const handleReauthenticate = async () => {
+    try {
+      const authUrl = await api.addGmailAccount();
+      // Redirect to Gmail OAuth
+      window.location.href = authUrl;
+    } catch (error) {
+      alert(`Failed to start authentication: ${error.message}`);
+    }
+  };
+
+  const handleDismissReauth = () => {
+    setReauthAccount(null);
   };
 
   if (isLoading) {
@@ -82,6 +100,13 @@ function App() {
 
   return (
     <div className="App">
+      {reauthAccount && (
+        <ReAuthBanner
+          accountEmail={reauthAccount.email}
+          onReauthenticate={handleReauthenticate}
+          onDismiss={handleDismissReauth}
+        />
+      )}
       <div className="app-header">
         <div className="header-left">
           <img src="/images/logo128.png" alt="Empty My Inbox" className="app-logo" />
@@ -102,8 +127,12 @@ function App() {
         <EmailAccountList
           onAccountSelect={setSelectedAccountId}
           selectedAccountId={selectedAccountId}
+          onReauthRequired={setReauthAccount}
         />
-        <EmailList accountId={selectedAccountId} />
+        <EmailList 
+          accountId={selectedAccountId}
+          onReauthRequired={setReauthAccount}
+        />
       </div>
     </div>
   );

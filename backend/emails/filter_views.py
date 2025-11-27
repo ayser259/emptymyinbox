@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from .models import Filter, EmailAccount
-from .gmail_service import GmailService
+from .gmail_service import GmailService, InvalidCredentialsError
 from .serializers import FilterSerializer
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,16 @@ def create_filter(request):
                 status=status.HTTP_201_CREATED
             )
             
+    except InvalidCredentialsError as e:
+        logger.error(f"Invalid credentials when creating filter: {e}", exc_info=True)
+        return Response(
+            {
+                "error": str(e),
+                "requires_reauth": True,
+                "account_email": account.email
+            },
+            status=status.HTTP_401_UNAUTHORIZED
+        )
     except Exception as e:
         logger.error(f"Error creating filter: {e}", exc_info=True)
         return Response(
@@ -117,6 +127,16 @@ def update_filter(request, filter_id):
                 status=status.HTTP_200_OK
             )
             
+    except InvalidCredentialsError as e:
+        logger.error(f"Invalid credentials when updating filter: {e}", exc_info=True)
+        return Response(
+            {
+                "error": str(e),
+                "requires_reauth": True,
+                "account_email": filter_obj.account.email
+            },
+            status=status.HTTP_401_UNAUTHORIZED
+        )
     except Exception as e:
         logger.error(f"Error updating filter: {e}", exc_info=True)
         return Response(
@@ -147,12 +167,23 @@ def delete_filter(request, filter_id):
         
         return Response(status=status.HTTP_204_NO_CONTENT)
         
+    except InvalidCredentialsError as e:
+        logger.error(f"Invalid credentials when deleting filter: {e}", exc_info=True)
+        return Response(
+            {
+                "error": str(e),
+                "requires_reauth": True,
+                "account_email": filter_obj.account.email
+            },
+            status=status.HTTP_401_UNAUTHORIZED
+        )
     except Exception as e:
         logger.error(f"Error deleting filter: {e}", exc_info=True)
         return Response(
             {"error": str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
 
 
 

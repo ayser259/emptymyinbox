@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import './EmailAccountList.css';
 
-function EmailAccountList({ onAccountSelect, selectedAccountId }) {
+function EmailAccountList({ onAccountSelect, selectedAccountId, onReauthRequired }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,7 +43,12 @@ function EmailAccountList({ onAccountSelect, selectedAccountId }) {
       await api.syncAccount(accountId);
       await loadAccounts();
     } catch (err) {
-      alert(`Sync failed: ${err.message}`);
+      // Check if this is a re-authentication error
+      if (err.requiresReauth && err.accountEmail && onReauthRequired) {
+        onReauthRequired({ email: err.accountEmail });
+      } else {
+        alert(`Sync failed: ${err.message}`);
+      }
     }
   };
 
@@ -104,6 +109,7 @@ function EmailAccountList({ onAccountSelect, selectedAccountId }) {
 }
 
 export default EmailAccountList;
+
 
 
 

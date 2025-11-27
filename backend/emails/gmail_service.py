@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -23,6 +24,11 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.settings.basic",  # For filter management
 ]
+
+
+class InvalidCredentialsError(Exception):
+    """Raised when OAuth credentials are invalid or expired and need re-authentication"""
+    pass
 
 
 class GmailService:
@@ -87,7 +93,11 @@ class GmailService:
 
     @staticmethod
     def get_credentials(email_account: EmailAccount) -> Credentials:
-        """Get valid credentials for an email account, refreshing if needed"""
+        """Get valid credentials for an email account, refreshing if needed
+        
+        Raises:
+            InvalidCredentialsError: If the refresh token is invalid or revoked
+        """
         credentials = Credentials(
             token=email_account.access_token,
             refresh_token=email_account.refresh_token,
@@ -108,17 +118,31 @@ class GmailService:
             should_refresh = token_expiry <= timezone.now() + timedelta(minutes=5)
         
         if should_refresh:
-            credentials.refresh(Request())
-            email_account.access_token = credentials.token
-            if credentials.refresh_token:
-                email_account.refresh_token = credentials.refresh_token
-            
-            # Ensure expiry is timezone-aware before saving
-            expiry = credentials.expiry
-            if expiry and expiry.tzinfo is None:
-                expiry = timezone.make_aware(expiry)
-            email_account.token_expiry = expiry
-            email_account.save()
+            try:
+                credentials.refresh(Request())
+                email_account.access_token = credentials.token
+                if credentials.refresh_token:
+                    email_account.refresh_token = credentials.refresh_token
+                
+                # Ensure expiry is timezone-aware before saving
+                expiry = credentials.expiry
+                if expiry and expiry.tzinfo is None:
+                    expiry = timezone.make_aware(expiry)
+                email_account.token_expiry = expiry
+                email_account.is_active = True  # Re-activate if refresh succeeds
+                email_account.save()
+            except RefreshError as e:
+                # Token has been expired or revoked - mark account as needing re-auth
+                logger.warning(
+                    f"Token refresh failed for account {email_account.email}: {e}. "
+                    "Marking account as inactive and requiring re-authentication."
+                )
+                email_account.is_active = False
+                email_account.save()
+                raise InvalidCredentialsError(
+                    f"OAuth token for {email_account.email} has been expired or revoked. "
+                    "Please re-authenticate your account."
+                ) from e
 
         return credentials
 

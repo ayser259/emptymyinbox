@@ -13,6 +13,10 @@ struct AllEmailsView: View {
     @State private var errorMessage: String?
     @State private var lastRefreshTime: Date?
     @State private var mostRecentEmailTime: Date?
+    @State private var selectedEmailIds: Set<Int> = []
+    @State private var editMode: EditMode = .inactive
+    @State private var isProcessing = false
+    @State private var accounts: [EmailAccount] = []
     
     var body: some View {
         ZStack {
@@ -53,9 +57,24 @@ struct AllEmailsView: View {
                             
                             LazyVStack(spacing: 0) {
                                 ForEach(emails, id: \.id) { email in
-                                    GmailStyleEmailRow(email: email)
-                                        .padding(.horizontal, AppTheme.spacingMedium)
-                                        .padding(.vertical, 4)
+                                    HStack(spacing: AppTheme.spacingMedium) {
+                                        if editMode == .active {
+                                            Button {
+                                                toggleSelection(for: email.id)
+                                            } label: {
+                                                Image(systemName: selectedEmailIds.contains(email.id) ? "checkmark.circle.fill" : "circle")
+                                                    .foregroundColor(selectedEmailIds.contains(email.id) ? AppTheme.accent : AppTheme.secondaryText.opacity(0.5))
+                                                    .font(.system(size: 22))
+                                                    .frame(width: 30)
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
+                                        }
+                                        
+                                        GmailStyleEmailRow(email: email)
+                                            .opacity(editMode == .active && !selectedEmailIds.contains(email.id) ? 0.6 : 1.0)
+                                    }
+                                    .padding(.horizontal, AppTheme.spacingMedium)
+                                    .padding(.vertical, 4)
                                 }
                             }
                             .padding(.vertical, AppTheme.spacingSmall)
@@ -70,6 +89,39 @@ struct AllEmailsView: View {
             .navigationBarTitleDisplayMode(.large)
             .customBackButton()
             .primaryBackground()
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if editMode == .inactive {
+                        Button {
+                            editMode = .active
+                        } label: {
+                            Text("Select")
+                        }
+                    } else {
+                        HStack {
+                            if !selectedEmailIds.isEmpty {
+                                Button {
+                                    Task {
+                                        await markSelectedAsUnread()
+                                    }
+                                } label: {
+                                    Image(systemName: "envelope.badge")
+                                        .foregroundColor(AppTheme.accent)
+                                }
+                                .disabled(isProcessing)
+                            }
+                            
+                            Button {
+                                selectedEmailIds.removeAll()
+                                editMode = .inactive
+                            } label: {
+                                Text("Done")
+                            }
+                        }
+                    }
+                }
+            }
+            .environment(\.editMode, $editMode)
         .task {
             await loadCachedEmails()
         }
@@ -109,12 +161,66 @@ struct AllEmailsView: View {
     
     private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
         self.emails = snapshot.allEmails
+        self.accounts = snapshot.accounts
         self.lastRefreshTime = snapshot.timestamp
         if let mostRecent = snapshot.allEmails.first {
             self.mostRecentEmailTime = parseDate(mostRecent.received_at)
         } else {
             self.mostRecentEmailTime = nil
         }
+    }
+    
+    private func toggleSelection(for emailId: Int) {
+        if selectedEmailIds.contains(emailId) {
+            selectedEmailIds.remove(emailId)
+        } else {
+            selectedEmailIds.insert(emailId)
+        }
+    }
+    
+    private func getAccountId(for accountEmail: String) -> Int? {
+        return accounts.first(where: { $0.email == accountEmail })?.id
+    }
+    
+    private func markSelectedAsUnread() async {
+        guard !selectedEmailIds.isEmpty, !isProcessing else { return }
+        
+        isProcessing = true
+        defer { 
+            Task { @MainActor in
+                isProcessing = false
+                selectedEmailIds.removeAll()
+                editMode = .inactive
+            }
+        }
+        
+        let emailIds = Array(selectedEmailIds)
+        var successfulIds: [Int] = []
+        
+        // Mark each email as unread
+        for emailId in emailIds {
+            do {
+                _ = try await APIService.shared.markEmailAsUnread(emailId: emailId)
+                
+                // Get account ID for this email
+                let email = emails.first { $0.id == emailId }
+                let accountId = email.flatMap { getAccountId(for: $0.account_email) }
+                
+                // Update local cache
+                await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
+                
+                successfulIds.append(emailId)
+            } catch {
+                print("Error marking email \(emailId) as unread: \(error)")
+            }
+        }
+        
+        // Refresh the email list
+        await MainActor.run {
+            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        }
+        
+        await loadCachedEmails()
     }
     
     private func parseDate(_ dateString: String) -> Date? {

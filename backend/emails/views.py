@@ -25,7 +25,7 @@ from .serializers import (
     LabelSerializer,
     FilterSerializer,
 )
-from .gmail_service import GmailService
+from .gmail_service import GmailService, InvalidCredentialsError
 from django.db.models import Q, Count
 from django.db import connection
 
@@ -64,6 +64,16 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
         try:
             count = GmailService.sync_emails(account, max_results=500)
             return Response({"synced": count, "message": f"Synced {count} new emails"})
+        except InvalidCredentialsError as e:
+            logger.error(f"Invalid credentials when syncing account {account.email}: {e}", exc_info=True)
+            return Response(
+                {
+                    "error": str(e),
+                    "requires_reauth": True,
+                    "account_email": account.email
+                }, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -87,9 +97,15 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
                 try:
                     filter_count = GmailService.sync_filters(account)
                     total_filters_synced += filter_count
+                except InvalidCredentialsError as filter_error:
+                    logger.warning(f"Invalid credentials when syncing filters for account {account.email}: {filter_error}", exc_info=True)
+                    errors.append(f"{account.email}: Authentication required. Please re-authenticate your account.")
                 except Exception as filter_error:
                     logger.warning(f"Error syncing filters for account {account.email}: {filter_error}", exc_info=True)
                     # Don't fail the whole sync if filters fail
+            except InvalidCredentialsError as e:
+                errors.append(f"{account.email}: Authentication required. Please re-authenticate your account.")
+                logger.error(f"Invalid credentials when syncing account {account.email}: {e}", exc_info=True)
             except Exception as e:
                 errors.append(f"Error syncing {account.email}: {str(e)}")
                 logger.error(f"Error syncing account {account.email}: {e}", exc_info=True)
@@ -154,6 +170,9 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
                     try:
                         gmail_labels = GmailService.get_all_labels(account)
                         user_label_ids.extend([lid for lid in gmail_labels.keys() if lid not in system_label_ids])
+                    except InvalidCredentialsError as e:
+                        logger.error(f"Invalid credentials when fetching labels for account {account.email}: {e}", exc_info=True)
+                        continue
                     except Exception as e:
                         logger.error(f"Error fetching labels for account {account.email}: {e}", exc_info=True)
                         continue
@@ -207,6 +226,16 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
             
             serializer = self.get_serializer(email)
             return Response(serializer.data, status=status.HTTP_200_OK)
+        except InvalidCredentialsError as e:
+            logger.error(f"Invalid credentials when starring email {email.id}: {e}", exc_info=True)
+            return Response(
+                {
+                    "error": str(e),
+                    "requires_reauth": True,
+                    "account_email": email.account.email
+                }, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         except Exception as e:
             logger.error(f"Error starring email {email.id}: {e}", exc_info=True)
             return Response(
@@ -235,6 +264,16 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
             
             serializer = self.get_serializer(email)
             return Response(serializer.data, status=status.HTTP_200_OK)
+        except InvalidCredentialsError as e:
+            logger.error(f"Invalid credentials when unstarring email {email.id}: {e}", exc_info=True)
+            return Response(
+                {
+                    "error": str(e),
+                    "requires_reauth": True,
+                    "account_email": email.account.email
+                }, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         except Exception as e:
             logger.error(f"Error unstarring email {email.id}: {e}", exc_info=True)
             return Response(
@@ -263,8 +302,58 @@ class EmailViewSet(viewsets.ReadOnlyModelViewSet):
             
             serializer = self.get_serializer(email)
             return Response(serializer.data, status=status.HTTP_200_OK)
+        except InvalidCredentialsError as e:
+            logger.error(f"Invalid credentials when marking email {email.id} as read: {e}", exc_info=True)
+            return Response(
+                {
+                    "error": str(e),
+                    "requires_reauth": True,
+                    "account_email": email.account.email
+                }, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         except Exception as e:
             logger.error(f"Error marking email {email.id} as read: {e}", exc_info=True)
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"])
+    def mark_unread(self, request, pk=None):
+        """Mark an email as unread in Gmail and update local database"""
+        email = self.get_object()
+        try:
+            # Update Gmail - add UNREAD label
+            GmailService.modify_email_labels(
+                email.account,
+                email.gmail_id,
+                add_labels=["UNREAD"]
+            )
+            
+            # Update local database
+            email.is_read = False
+            # Update labels list
+            if email.labels and "UNREAD" not in email.labels:
+                email.labels.append("UNREAD")
+            elif not email.labels:
+                email.labels = ["UNREAD"]
+            email.save()
+            
+            serializer = self.get_serializer(email)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except InvalidCredentialsError as e:
+            logger.error(f"Invalid credentials when marking email {email.id} as unread: {e}", exc_info=True)
+            return Response(
+                {
+                    "error": str(e),
+                    "requires_reauth": True,
+                    "account_email": email.account.email
+                }, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            logger.error(f"Error marking email {email.id} as unread: {e}", exc_info=True)
             return Response(
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -583,6 +672,10 @@ class LabelsView(APIView):
                                 is_read=False
                             ).count()
                         all_labels[label_id]["unread_count"] += unread_count
+                except InvalidCredentialsError as e:
+                    logger.error(f"Invalid credentials when fetching labels for account {account.email}: {e}", exc_info=True)
+                    # Continue with other accounts, but log the error
+                    continue
                 except Exception as e:
                     logger.error(f"Error fetching labels for account {account.email}: {e}", exc_info=True)
                     continue

@@ -13,6 +13,7 @@ import AudioToolbox
 struct CatchUpView: View {
     let accountId: Int?
     let accountEmail: String?
+    @EnvironmentObject var authManager: AuthManager
     @State private var unreadEmails: [EmailListItem] = []
     @State private var emailDeck: [EmailDetail] = [] // Full deck of loaded emails
     @State private var currentIndex: Int = 0
@@ -26,6 +27,13 @@ struct CatchUpView: View {
     @State private var reviewedCount: Int = 0 // Track locally reviewed emails
     @State private var lastReviewedEmailId: Int? // Track last reviewed email for visual indicator
     private let maxVisibleCards = 2 // Show only the current card and one peeking behind
+    
+    private var isOffline: Bool {
+        if case .offline = authManager.sessionState {
+            return true
+        }
+        return false
+    }
     
     init(accountId: Int? = nil, accountEmail: String? = nil) {
         self.accountId = accountId
@@ -227,8 +235,12 @@ struct CatchUpView: View {
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .task {
-            await EmailActionSynchronizer.shared.resumePendingActions()
-            await loadUnreadEmails()
+            // Only resume pending actions if online
+            if !isOffline {
+                await EmailActionSynchronizer.shared.resumePendingActions()
+            }
+            // Always use cache-only mode for fast loading
+            await loadUnreadEmails(fromCacheOnly: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
             Task {
@@ -447,9 +459,11 @@ struct CatchUpView: View {
         // Remove from unread cache since we're removing it from the stack
         await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         
-        // Enqueue star action
-        Task {
-            await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
+        // Enqueue star action only if online
+        if !isOffline {
+            Task {
+                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
+            }
         }
         
     }
@@ -539,8 +553,11 @@ struct CatchUpView: View {
             NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         }
         
-        Task {
-            await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
+        // Only enqueue sync action if online
+        if !isOffline {
+            Task {
+                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
+            }
         }
         
     }
@@ -588,6 +605,7 @@ struct CatchUpView: View {
 #Preview {
     NavigationStack {
         CatchUpView()
+            .environmentObject(AuthManager())
     }
 }
 

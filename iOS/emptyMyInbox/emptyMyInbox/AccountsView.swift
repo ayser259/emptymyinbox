@@ -329,6 +329,7 @@ struct AccountRow: View {
 
 struct AccountDetailView: View {
     let account: EmailAccount
+    @EnvironmentObject var authManager: AuthManager
     @State private var emails: [EmailListItem] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -432,6 +433,7 @@ struct AccountDetailView: View {
     private var catchUpEntry: some View {
         NavigationLink(
             destination: CatchUpView(accountId: account.id, accountEmail: account.email)
+                .environmentObject(authManager)
         ) {
             ShortcutActionChip(
                 title: "Catch up",

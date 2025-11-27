@@ -121,6 +121,14 @@ class ApiService {
         errorData = { error: `Request failed with status ${response.status}` };
       }
       
+      // Check if this is a re-authentication error
+      if (errorData.requires_reauth && errorData.account_email) {
+        const reauthError = new Error(errorData.error || 'Authentication required');
+        reauthError.requiresReauth = true;
+        reauthError.accountEmail = errorData.account_email;
+        throw reauthError;
+      }
+      
       // Handle different error formats
       const errorMessage = errorData.error || 
                           errorData.detail || 

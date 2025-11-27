@@ -3,7 +3,7 @@ import api from '../services/api';
 import EmailDetail from './EmailDetail';
 import './EmailList.css';
 
-function EmailList({ accountId }) {
+function EmailList({ accountId, onReauthRequired }) {
   const [emails, setEmails] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -32,7 +32,13 @@ function EmailList({ accountId }) {
       setEmails(data);
       setError(null);
     } catch (err) {
-      setError(err.message);
+      // Check if this is a re-authentication error
+      if (err.requiresReauth && err.accountEmail && onReauthRequired) {
+        onReauthRequired({ email: err.accountEmail });
+        setError('Authentication required. Please re-authenticate your account.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -43,7 +49,13 @@ function EmailList({ accountId }) {
       const fullEmail = await api.getEmail(email.id);
       setSelectedEmail(fullEmail);
     } catch (err) {
-      alert(`Failed to load email: ${err.message}`);
+      // Check if this is a re-authentication error
+      if (err.requiresReauth && err.accountEmail && onReauthRequired) {
+        onReauthRequired({ email: err.accountEmail });
+        alert('Authentication required. Please re-authenticate your account.');
+      } else {
+        alert(`Failed to load email: ${err.message}`);
+      }
     }
   };
 
@@ -146,6 +158,7 @@ function EmailList({ accountId }) {
 }
 
 export default EmailList;
+
 
 
 
