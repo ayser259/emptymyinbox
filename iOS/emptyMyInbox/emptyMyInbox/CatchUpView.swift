@@ -3,6 +3,13 @@
 //  emptyMyInbox
 //
 //  Slack-style catch up view for processing unread emails
+//  Uses progressive loading - emails are fetched on-demand as user swipes
+//
+//  Card Animation Design:
+//  - All cards rendered through a single unified system
+//  - Cards identified by ID, not index (prevents animation jumps)
+//  - Dismissed card flies off, remaining cards rise up from deck
+//  - New cards always appear from below (stack position) never from sides
 //
 
 import SwiftUI
@@ -13,30 +20,61 @@ struct CatchUpView: View {
     let accountId: Int?
     let accountEmail: String?
     @EnvironmentObject var authManager: AuthManager
-    @State private var unreadEmails: [EmailListItem] = []
-    @State private var emailDeck: [EmailDetail] = [] // Full deck of loaded emails
-    @State private var currentIndex: Int = 0
-    @State private var isLoading = false
-    @State private var isLoadingDeck = false
-    @State private var loadedEmailIds: Set<Int> = [] // Track which emails have fully loaded their content
-    @State private var isProcessing = false
-    @State private var emailOffset: CGSize = .zero
-    @State private var emailOpacity: Double = 1.0
-    @State private var isAnimating = false
-    @State private var reviewedCount: Int = 0 // Track locally reviewed emails
-    @State private var lastReviewedEmailId: Int? // Track last reviewed email for visual indicator
-    @State private var sessionStartTime: Date? // Track when session started
-    @State private var initialEmailCount: Int = 0 // Track initial email count for stats
-    private let maxVisibleCards = 2 // Show only the current card and one peeking behind
+    @ObservedObject private var debugSettings = DebugSettings.shared
     
-    private var isOffline: Bool {
-        // Always assume online since we're using direct Gmail API
-        return false
-    }
+    // Use the new lazy loader
+    @StateObject private var emailLoader: LazyEmailLoader
+    
+    // MARK: - Animation State (Unified System)
+    
+    /// ID of the card currently being dismissed (nil when idle)
+    @State private var dismissingCardId: Int? = nil
+    
+    /// Offset for the dismissing card
+    @State private var dismissOffset: CGSize = .zero
+    
+    /// Rotation for the dismissing card
+    @State private var dismissRotation: Double = 0
+    
+    /// Opacity for the dismissing card
+    @State private var dismissOpacity: Double = 1
+    
+    /// Progress of remaining cards rising up (0 = stacked, 1 = promoted)
+    @State private var riseProgress: CGFloat = 0
+    
+    /// Prevents multiple simultaneous actions
+    @State private var isAnimating = false
+    @State private var isProcessing = false
+    
+    // Toast state
+    @State private var showLoadedToast = false
+    @State private var loadedEmailCount = 0
+    
+    // Session tracking
+    @State private var sessionStartTime: Date?
+    @State private var sessionStats = CatchUpSessionStats()
+    
+    // Haptic generators
+    private let impactLight = UIImpactFeedbackGenerator(style: .light)
+    private let impactMedium = UIImpactFeedbackGenerator(style: .medium)
+    private let notificationGenerator = UINotificationFeedbackGenerator()
+    
+    /// Maximum cards to render in the deck (for performance)
+    private let maxVisibleCards = 4
+    
+    /// Visual offset between stacked cards (in points)
+    private let stackOffsetY: CGFloat = 10
+    
+    /// Scale reduction per card in stack
+    private let stackScaleStep: CGFloat = 0.025
+    
+    /// Opacity reduction per card in stack
+    private let stackOpacityStep: Double = 0.12
     
     init(accountId: Int? = nil, accountEmail: String? = nil) {
         self.accountId = accountId
         self.accountEmail = accountEmail
+        _emailLoader = StateObject(wrappedValue: LazyEmailLoader(accountId: accountId, accountEmail: accountEmail))
     }
     
     var body: some View {
@@ -45,54 +83,128 @@ struct CatchUpView: View {
                 .ignoresSafeArea()
             
             mainContent
+            
+            // Toast overlay
+            toastOverlay
         }
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .task {
-            // Only resume pending actions if online
-            if !isOffline {
-                await EmailActionSynchronizer.shared.resumePendingActions()
-            }
-            // Always use cache-only mode for fast loading
-            await loadUnreadEmails(fromCacheOnly: true)
+            await onAppear()
         }
     }
     
+    // MARK: - Toast Overlay
+    
+    @ViewBuilder
+    private var toastOverlay: some View {
+        if showLoadedToast {
+            VStack {
+                Spacer()
+                
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("\(loadedEmailCount) email\(loadedEmailCount == 1 ? "" : "s") loaded")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.black.opacity(0.85))
+                .cornerRadius(20)
+                .padding(.bottom, 120)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(100)
+        }
+    }
+    
+    // MARK: - Lifecycle
+    
+    private func onAppear() async {
+        // Prepare haptic generators
+        impactLight.prepare()
+        impactMedium.prepare()
+        notificationGenerator.prepare()
+        
+        // Resume pending actions
+        await EmailActionSynchronizer.shared.resumePendingActions()
+        
+        // Load metadata and start progressive loading
+        await emailLoader.loadMetadata()
+        
+        // Show toast if emails loaded
+        if emailLoader.totalEmailCount > 0 {
+            loadedEmailCount = emailLoader.totalEmailCount
+            withAnimation(.spring(response: 0.3)) {
+                showLoadedToast = true
+            }
+            
+            // Hide toast after 2 seconds
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation(.spring(response: 0.3)) {
+                showLoadedToast = false
+            }
+        }
+    }
+    
+    // MARK: - Main Content
+    
     @ViewBuilder
     private var mainContent: some View {
-        if isLoading && unreadEmails.isEmpty {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if unreadEmails.isEmpty || currentIndex >= unreadEmails.count {
-            CelebrationView(
-                emailsCleared: emailsClearedCount,
-                sessionStartTime: sessionStartTime,
-                accountEmail: accountEmail
-            )
+        if emailLoader.isLoadingMetadata {
+            loadingView
+        } else if !emailLoader.hasMoreEmails {
+            celebrationView
         } else {
             emailDeckView
         }
     }
     
-    private var emailsClearedCount: Int? {
-        if initialEmailCount > 0 {
-            return initialEmailCount
-        } else if reviewedCount > 0 {
-            return reviewedCount
-        } else {
-            return nil
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+            Text("Loading emails...")
+                .font(AppTheme.body)
+                .secondaryText()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    
+    private var celebrationView: some View {
+        CelebrationView(
+            emailsCleared: sessionStats.reviewed > 0 ? sessionStats.reviewed : nil,
+            sessionStartTime: sessionStartTime,
+            accountEmail: accountEmail,
+            sessionStats: sessionStats.reviewed > 0 ? sessionStats : nil
+        )
+    }
+    
+    // MARK: - Email Deck View
     
     private var emailDeckView: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
                     topBarSection
-                    emailCardsSection(geometry: geometry)
+                    cardStackSection(geometry: geometry)
                 }
                 actionButtonsSection
+                
+                // Debug copy button overlay
+                if debugSettings.isDebugModeEnabled, let email = emailLoader.currentEmail {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            DebugCopyButton(content: email.debugCopyContent)
+                                .padding(.trailing, 16)
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 60) // Below the top bar
+                }
             }
         }
     }
@@ -101,14 +213,16 @@ struct CatchUpView: View {
         HStack {
             Spacer()
             HStack(spacing: 8) {
-                Text("\(max(0, emailDeck.count - currentIndex)) left to review")
+                Text("\(emailLoader.remainingCount) left to review")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(AppTheme.accent)
                 
-                if reviewedCount > 0 {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(AppTheme.accent)
+                if sessionStats.reviewed > 0 {
+                    Text("•")
+                        .foregroundColor(AppTheme.secondaryText)
+                    Text("\(sessionStats.reviewed) reviewed")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppTheme.secondaryText)
                 }
             }
             Spacer()
@@ -118,74 +232,129 @@ struct CatchUpView: View {
         .background(AppTheme.secondaryBackground.opacity(0.5))
     }
     
-    @ViewBuilder
-    private func emailCardsSection(geometry: GeometryProxy) -> some View {
+    // MARK: - Unified Card Stack Renderer
+    
+    /// Single unified renderer for all cards in the deck
+    /// Cards are positioned based on their display index and animation state
+    private func cardStackSection(geometry: GeometryProxy) -> some View {
         ZStack {
-            if isLoadingDeck || emailDeck.isEmpty {
-                EmailCardSkeleton(geometry: geometry)
-            } else {
-                emailCardsStack(geometry: geometry)
+            // Render cards from back to front
+            // Use email ID as identity so SwiftUI correctly tracks cards through index changes
+            ForEach(visibleCards.reversed(), id: \.id) { cardInfo in
+                cardView(cardInfo: cardInfo, geometry: geometry)
             }
         }
         .frame(maxHeight: .infinity)
         .padding(.bottom, 92)
     }
     
-    @ViewBuilder
-    private func emailCardsStack(geometry: GeometryProxy) -> some View {
-        ForEach(Array(emailDeck.enumerated()), id: \.element.id) { index, email in
-            let cardIndex = index - currentIndex
-            
-            if cardIndex >= 0 && cardIndex < maxVisibleCards {
-                emailCardView(email: email, cardIndex: cardIndex, geometry: geometry)
-            }
+    /// Card info for rendering (captures both ID and current display position)
+    private struct CardInfo: Identifiable {
+        let id: Int           // Email ID - stable identity
+        let actualIndex: Int  // Current index in emailMetadata
+        let displayIndex: Int // Position in visible stack (0 = front)
+    }
+    
+    /// Cards to render with their display positions
+    private var visibleCards: [CardInfo] {
+        let startIndex = emailLoader.currentIndex
+        let endIndex = min(startIndex + maxVisibleCards, emailLoader.emailMetadata.count)
+        
+        return (startIndex..<endIndex).map { actualIndex in
+            let metadata = emailLoader.emailMetadata[actualIndex]
+            return CardInfo(
+                id: metadata.id,
+                actualIndex: actualIndex,
+                displayIndex: actualIndex - startIndex
+            )
         }
     }
     
-    private func emailCardView(email: EmailDetail, cardIndex: Int, geometry: GeometryProxy) -> some View {
-        EmailCardView(
-            email: email,
-            geometry: geometry,
-            isActive: cardIndex == 0,
-            onLoadComplete: {
-                loadedEmailIds.insert(email.id)
-            }
+    /// Renders a single card with proper transforms based on its position and animation state
+    @ViewBuilder
+    private func cardView(cardInfo: CardInfo, geometry: GeometryProxy) -> some View {
+        let cardId = cardInfo.id
+        let displayIndex = cardInfo.displayIndex
+        let actualIndex = cardInfo.actualIndex
+        let isDismissing = dismissingCardId == cardId
+        
+        // Calculate effective position (accounts for rising animation)
+        let effectiveDisplayIndex = calculateEffectiveDisplayIndex(
+            displayIndex: displayIndex,
+            isDismissing: isDismissing
         )
-        .onAppear {
-            if cardIndex == 0 && currentIndex == 0 && sessionStartTime == nil {
-                sessionStartTime = Date()
+        
+        // Calculate transforms
+        let (yOffset, scale, opacity) = calculateCardTransforms(effectiveDisplayIndex: effectiveDisplayIndex)
+        
+        Group {
+            if let email = emailLoader.emailAt(index: actualIndex) {
+                EmailCardView(
+                    email: email,
+                    geometry: geometry,
+                    isActive: displayIndex == 0 && !isDismissing,
+                    onLoadComplete: {
+                        if actualIndex == 0 && sessionStartTime == nil {
+                            sessionStartTime = Date()
+                        }
+                    }
+                )
+            } else {
+                EmailCardSkeleton(geometry: geometry)
             }
         }
-        .offset(cardIndex == 0 ? emailOffset : CGSize(width: 0, height: (CGFloat(cardIndex) * 16) - (cardIndex == 1 ? 6 : 0)))
-        .opacity(cardIndex == 0 ? emailOpacity : max(0.6, 1.0 - Double(cardIndex) * 0.08))
-        .scaleEffect(max(0.96, 1.0 - Double(cardIndex) * 0.01))
-        .zIndex(Double(maxVisibleCards - cardIndex))
-        .overlay(checkmarkOverlay(cardIndex: cardIndex, email: email))
+        // Apply transforms based on whether this card is dismissing or staying
+        .offset(isDismissing ? dismissOffset : CGSize(width: 0, height: yOffset))
+        .scaleEffect(isDismissing ? 1.0 : scale)
+        .rotationEffect(.degrees(isDismissing ? dismissRotation : 0))
+        .opacity(isDismissing ? dismissOpacity : opacity)
+        .zIndex(cardZIndex(displayIndex: displayIndex, isDismissing: isDismissing))
+        // Only front card is interactive
+        .allowsHitTesting(displayIndex == 0 && !isDismissing)
+        // Smooth spring animation for rising cards
         .animation(
-            cardIndex == 0 ? .spring(response: 0.5, dampingFraction: 0.7) : .spring(response: 0.3, dampingFraction: 0.8),
-            value: cardIndex == 0 ? emailOffset : .zero
+            isDismissing ? nil : .spring(response: 0.35, dampingFraction: 0.75),
+            value: effectiveDisplayIndex
         )
-        .animation(.easeInOut(duration: 0.2), value: emailOpacity)
     }
     
-    @ViewBuilder
-    private func checkmarkOverlay(cardIndex: Int, email: EmailDetail) -> some View {
-        if cardIndex == 0 && lastReviewedEmailId == email.id {
-            VStack {
-                HStack {
-                    Spacer()
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(AppTheme.accent)
-                        .padding()
-                        .background(AppTheme.secondaryBackground.opacity(0.9))
-                        .clipShape(Circle())
-                        .padding()
-                }
-                Spacer()
-            }
+    /// Calculates the effective display index accounting for the rise animation
+    private func calculateEffectiveDisplayIndex(displayIndex: Int, isDismissing: Bool) -> CGFloat {
+        if isDismissing {
+            // Dismissing card stays at its original position (handled separately)
+            return CGFloat(displayIndex)
         }
+        
+        if dismissingCardId != nil {
+            // During dismissal, non-dismissing cards rise up
+            // Their effective index decreases by riseProgress
+            // displayIndex 1 -> 1 - riseProgress (at riseProgress=1, becomes 0)
+            // displayIndex 2 -> 2 - riseProgress (at riseProgress=1, becomes 1)
+            return max(0, CGFloat(displayIndex) - riseProgress)
+        }
+        
+        return CGFloat(displayIndex)
     }
+    
+    /// Calculates y-offset, scale, and opacity for a given effective display index
+    private func calculateCardTransforms(effectiveDisplayIndex: CGFloat) -> (CGFloat, CGFloat, Double) {
+        let yOffset = effectiveDisplayIndex * stackOffsetY
+        let scale = 1.0 - effectiveDisplayIndex * stackScaleStep
+        let opacity = 1.0 - Double(effectiveDisplayIndex) * stackOpacityStep
+        return (yOffset, scale, max(0, opacity))
+    }
+    
+    /// Determines z-index for proper layering (front card on top)
+    private func cardZIndex(displayIndex: Int, isDismissing: Bool) -> Double {
+        if isDismissing {
+            // Dismissing card should be above all others during animation
+            return Double(maxVisibleCards + 10)
+        }
+        // Higher display index = further back = lower z-index
+        return Double(maxVisibleCards - displayIndex)
+    }
+    
+    // MARK: - Action Buttons
     
     private var actionButtonsSection: some View {
         VStack(spacing: 0) {
@@ -194,10 +363,9 @@ struct CatchUpView: View {
             
             GeometryReader { buttonGeometry in
                 let availableWidth = buttonGeometry.size.width - (AppTheme.spacingLarge * 2)
-                let buttonSpacing: CGFloat = 12
                 let buttonHeight: CGFloat = 51.2
                 
-                HStack(spacing: buttonSpacing) {
+                HStack(spacing: 12) {
                     starButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
                     keepUnreadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
                     markAsReadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
@@ -212,14 +380,16 @@ struct CatchUpView: View {
         .background(AppTheme.primaryBackground)
     }
     
+    private var isButtonDisabled: Bool {
+        isProcessing || !emailLoader.isCurrentLoaded || isAnimating
+    }
+    
     private func starButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
         Button {
-            Task {
-                await handleStar()
-            }
+            Task { await handleStar() }
         } label: {
             VStack(spacing: 6) {
-                Image(systemName: starButtonIcon)
+                Image(systemName: emailLoader.currentEmail?.is_starred == true ? "star.fill" : "star")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundColor(AppTheme.accent)
                 
@@ -233,29 +403,19 @@ struct CatchUpView: View {
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(starButtonStrokeColor, lineWidth: starButtonStrokeWidth)
+                    .stroke(
+                        emailLoader.currentEmail?.is_starred == true ? AppTheme.accent : Color.white.opacity(0.2),
+                        lineWidth: emailLoader.currentEmail?.is_starred == true ? 2 : 1
+                    )
             )
         }
-        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
-    }
-    
-    private var starButtonIcon: String {
-        (currentIndex < emailDeck.count && emailDeck[currentIndex].is_starred) ? "star.fill" : "star"
-    }
-    
-    private var starButtonStrokeColor: Color {
-        currentEmail?.is_starred == true ? AppTheme.accent : Color.white.opacity(0.2)
-    }
-    
-    private var starButtonStrokeWidth: CGFloat {
-        currentEmail?.is_starred == true ? 2 : 1
+        .disabled(isButtonDisabled)
+        .opacity(isButtonDisabled ? 0.5 : 1.0)
     }
     
     private func keepUnreadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
         Button {
-            Task {
-                await handleKeepUnread()
-            }
+            Task { await handleKeepUnread() }
         } label: {
             Text("Keep Unread")
                 .font(.system(size: 16, weight: .semibold))
@@ -269,14 +429,13 @@ struct CatchUpView: View {
                         .stroke(AppTheme.accent, lineWidth: 2)
                 )
         }
-        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
+        .disabled(isButtonDisabled)
+        .opacity(isButtonDisabled ? 0.5 : 1.0)
     }
     
     private func markAsReadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
         Button {
-            Task {
-                await handleMarkAsRead()
-            }
+            Task { await handleMarkAsRead() }
         } label: {
             Text("Mark as Read")
                 .font(.system(size: 16, weight: .semibold))
@@ -286,235 +445,176 @@ struct CatchUpView: View {
                 .background(AppTheme.accent)
                 .cornerRadius(12)
         }
-        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
+        .disabled(isButtonDisabled)
+        .opacity(isButtonDisabled ? 0.5 : 1.0)
     }
     
-    private func loadUnreadEmails(fromCacheOnly: Bool = false) async {
-        isLoading = true
-        defer { isLoading = false }
-        
-        let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: accountId)
-        await MainActor.run {
-            self.unreadEmails = cachedEmails
-            // Track initial count (timer will start when first email is displayed)
-            if !cachedEmails.isEmpty {
-                self.initialEmailCount = cachedEmails.count
-            }
-        }
-        
-        if cachedEmails.isEmpty {
-            await MainActor.run {
-                self.emailDeck = []
-            }
-            return
-        }
-        
-        await loadEmailDeck(emails: cachedEmails, useCacheOnly: fromCacheOnly)
-    }
-    
-    private func loadEmailDeck(emails: [EmailListItem], useCacheOnly: Bool) async {
-        guard !emails.isEmpty else {
-            await MainActor.run {
-                self.emailDeck = []
-                self.isLoadingDeck = false
-                self.loadedEmailIds.removeAll()
-            }
-            return
-        }
-        
-        // Always show loading state when loading email details
-        await MainActor.run {
-            isLoadingDeck = true
-            loadedEmailIds.removeAll()
-        }
-        
-        // Load all emails from cache only - no Gmail API calls
-        var emailDeck: [EmailDetail] = []
-        
-        for emailItem in emails {
-            if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
-                emailDeck.append(cachedDetail)
-            }
-            // Skip emails that aren't cached - they'll be available after next refresh
-        }
-        
-        // Update deck with all cached emails
-        await MainActor.run {
-            self.emailDeck = emailDeck
-            self.emailOffset = .zero
-            self.emailOpacity = 1.0
-            self.loadedEmailIds = Set(emailDeck.map { $0.id })
-            isLoadingDeck = false
-        }
-    }
-    
-    private var currentEmail: EmailDetail? {
-        guard currentIndex < emailDeck.count else { return nil }
-        return emailDeck[currentIndex]
-    }
+    // MARK: - Action Handlers
     
     private func handleStar() async {
-        guard let email = currentEmail, !isAnimating else { return }
+        guard let email = emailLoader.currentEmail, !isAnimating else { return }
         
         isProcessing = true
         isAnimating = true
         
-        // Animate email shooting up
-        await MainActor.run {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                emailOffset = CGSize(width: 0, height: -UIScreen.main.bounds.height)
-                emailOpacity = 0
-            }
-        }
+        // Haptic feedback
+        impactMedium.impactOccurred()
         
-        // Wait for animation
-        try? await Task.sleep(nanoseconds: 400_000_000) // 0.4 seconds
+        // Perform dismissal animation (card shoots up)
+        await performDismissalAnimation(cardId: email.id, direction: .up)
         
         let newStarState = !email.is_starred
-        let updatedEmail = email.updating(isStarred: newStarState)
         
-        // Remove from deck and unread list, but keep as unread
-        await MainActor.run {
-            // Remove from deck
-            if self.currentIndex < self.emailDeck.count {
-                self.emailDeck.remove(at: self.currentIndex)
-            }
-            
-            // Remove from unread emails list
-            if self.currentIndex < self.unreadEmails.count {
-                self.unreadEmails.remove(at: self.currentIndex)
-            }
-            
-            // Track that we reviewed this email
-            self.reviewedCount += 1
-            self.lastReviewedEmailId = email.id
-            
-            // Don't increment currentIndex since we removed the item
-            // Reset animation state for next card
-            if self.currentIndex < self.emailDeck.count {
-                self.emailOffset = .zero
-                self.emailOpacity = 1.0
-            }
-            
-            self.isProcessing = false
-            self.isAnimating = false
+        // Update stats
+        sessionStats.reviewed += 1
+        sessionStats.starred += 1
+        
+        // Remove from deck AFTER animation completes
+        emailLoader.removeCurrentEmail()
+        
+        // Reset animation state
+        resetAnimationState()
+        
+        // Success haptic
+        notificationGenerator.notificationOccurred(.success)
+        
+        isProcessing = false
+        isAnimating = false
+        
+        // Enqueue star action to Gmail
+        Task {
+            await EmailActionSynchronizer.shared.enqueueStar(
+                emailId: email.id,
+                gmailId: email.gmail_id,
+                accountEmail: email.account_email,
+                shouldStar: newStarState
+            )
         }
         
-        // Update cache - keep email but mark as starred
-        await EmailCache.shared.saveEmailDetail(updatedEmail)
-        // Remove from unread cache since we're removing it from the stack
-        await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
-        
-        // Enqueue star action only if online
-        if !isOffline {
-            Task {
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: newStarState)
-            }
+        // Update dashboard cache with starred status change
+        Task {
+            await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
         }
-        
     }
     
     private func handleKeepUnread() async {
-        guard !isAnimating else { return }
+        guard let email = emailLoader.currentEmail, !isAnimating else { return }
         
         isAnimating = true
         
-        // Animate email going left
-        await MainActor.run {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                emailOffset = CGSize(width: -UIScreen.main.bounds.width, height: 0)
-                emailOpacity = 0
-            }
-        }
+        // Haptic feedback
+        impactLight.impactOccurred()
         
-        // Wait for animation
-        try? await Task.sleep(nanoseconds: 400_000_000) // 0.4 seconds
+        // Perform dismissal animation (card goes left)
+        await performDismissalAnimation(cardId: email.id, direction: .left)
         
-        // Move to next email
-        await MainActor.run {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                currentIndex += 1
-                // Reset animation state for next card
-                if currentIndex < emailDeck.count {
-                    emailOffset = .zero
-                    emailOpacity = 1.0
-                }
-            }
-            isAnimating = false
-        }
+        // Update stats
+        sessionStats.reviewed += 1
+        sessionStats.keptUnread += 1
+        
+        // Move to next email AFTER animation
+        emailLoader.moveToNext()
+        
+        // Reset animation state
+        resetAnimationState()
+        
+        isAnimating = false
     }
     
     private func handleMarkAsRead() async {
-        guard let email = currentEmail, !isAnimating else { return }
+        guard let email = emailLoader.currentEmail, !isAnimating else { return }
         
         isProcessing = true
         isAnimating = true
         
-        // Animate email going right
-        await MainActor.run {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                emailOffset = CGSize(width: UIScreen.main.bounds.width, height: 0)
-                emailOpacity = 0
-            }
+        // Haptic feedback
+        impactMedium.impactOccurred()
+        
+        // Perform dismissal animation (card goes right)
+        await performDismissalAnimation(cardId: email.id, direction: .right)
+        
+        // Update stats
+        sessionStats.reviewed += 1
+        sessionStats.markedAsRead += 1
+        
+        // Remove from deck AFTER animation
+        emailLoader.removeCurrentEmail()
+        
+        // Reset animation state
+        resetAnimationState()
+        
+        // Success haptic
+        notificationGenerator.notificationOccurred(.success)
+        
+        isAnimating = false
+        isProcessing = false
+        
+        // Enqueue mark as read action to Gmail
+        Task {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: email.id,
+                gmailId: email.gmail_id,
+                accountEmail: email.account_email
+            )
         }
         
-        // Wait for animation
-        try? await Task.sleep(nanoseconds: 400_000_000) // 0.4 seconds
-        
-        // Remove from deck and move to next optimistically
-        await MainActor.run {
-            if self.currentIndex < self.emailDeck.count {
-                self.emailDeck.remove(at: self.currentIndex)
-            }
-            if self.currentIndex < self.unreadEmails.count {
-                self.unreadEmails.remove(at: self.currentIndex)
-            }
-            
-            // Track that we reviewed this email
-            self.reviewedCount += 1
-            self.lastReviewedEmailId = email.id
-            
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                if self.currentIndex < self.emailDeck.count {
-                    self.emailOffset = .zero
-                    self.emailOpacity = 1.0
-                }
-            }
-            isAnimating = false
-            isProcessing = false
-        }
-        
-        await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
-        await EmailCache.shared.deleteEmailDetail(emailId: email.id)
+        // Update dashboard data manager
         await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        
-        // Only enqueue sync action if online
-        if !isOffline {
-            Task {
-                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email)
-            }
-        }
-        
     }
     
-    private func formatDate(_ dateString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    // MARK: - Animation Helpers
+    
+    /// Performs the full dismissal animation: card flies off while others rise
+    private func performDismissalAnimation(cardId: Int, direction: DismissDirection) async {
+        // Mark which card is being dismissed
+        dismissingCardId = cardId
         
-        if let date = formatter.date(from: dateString) {
-            let calendar = Calendar.current
-            let dateFormatter = DateFormatter()
-            if calendar.isDateInToday(date) {
-                dateFormatter.dateStyle = .none
-                dateFormatter.timeStyle = .short
-            } else {
-                dateFormatter.dateStyle = .medium
-                dateFormatter.timeStyle = .short
+        // Reset rise progress
+        riseProgress = 0
+        
+        // Animate card out AND other cards rising simultaneously
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+            // Set dismissal transforms based on direction
+            switch direction {
+            case .left:
+                dismissOffset = CGSize(width: -UIScreen.main.bounds.width * 1.3, height: 0)
+                dismissRotation = -15
+            case .right:
+                dismissOffset = CGSize(width: UIScreen.main.bounds.width * 1.3, height: 0)
+                dismissRotation = 15
+            case .up:
+                dismissOffset = CGSize(width: 0, height: -UIScreen.main.bounds.height)
+                dismissRotation = 5
             }
-            return dateFormatter.string(from: date)
+            dismissOpacity = 0
+            
+            // Simultaneously animate other cards rising
+            riseProgress = 1.0
         }
-        return ""
+        
+        // Wait for animation to complete
+        try? await Task.sleep(nanoseconds: 350_000_000)
     }
+    
+    /// Resets all animation state after dismissal (without animation to prevent jumps)
+    private func resetAnimationState() {
+        // Use withAnimation(nil) to instantly reset without interpolation
+        withAnimation(nil) {
+            dismissingCardId = nil
+            dismissOffset = .zero
+            dismissRotation = 0
+            dismissOpacity = 1
+            riseProgress = 0
+        }
+    }
+}
+
+// MARK: - Supporting Types
+
+private enum DismissDirection {
+    case left
+    case right
+    case up
 }
 
 #Preview {
@@ -523,4 +623,3 @@ struct CatchUpView: View {
             .environmentObject(AuthManager())
     }
 }
-

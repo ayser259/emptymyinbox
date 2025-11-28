@@ -52,14 +52,17 @@ struct StarredEmailsView: View {
                                 .padding(.vertical, AppTheme.spacingSmall)
                             }
                             
-                            LazyVStack(spacing: 0) {
-                                ForEach(emails, id: \.id) { email in
+                        LazyVStack(spacing: 0) {
+                            ForEach(emails, id: \.id) { email in
+                                NavigationLink(destination: EmailDetailView(emailId: email.id)) {
                                     GmailStyleEmailRow(email: email)
-                                        .padding(.horizontal, AppTheme.spacingMedium)
-                                        .padding(.vertical, 4)
                                 }
+                                .buttonStyle(PlainButtonStyle())
+                                .padding(.horizontal, AppTheme.spacingMedium)
+                                .padding(.vertical, 4)
                             }
-                            .padding(.vertical, AppTheme.spacingSmall)
+                        }
+                        .padding(.vertical, AppTheme.spacingSmall)
                         }
                     }
                     .refreshable {
@@ -134,6 +137,11 @@ struct StarredEmailsView: View {
                 labels: snapshot.labels
             )
             await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+            
+            // Notify dashboard to update its counts
+            await MainActor.run {
+                NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
+            }
         }
     }
     

@@ -10,6 +10,11 @@ import SwiftUI
 enum EmailFilter: Hashable {
     case sender(email: String, name: String)
     case category(label: Label)
+    // Account-specific filters
+    case accountAll(accountEmail: String)
+    case accountUnread(accountEmail: String)
+    case accountStarred(accountEmail: String)
+    case accountSenders(accountEmail: String)
     
     static func == (lhs: EmailFilter, rhs: EmailFilter) -> Bool {
         switch (lhs, rhs) {
@@ -17,6 +22,14 @@ enum EmailFilter: Hashable {
             return email1 == email2
         case (.category(let label1), .category(let label2)):
             return label1.id == label2.id
+        case (.accountAll(let email1), .accountAll(let email2)):
+            return email1 == email2
+        case (.accountUnread(let email1), .accountUnread(let email2)):
+            return email1 == email2
+        case (.accountStarred(let email1), .accountStarred(let email2)):
+            return email1 == email2
+        case (.accountSenders(let email1), .accountSenders(let email2)):
+            return email1 == email2
         default:
             return false
         }
@@ -30,6 +43,18 @@ enum EmailFilter: Hashable {
         case .category(let label):
             hasher.combine("category")
             hasher.combine(label.id)
+        case .accountAll(let email):
+            hasher.combine("accountAll")
+            hasher.combine(email)
+        case .accountUnread(let email):
+            hasher.combine("accountUnread")
+            hasher.combine(email)
+        case .accountStarred(let email):
+            hasher.combine("accountStarred")
+            hasher.combine(email)
+        case .accountSenders(let email):
+            hasher.combine("accountSenders")
+            hasher.combine(email)
         }
     }
 }
@@ -64,6 +89,23 @@ struct FilteredEmailsView: View {
             return name.formattedAsName
         case .category(let label):
             return label.name
+        case .accountAll(let email):
+            return "All Emails"
+        case .accountUnread(let email):
+            return "Unread"
+        case .accountStarred(let email):
+            return "Starred"
+        case .accountSenders(let email):
+            return "Senders"
+        }
+    }
+    
+    var subtitle: String? {
+        switch filter {
+        case .accountAll(let email), .accountUnread(let email), .accountStarred(let email), .accountSenders(let email):
+            return email
+        default:
+            return nil
         }
     }
     
@@ -73,6 +115,14 @@ struct FilteredEmailsView: View {
             return "person.circle"
         case .category:
             return "tag"
+        case .accountAll:
+            return "envelope"
+        case .accountUnread:
+            return "envelope.badge"
+        case .accountStarred:
+            return "star"
+        case .accountSenders:
+            return "person.2"
         }
     }
     
@@ -82,6 +132,14 @@ struct FilteredEmailsView: View {
             return "No emails from \(name.formattedAsName)"
         case .category(let label):
             return "No emails in \(label.name)"
+        case .accountAll:
+            return "No emails"
+        case .accountUnread:
+            return "No unread emails"
+        case .accountStarred:
+            return "No starred emails"
+        case .accountSenders:
+            return "No senders"
         }
     }
     
@@ -91,6 +149,14 @@ struct FilteredEmailsView: View {
             return "Emails from this sender will appear here"
         case .category:
             return "Emails with this label will appear here"
+        case .accountAll:
+            return "Emails will appear here when synced"
+        case .accountUnread:
+            return "All caught up!"
+        case .accountStarred:
+            return "Star emails to save them for later"
+        case .accountSenders:
+            return "Senders will appear here when emails are synced"
         }
     }
     
@@ -208,7 +274,8 @@ struct FilteredEmailsView: View {
         
         // Try loading from cache first
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
-            let filteredEmails = filterEmails(from: snapshot.allEmails)
+            let sourceEmails = getSourceEmails(from: snapshot)
+            let filteredEmails = filterEmails(from: sourceEmails)
             await MainActor.run {
                 self.emails = filteredEmails
                 self.lastRefreshTime = snapshot.timestamp
@@ -231,7 +298,8 @@ struct FilteredEmailsView: View {
         
         // Then load from updated cache
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
-            let filteredEmails = filterEmails(from: snapshot.allEmails)
+            let sourceEmails = getSourceEmails(from: snapshot)
+            let filteredEmails = filterEmails(from: sourceEmails)
             await MainActor.run {
                 self.emails = filteredEmails
                 self.lastRefreshTime = snapshot.timestamp
@@ -242,10 +310,21 @@ struct FilteredEmailsView: View {
         }
     }
     
+    /// Get the appropriate source emails based on filter type
+    private func getSourceEmails(from snapshot: DashboardDataSnapshot) -> [EmailListItem] {
+        switch filter {
+        case .accountStarred(let accountEmail):
+            // For starred filter, use starredEmails collection with case-insensitive comparison
+            return snapshot.starredEmails.filter { $0.account_email.lowercased() == accountEmail.lowercased() }
+        default:
+            return snapshot.allEmails
+        }
+    }
+    
     private func filterEmails(from emails: [EmailListItem]) -> [EmailListItem] {
         switch filter {
         case .sender(let senderEmail, _):
-            return emails.filter { $0.sender == senderEmail }
+            return emails.filter { $0.sender.lowercased() == senderEmail.lowercased() }
         case .category(let label):
             if label.id == "__UNCATEGORIZED__" {
                 // For uncategorized, filter emails with no user labels
@@ -257,6 +336,16 @@ struct FilteredEmailsView: View {
             } else {
                 return emails.filter { $0.labels.contains(label.id) }
             }
+        case .accountAll(let accountEmail):
+            return emails.filter { $0.account_email.lowercased() == accountEmail.lowercased() }
+        case .accountUnread(let accountEmail):
+            return emails.filter { $0.account_email.lowercased() == accountEmail.lowercased() && !$0.is_read }
+        case .accountStarred(let accountEmail):
+            // Starred filter should already have filtered emails from getSourceEmails
+            return emails
+        case .accountSenders:
+            // Senders view will be handled differently
+            return emails
         }
     }
     

@@ -55,15 +55,22 @@ struct EmailCardView: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(minHeight: scrollGeometry.size.height)
                         } else if !email.body_text.isEmpty {
-                            // For text emails, mark as loaded immediately
-                            Text(email.body_text)
-                                .font(.system(size: 15))
-                                .primaryText()
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .multilineTextAlignment(.center)
-                                .onAppear {
-                                    onLoadComplete?()
-                                }
+                            // Check if body_text is actually HTML (fallback for cached emails)
+                            if looksLikeHTML(email.body_text) {
+                                HTMLWebView(htmlContent: email.body_text, isDarkMode: false, onLoadComplete: onLoadComplete)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(minHeight: scrollGeometry.size.height)
+                            } else {
+                                // For text emails, mark as loaded immediately
+                                Text(email.body_text)
+                                    .font(.system(size: 15))
+                                    .primaryText()
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .multilineTextAlignment(.center)
+                                    .onAppear {
+                                        onLoadComplete?()
+                                    }
+                            }
                         } else {
                             Text(email.snippet)
                                 .font(.system(size: 15))
@@ -102,6 +109,27 @@ struct EmailCardView: View {
         .padding(.horizontal, AppTheme.spacingMedium)
         .frame(maxWidth: .infinity)
         .frame(maxHeight: geometry.size.height * 0.85) // Leave space for buttons and card peeking
+    }
+    
+    /// Detect if text content is actually HTML that should be rendered
+    private func looksLikeHTML(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Check for common HTML document indicators
+        if trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html") {
+            return true
+        }
+        // Check for HTML tags that indicate structured content
+        if trimmed.hasPrefix("<") && (
+            trimmed.contains("<head") ||
+            trimmed.contains("<body") ||
+            trimmed.contains("<div") ||
+            trimmed.contains("<table") ||
+            trimmed.contains("<style") ||
+            trimmed.contains("<meta")
+        ) {
+            return true
+        }
+        return false
     }
     
     private func formatCompactDate(_ dateString: String) -> String {

@@ -181,8 +181,15 @@ struct AllEmailsView: View {
                 .buttonStyle(PlainButtonStyle())
             }
             
-            GmailStyleEmailRow(email: email)
-                .opacity(editMode == .active && !selectedEmailIds.contains(email.id) ? 0.6 : 1.0)
+            if editMode == .active {
+                GmailStyleEmailRow(email: email)
+                    .opacity(!selectedEmailIds.contains(email.id) ? 0.6 : 1.0)
+            } else {
+                NavigationLink(destination: EmailDetailView(emailId: email.id)) {
+                    GmailStyleEmailRow(email: email)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
         }
         .padding(.horizontal, AppTheme.spacingMedium)
         .padding(.vertical, 4)
@@ -205,58 +212,84 @@ struct AllEmailsView: View {
             Divider()
                 .background(AppTheme.secondaryText.opacity(0.3))
             
-            HStack(spacing: AppTheme.spacingMedium) {
-                // Selection count
-                Text("\(selectedEmailIds.count) selected")
-                    .font(AppTheme.subheadline)
-                    .foregroundColor(AppTheme.secondaryText)
-                
-                Spacer()
-                
-                // Mark as Read button
-                Button {
-                    Task {
-                        await markSelectedAsRead()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "envelope.open")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Mark Read")
-                            .font(AppTheme.subheadline)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundColor(AppTheme.primaryText)
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.vertical, AppTheme.spacingUnit)
-                    .background(AppTheme.secondaryBackground)
-                    .cornerRadius(AppTheme.cornerRadiusMedium)
+            VStack(spacing: AppTheme.spacingSmall) {
+                // Selection count - now on its own line
+                HStack {
+                    Text("\(selectedEmailIds.count) selected")
+                        .font(AppTheme.subheadline)
+                        .foregroundColor(AppTheme.secondaryText)
+                    Spacer()
                 }
-                .disabled(isProcessing)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.top, AppTheme.spacingSmall)
                 
-                // Delete button
-                Button {
-                    Task {
-                        await deleteSelectedLocally()
+                // Scrollable action buttons carousel
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        // Mark as Read button
+                        Button {
+                            Task {
+                                await markSelectedAsRead()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "envelope.open")
+                                    .font(.system(size: 14, weight: .medium))
+                                Text("Mark Read")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            .foregroundColor(AppTheme.primaryText)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(AppTheme.secondaryBackground)
+                            .cornerRadius(20)
+                        }
+                        .disabled(isProcessing)
+                        
+                        // Mark as Unread button
+                        Button {
+                            Task {
+                                await markSelectedAsUnread()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "envelope.badge")
+                                    .font(.system(size: 14, weight: .medium))
+                                Text("Mark Unread")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            .foregroundColor(AppTheme.primaryText)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(AppTheme.secondaryBackground)
+                            .cornerRadius(20)
+                        }
+                        .disabled(isProcessing)
+                        
+                        // Remove from Device button
+                        Button {
+                            Task {
+                                await deleteSelectedLocally()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "iphone.slash")
+                                    .font(.system(size: 14, weight: .medium))
+                                Text("Remove from Device")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(AppTheme.secondaryBackground)
+                            .cornerRadius(20)
+                        }
+                        .disabled(isProcessing)
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Delete")
-                            .font(AppTheme.subheadline)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundColor(.red)
                     .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.vertical, AppTheme.spacingUnit)
-                    .background(AppTheme.secondaryBackground)
-                    .cornerRadius(AppTheme.cornerRadiusMedium)
                 }
-                .disabled(isProcessing)
+                .padding(.bottom, AppTheme.spacingSmall)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.vertical, AppTheme.spacingSmall)
             .background(AppTheme.primaryBackground)
         }
     }
@@ -296,6 +329,45 @@ struct AllEmailsView: View {
                 await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
             } catch {
                 print("Error marking email \(emailId) as read: \(error)")
+            }
+        }
+        
+        // Refresh the email list
+        await loadCachedEmails()
+    }
+    
+    private func markSelectedAsUnread() async {
+        guard !selectedEmailIds.isEmpty, !isProcessing else { return }
+        
+        isProcessing = true
+        defer { 
+            Task { @MainActor in
+                isProcessing = false
+                selectedEmailIds.removeAll()
+                editMode = .inactive
+            }
+        }
+        
+        let emailIds = Array(selectedEmailIds)
+        let gmailService = GmailAPIService.shared
+        
+        // Mark each email as unread both locally and via API
+        for emailId in emailIds {
+            do {
+                guard let email = emails.first(where: { $0.id == emailId }),
+                      let account = gmailService.getAccount(byEmail: email.account_email) else {
+                    continue
+                }
+                
+                // Mark as unread via Gmail API
+                try await gmailService.markAsUnread(for: account, messageId: email.gmail_id)
+                await EmailActionSynchronizer.shared.enqueueMarkUnread(emailId: emailId, gmailId: email.gmail_id, accountEmail: email.account_email)
+                
+                // Update local cache
+                let accountId = getAccountId(for: email.account_email)
+                await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
+            } catch {
+                print("Error marking email \(emailId) as unread: \(error)")
             }
         }
         
@@ -349,10 +421,8 @@ struct AllEmailsView: View {
             await EmailCache.shared.saveUnreadEmails(accountUnreadEmails, accountId: account.id)
         }
         
-        // Delete email details from cache
-        for emailId in emailIds {
-            await EmailCache.shared.deleteEmailDetail(emailId: emailId)
-        }
+        // Delete full email details from persistent cache (batch delete for efficiency)
+        await EmailCache.shared.deleteEmailDetails(emailIds: emailIds)
         
         // Refresh the email list
         await loadCachedEmails()

@@ -41,6 +41,7 @@ struct GmailMessage: Codable, Identifiable {
 }
 
 struct GmailPayload: Codable {
+    let mimeType: String?
     let headers: [GmailHeader]
     let parts: [GmailPart]?
     let body: GmailBody?
@@ -323,13 +324,22 @@ class GmailAPIService {
         
         let (data, response) = try await urlSession.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw GmailAPIError.apiError("Failed to list messages: \(response)")
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GmailAPIError.apiError("Invalid response")
         }
         
-        let responseObj = try JSONDecoder().decode(GmailMessagesResponse.self, from: data)
-        return (messages: responseObj.messages ?? [], nextPageToken: responseObj.nextPageToken)
+        // Handle success codes
+        switch httpResponse.statusCode {
+        case 200:
+            // Normal response with messages
+            let responseObj = try JSONDecoder().decode(GmailMessagesResponse.self, from: data)
+            return (messages: responseObj.messages ?? [], nextPageToken: responseObj.nextPageToken)
+        case 204:
+            // No Content - means no messages match the query (this is success, not error)
+            return (messages: [], nextPageToken: nil)
+        default:
+            throw GmailAPIError.apiError("Failed to list messages: status \(httpResponse.statusCode)")
+        }
     }
     
     func getMessage(for account: GmailAccount, messageId: String, format: String = "full") async throws -> GmailMessage {
@@ -347,6 +357,87 @@ class GmailAPIService {
         }
         
         return try JSONDecoder().decode(GmailMessage.self, from: data)
+    }
+    
+    /// Get message with metadata format only (no body content) - much faster
+    func getMessageMetadata(for account: GmailAccount, messageId: String) async throws -> GmailMessage {
+        return try await getMessage(for: account, messageId: messageId, format: "metadata")
+    }
+    
+    /// Batch get multiple messages with metadata format - efficient for loading lists
+    /// Uses rate limiting to avoid Gmail API 429 errors (max 5 concurrent requests)
+    func batchGetMessagesMetadata(for account: GmailAccount, messageIds: [String]) async throws -> [GmailMessage] {
+        // Process with LIMITED concurrency to avoid rate limits
+        let maxConcurrent = 5
+        var results: [GmailMessage] = []
+        
+        // Process in chunks to limit concurrency
+        for chunkStart in stride(from: 0, to: messageIds.count, by: maxConcurrent) {
+            let chunkEnd = min(chunkStart + maxConcurrent, messageIds.count)
+            let chunk = Array(messageIds[chunkStart..<chunkEnd])
+            
+            // Process this chunk in parallel (limited to maxConcurrent)
+            let chunkResults = try await withThrowingTaskGroup(of: GmailMessage?.self) { group in
+                for messageId in chunk {
+                    group.addTask {
+                        do {
+                            return try await self.getMessageMetadataWithRetry(for: account, messageId: messageId)
+                        } catch {
+                            logError("Error fetching metadata for \(messageId): \(error)", category: "Gmail")
+                            return nil
+                        }
+                    }
+                }
+                
+                var chunkMessages: [GmailMessage] = []
+                for try await message in group {
+                    if let message = message {
+                        chunkMessages.append(message)
+                    }
+                }
+                return chunkMessages
+            }
+            
+            results.append(contentsOf: chunkResults)
+            
+            // Small delay between chunks to be respectful of rate limits
+            if chunkEnd < messageIds.count {
+                try await Task.sleep(nanoseconds: 100_000_000) // 100ms between chunks
+            }
+        }
+        
+        return results
+    }
+    
+    /// Get message metadata with exponential backoff retry for rate limits
+    private func getMessageMetadataWithRetry(for account: GmailAccount, messageId: String, maxRetries: Int = 3) async throws -> GmailMessage {
+        var lastError: Error?
+        
+        for attempt in 0..<maxRetries {
+            do {
+                return try await getMessageMetadata(for: account, messageId: messageId)
+            } catch {
+                lastError = error
+                
+                // Check if it's a rate limit error (429)
+                let errorString = String(describing: error)
+                if errorString.contains("429") || errorString.contains("Rate Limit") {
+                    // Exponential backoff: 1s, 2s, 4s
+                    let delaySeconds = pow(2.0, Double(attempt))
+                    let delayNanoseconds = UInt64(delaySeconds * 1_000_000_000)
+                    
+                    logInfo("Rate limited on \(messageId), retrying in \(delaySeconds)s (attempt \(attempt + 1)/\(maxRetries))", category: "Gmail")
+                    
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                    continue
+                }
+                
+                // For non-rate-limit errors, don't retry
+                throw error
+            }
+        }
+        
+        throw lastError ?? GmailAPIError.apiError("Max retries exceeded for \(messageId)")
     }
     
     func modifyMessageLabels(for account: GmailAccount, messageId: String, addLabelIds: [String]? = nil, removeLabelIds: [String]? = nil) async throws {
@@ -492,31 +583,89 @@ class GmailAPIService {
     
     // MARK: - Storage (Keychain)
     
+    private let keychainService = "com.emptyMyInbox.gmail"
+    private let keychainAccount = "gmail_accounts"
+    
     private func saveAccounts() {
-        guard let data = try? JSONEncoder().encode(accounts) else { return }
+        guard let data = try? JSONEncoder().encode(accounts) else {
+            print("⚠️ Failed to encode accounts for keychain")
+            return
+        }
         
-        let query: [String: Any] = [
+        // Delete existing first
+        let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: "gmail_accounts",
-            kSecValueData as String: data
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+        
+        // Add with proper accessibility for device
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
         
-        // Delete existing
-        SecItemDelete(query as CFDictionary)
-        
-        // Add new
-        SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("⚠️ Keychain save failed with status: \(status)")
+        } else {
+            print("✅ Saved \(accounts.count) accounts to keychain")
+        }
     }
     
     private func loadSavedAccounts() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: "gmail_accounts",
-            kSecReturnData as String: true
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
         
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        if status == errSecItemNotFound {
+            print("ℹ️ No accounts found in keychain (first launch or cleared)")
+            // Try to migrate from old keychain format
+            migrateOldKeychainData()
+            return
+        }
+        
+        guard status == errSecSuccess else {
+            print("⚠️ Keychain load failed with status: \(status)")
+            return
+        }
+        
+        guard let data = result as? Data else {
+            print("⚠️ Keychain returned non-data result")
+            return
+        }
+        
+        do {
+            let loadedAccounts = try JSONDecoder().decode([GmailAccount].self, from: data)
+            accounts = loadedAccounts
+            print("✅ Loaded \(accounts.count) accounts from keychain")
+        } catch {
+            logError("Failed to decode accounts from keychain: \(error)", category: "Auth")
+        }
+    }
+    
+    /// Migrate from old keychain format (without service identifier)
+    private func migrateOldKeychainData() {
+        let oldQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "gmail_accounts",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(oldQuery as CFDictionary, &result)
         
         guard status == errSecSuccess,
               let data = result as? Data,
@@ -524,15 +673,35 @@ class GmailAPIService {
             return
         }
         
+        print("🔄 Migrating \(loadedAccounts.count) accounts from old keychain format")
         accounts = loadedAccounts
+        
+        // Save to new format
+        saveAccounts()
+        
+        // Delete old format
+        let deleteOldQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "gmail_accounts"
+        ]
+        SecItemDelete(deleteOldQuery as CFDictionary)
     }
     
     private func clearSavedAccounts() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        print("🗑️ Cleared keychain accounts (status: \(status))")
+        
+        // Also try to clear old format
+        let oldQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: "gmail_accounts"
         ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(oldQuery as CFDictionary)
     }
     
     // MARK: - High-Level Email Operations
@@ -642,7 +811,7 @@ class GmailAPIService {
                                         
                                         return (emailItem, emailDetail)
                                     } catch {
-                                        print("Error fetching message \(messageRef.id): \(error)")
+                                        logError("Error fetching message \(messageRef.id): \(error)", category: "Gmail")
                                         return (nil, nil)
                                     }
                                 }
@@ -660,16 +829,20 @@ class GmailAPIService {
                 }
                 
                 // Collect all results from all batches
+                var detailsToCache: [EmailDetail] = []
                 for await batchResults in batchGroup {
                     for (item, detail) in batchResults {
                         fetchedNewCount += 1
                         emailItems.append(item)
+                        detailsToCache.append(detail)
                         await progressCallback?(fetchedNewCount, totalNewCount)
-                        
-                        // Cache EmailDetail in background (fire and forget for speed)
-                        Task {
-                            await EmailCache.shared.saveEmailDetail(detail)
-                        }
+                    }
+                }
+                
+                // Batch save all email details to persistent cache
+                if !detailsToCache.isEmpty {
+                    Task {
+                        await EmailCache.shared.saveEmailDetails(detailsToCache)
                     }
                 }
             }
@@ -688,6 +861,210 @@ class GmailAPIService {
         }
         
         return (emailItems, nextPageToken)
+    }
+    
+    // MARK: - Lightweight Metadata Sync (Fast - No Body Content)
+    
+    /// Sync unread email metadata only - FAST, no body content downloaded
+    /// Returns EmailMetadata array for counts and lists, sorted by date descending
+    func syncUnreadEmailMetadata(for account: GmailAccount, maxResults: Int = 1000, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
+        // Step 1: Get all message IDs (very fast - just IDs)
+        let (messageRefs, _) = try await listMessages(
+            for: account,
+            query: "is:unread in:inbox",
+            maxResults: maxResults,
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
+        )
+        
+        guard !messageRefs.isEmpty else {
+            // Still update lastSync even if no emails
+            updateAccountLastSync(email: account.email)
+            return []
+        }
+        
+        let totalCount = messageRefs.count
+        await progressCallback?(0, totalCount)
+        
+        // Step 2: Batch fetch metadata (no body) with rate limiting
+        var allMetadata: [EmailMetadata] = []
+        let batchSize = 20 // Reduced batch size to avoid rate limits
+        
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+        
+        var processedCount = 0
+        
+        for batch in batches {
+            let batchIds = batch.map { $0.id }
+            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
+            
+            for gmailMessage in messages {
+                // Only include emails that actually have UNREAD label
+                guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
+                    continue
+                }
+                
+                let emailId = getEmailId(for: gmailMessage.id)
+                let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                allMetadata.append(metadata)
+            }
+            
+            processedCount += batch.count
+            await progressCallback?(processedCount, totalCount)
+        }
+        
+        // Sort by received_at descending (newest first)
+        allMetadata.sort { $0.received_at > $1.received_at }
+        
+        // Update lastSync timestamp
+        updateAccountLastSync(email: account.email)
+        
+        return allMetadata
+    }
+    
+    /// Sync starred email metadata only - FAST, no body content downloaded
+    func syncStarredEmailMetadata(for account: GmailAccount, maxResults: Int = 500, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
+        // Step 1: Get all message IDs
+        let (messageRefs, _) = try await listMessages(
+            for: account,
+            query: "is:starred",
+            maxResults: maxResults,
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
+        )
+        
+        guard !messageRefs.isEmpty else {
+            return []
+        }
+        
+        let totalCount = messageRefs.count
+        await progressCallback?(0, totalCount)
+        
+        // Step 2: Batch fetch metadata with rate limiting
+        var allMetadata: [EmailMetadata] = []
+        let batchSize = 20 // Reduced batch size to avoid rate limits
+        
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+        
+        var processedCount = 0
+        
+        for batch in batches {
+            let batchIds = batch.map { $0.id }
+            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
+            
+            for gmailMessage in messages {
+                let emailId = getEmailId(for: gmailMessage.id)
+                let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                allMetadata.append(metadata)
+            }
+            
+            processedCount += batch.count
+            await progressCallback?(processedCount, totalCount)
+        }
+        
+        // Sort by received_at descending
+        allMetadata.sort { $0.received_at > $1.received_at }
+        
+        return allMetadata
+    }
+    
+    /// Update the lastSync timestamp for an account
+    private func updateAccountLastSync(email: String) {
+        if let index = accounts.firstIndex(where: { $0.email == email }) {
+            var updatedAccount = accounts[index]
+            updatedAccount.lastSync = Date()
+            accounts[index] = updatedAccount
+            saveAccounts()
+        }
+    }
+    
+    /// Get full email content by Gmail ID - use for Catch Up view lazy loading
+    func getFullEmailDetail(for account: GmailAccount, gmailId: String) async throws -> EmailDetail {
+        let gmailMessage = try await getMessage(for: account, messageId: gmailId, format: "full")
+        let emailId = getEmailId(for: gmailId)
+        return parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+    }
+    
+    /// Batch get full email details - for progressive loading in Catch Up
+    /// Uses rate limiting to avoid Gmail API 429 errors
+    func batchGetFullEmailDetails(for account: GmailAccount, gmailIds: [String]) async throws -> [EmailDetail] {
+        // Process with LIMITED concurrency to avoid rate limits
+        let maxConcurrent = 5
+        var results: [EmailDetail] = []
+        
+        // Process in chunks to limit concurrency
+        for chunkStart in stride(from: 0, to: gmailIds.count, by: maxConcurrent) {
+            let chunkEnd = min(chunkStart + maxConcurrent, gmailIds.count)
+            let chunk = Array(gmailIds[chunkStart..<chunkEnd])
+            
+            // Process this chunk in parallel (limited to maxConcurrent)
+            let chunkResults = try await withThrowingTaskGroup(of: EmailDetail?.self) { group in
+                for gmailId in chunk {
+                    group.addTask {
+                        do {
+                            return try await self.getFullEmailDetailWithRetry(for: account, gmailId: gmailId)
+                        } catch {
+                            logError("Error fetching full email \(gmailId): \(error)", category: "Gmail")
+                            return nil
+                        }
+                    }
+                }
+                
+                var chunkDetails: [EmailDetail] = []
+                for try await detail in group {
+                    if let detail = detail {
+                        chunkDetails.append(detail)
+                    }
+                }
+                return chunkDetails
+            }
+            
+            results.append(contentsOf: chunkResults)
+            
+            // Small delay between chunks to be respectful of rate limits
+            if chunkEnd < gmailIds.count {
+                try await Task.sleep(nanoseconds: 100_000_000) // 100ms between chunks
+            }
+        }
+        
+        return results
+    }
+    
+    /// Get full email detail with exponential backoff retry for rate limits
+    private func getFullEmailDetailWithRetry(for account: GmailAccount, gmailId: String, maxRetries: Int = 3) async throws -> EmailDetail {
+        var lastError: Error?
+        
+        for attempt in 0..<maxRetries {
+            do {
+                return try await getFullEmailDetail(for: account, gmailId: gmailId)
+            } catch {
+                lastError = error
+                
+                // Check if it's a rate limit error (429)
+                let errorString = String(describing: error)
+                if errorString.contains("429") || errorString.contains("Rate Limit") {
+                    // Exponential backoff: 1s, 2s, 4s
+                    let delaySeconds = pow(2.0, Double(attempt))
+                    let delayNanoseconds = UInt64(delaySeconds * 1_000_000_000)
+                    
+                    logInfo("Rate limited on full email \(gmailId), retrying in \(delaySeconds)s (attempt \(attempt + 1)/\(maxRetries))", category: "Gmail")
+                    
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                    continue
+                }
+                
+                // For non-rate-limit errors, don't retry
+                throw error
+            }
+        }
+        
+        throw lastError ?? GmailAPIError.apiError("Max retries exceeded for full email \(gmailId)")
     }
     
     /// Sync starred emails for an account
@@ -778,7 +1155,7 @@ class GmailAPIService {
                                 
                                 return (emailItem, emailDetail)
                             } catch {
-                                print("Error fetching starred message \(messageRef.id): \(error)")
+                                logError("Error fetching starred message \(messageRef.id): \(error)", category: "Gmail")
                                 return (nil, nil)
                             }
                         }
@@ -796,16 +1173,20 @@ class GmailAPIService {
                 }
                 
                 // Collect all results from all batches
+                var detailsToCache: [EmailDetail] = []
                 for await batchResults in batchGroup {
                     for (item, detail) in batchResults {
                         fetchedNewCount += 1
                         emailItems.append(item)
+                        detailsToCache.append(detail)
                         await progressCallback?(fetchedNewCount, totalNewCount)
-                        
-                        // Cache EmailDetail in background (fire and forget for speed)
-                        Task {
-                            await EmailCache.shared.saveEmailDetail(detail)
-                        }
+                    }
+                }
+                
+                // Batch save all email details to persistent cache
+                if !detailsToCache.isEmpty {
+                    Task {
+                        await EmailCache.shared.saveEmailDetails(detailsToCache)
                     }
                 }
             }
@@ -909,7 +1290,7 @@ class GmailAPIService {
                                     
                                     return (emailItem, emailDetail)
                                 } catch {
-                                    print("Error fetching message \(messageRef.id): \(error)")
+                                    logError("Error fetching message \(messageRef.id): \(error)", category: "Gmail")
                                     return (nil, nil)
                                 }
                             }

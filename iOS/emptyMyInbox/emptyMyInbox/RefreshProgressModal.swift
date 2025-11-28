@@ -2,14 +2,17 @@
 //  RefreshProgressModal.swift
 //  emptyMyInbox
 //
-//  Modal view showing detailed refresh progress
+//  Modal view showing detailed refresh progress with live logs
 //
 
 import SwiftUI
 
 struct RefreshProgressModal: View {
     @ObservedObject var progressTracker: RefreshProgressTracker
+    @StateObject private var logger = DebugLogger.shared
     @Environment(\.dismiss) var dismiss
+    
+    @State private var selectedTab = 0
     
     var body: some View {
         NavigationView {
@@ -17,60 +20,24 @@ struct RefreshProgressModal: View {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
                 
-                ScrollView {
-                    VStack(spacing: 0) {
-                        // Overall progress bar
-                        VStack(spacing: AppTheme.spacingMedium) {
-                            HStack {
-                                Text("Overall Progress")
-                                    .font(AppTheme.headline)
-                                    .primaryText()
-                                Spacer()
-                                Text("\(Int(progressTracker.overallProgress * 100))%")
-                                    .font(AppTheme.headline)
-                                    .foregroundColor(AppTheme.accent)
-                            }
-                            
-                            GeometryReader { geometry in
-                                ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(AppTheme.secondaryBackground)
-                                        .frame(height: 8)
-                                    
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [AppTheme.accent, AppTheme.accent.opacity(0.7)]),
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                        )
-                                        .frame(width: geometry.size.width * progressTracker.overallProgress, height: 8)
-                                }
-                            }
-                            .frame(height: 8)
-                        }
-                        .padding(AppTheme.spacingLarge)
-                        .background(AppTheme.secondaryBackground)
-                        
-                        // Progress items list
-                        VStack(spacing: 0) {
-                            ForEach(progressTracker.items) { item in
-                                ProgressItemRow(item: item)
-                                    .padding(.horizontal, AppTheme.spacingMedium)
-                                
-                                if item.id != progressTracker.items.last?.id {
-                                    Divider()
-                                        .background(AppTheme.secondaryText.opacity(0.2))
-                                        .padding(.leading, AppTheme.spacingLarge)
-                                }
-                            }
-                        }
-                        .padding(.vertical, AppTheme.spacingSmall)
+                VStack(spacing: 0) {
+                    // Tab picker
+                    Picker("View", selection: $selectedTab) {
+                        Text("Progress").tag(0)
+                        Text("Live Logs").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingSmall)
+                    
+                    if selectedTab == 0 {
+                        progressView
+                    } else {
+                        liveLogsView
                     }
                 }
             }
-            .navigationTitle("Refresh Progress")
+            .navigationTitle("Refresh Status")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -81,6 +48,150 @@ struct RefreshProgressModal: View {
                 }
             }
         }
+    }
+    
+    private var progressView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                // Overall progress bar
+                VStack(spacing: AppTheme.spacingMedium) {
+                    HStack {
+                        Text("Overall Progress")
+                            .font(AppTheme.headline)
+                            .primaryText()
+                        Spacer()
+                        Text("\(Int(progressTracker.overallProgress * 100))%")
+                            .font(AppTheme.headline)
+                            .foregroundColor(AppTheme.accent)
+                    }
+                    
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(AppTheme.secondaryBackground)
+                                .frame(height: 8)
+                            
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [AppTheme.accent, AppTheme.accent.opacity(0.7)]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: geometry.size.width * progressTracker.overallProgress, height: 8)
+                                .animation(.easeInOut(duration: 0.3), value: progressTracker.overallProgress)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+                .padding(AppTheme.spacingLarge)
+                .background(AppTheme.secondaryBackground)
+                
+                // Progress items list
+                VStack(spacing: 0) {
+                    ForEach(progressTracker.items) { item in
+                        ProgressItemRow(item: item)
+                            .padding(.horizontal, AppTheme.spacingMedium)
+                        
+                        if item.id != progressTracker.items.last?.id {
+                            Divider()
+                                .background(AppTheme.secondaryText.opacity(0.2))
+                                .padding(.leading, AppTheme.spacingLarge)
+                        }
+                    }
+                }
+                .padding(.vertical, AppTheme.spacingSmall)
+            }
+        }
+    }
+    
+    private var liveLogsView: some View {
+        VStack(spacing: 0) {
+            // Recent logs (last 50)
+            let recentLogs = Array(logger.entries.suffix(50))
+            
+            if recentLogs.isEmpty {
+                VStack(spacing: AppTheme.spacingMedium) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 48))
+                        .foregroundColor(AppTheme.secondaryText)
+                    
+                    Text("No logs yet")
+                        .font(AppTheme.headline)
+                        .primaryText()
+                    
+                    Text("Logs will appear here during refresh")
+                        .font(AppTheme.body)
+                        .secondaryText()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(recentLogs) { entry in
+                                CompactLogRow(entry: entry)
+                                    .id(entry.id)
+                            }
+                        }
+                    }
+                    .onChange(of: logger.entries.count) { _, _ in
+                        if let lastLog = recentLogs.last {
+                            withAnimation {
+                                proxy.scrollTo(lastLog.id, anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Bottom bar with copy button
+            HStack {
+                Text("\(recentLogs.count) recent logs")
+                    .font(AppTheme.caption)
+                    .secondaryText()
+                
+                Spacer()
+                
+                Button {
+                    UIPasteboard.general.string = logger.exportAsText()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 12))
+                        Text("Copy All")
+                            .font(AppTheme.caption)
+                    }
+                    .foregroundColor(AppTheme.accent)
+                }
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+            .padding(.vertical, AppTheme.spacingSmall)
+            .background(AppTheme.secondaryBackground)
+        }
+    }
+}
+
+struct CompactLogRow: View {
+    let entry: LogEntry
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(entry.level.emoji)
+                .font(.system(size: 12))
+            
+            Text(entry.formattedTimestamp)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(AppTheme.secondaryText)
+            
+            Text(entry.message)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(entry.level.color)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, AppTheme.spacingSmall)
+        .padding(.vertical, 4)
     }
 }
 

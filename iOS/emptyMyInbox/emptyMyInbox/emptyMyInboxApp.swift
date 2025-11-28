@@ -41,6 +41,12 @@ struct emptyMyInboxApp: App {
             .task {
                 // Check auth status on app launch
                 authManager.checkAuthStatus()
+                
+                // Clean up old cached emails in background
+                // Removes emails marked as read that are older than 10 days
+                Task.detached(priority: .background) {
+                    await EmailCache.shared.cleanupOldEmails(olderThanDays: 10)
+                }
             }
             .onOpenURL { url in
                 handleURL = url
