@@ -127,13 +127,6 @@ struct AccountsView: View {
         .task {
             await loadCachedAccounts()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountConnected"))) { _ in
-            Task {
-                // Wait a moment for backend to finish processing
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                await refreshAccounts()
-            }
-        }
     }
     
     private func loadCachedAccounts() async {
@@ -154,7 +147,6 @@ struct AccountsView: View {
             await MainActor.run {
                 applySnapshot(snapshot)
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Unable to refresh accounts. Please try again."
@@ -171,51 +163,111 @@ struct AccountsView: View {
         defer { isAddingAccount = false }
         
         do {
-            // Get Gmail OAuth URL from backend, include redirect back into the app
-            let redirectURI = "emptymyinbox://account_connected"
-            let authURL = try await APIService.shared.getGmailAuthURL(redirectURI: redirectURI)
+            // Get the root view controller for Google Sign-In
+            let rootViewController: UIViewController? = await MainActor.run {
+                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                      let rootVC = windowScene.windows.first?.rootViewController else {
+                    return nil
+                }
+                return rootVC
+            }
             
-            guard let url = URL(string: authURL) else {
+            guard let rootViewController = rootViewController else {
                 await MainActor.run {
-                    self.errorMessage = "Invalid authorization URL"
+                    self.errorMessage = "Unable to start authentication"
                 }
                 return
             }
             
-            await MainActor.run {
-                startAuthenticationSession(with: url)
-            }
+            // Sign in directly with Google using GmailAPIService
+            let gmailAccount = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
+            
+            print("✅ Successfully authenticated Gmail account: \(gmailAccount.email)")
+            
+            // Immediately add account to snapshot optimistically (so it shows up right away)
+            await addAccountOptimistically(gmailAccount: gmailAccount)
+            
+            // Then do full sync in background
+            await refreshAccounts()
+            
         } catch {
             await MainActor.run {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
+            print("❌ Gmail authentication failed: \(error)")
         }
     }
     
-    @MainActor
-    private func startAuthenticationSession(with url: URL) {
-        let session = ASWebAuthenticationSession(
-            url: url,
-            callbackURLScheme: "emptymyinbox"
-        ) { callbackURL, error in
-            if let error = error as? ASWebAuthenticationSessionError,
-               error.code == .canceledLogin {
-                return
-            }
+    private func addAccountOptimistically(gmailAccount: GmailAccount) async {
+        // Load current snapshot
+        guard let currentSnapshot = await DashboardDataManager.shared.loadCachedSnapshot() else {
+            // No snapshot yet, create a new one with just this account
+            let dateFormatter = ISO8601DateFormatter()
+            let newAccount = EmailAccount(
+                id: gmailAccount.numericId,
+                email: gmailAccount.email,
+                is_active: true,
+                last_sync: nil, // nil = "Never synced" / "Syncing..."
+                created_at: dateFormatter.string(from: Date()),
+                email_count: 0 // Will be updated after sync
+            )
             
-            if let error = error {
-                self.errorMessage = "Authentication failed: \(error.localizedDescription)"
-                return
-            }
+            let newSnapshot = DashboardDataSnapshot(
+                timestamp: Date(),
+                accounts: [newAccount],
+                emails: [],
+                allEmails: [],
+                starredEmails: [],
+                labels: []
+            )
             
-            if callbackURL != nil {
-                NotificationCenter.default.post(name: NSNotification.Name("AccountConnected"), object: nil)
+            await DashboardCache.shared.saveSnapshot(newSnapshot)
+            await MainActor.run {
+                applySnapshot(newSnapshot)
             }
+            return
         }
-        session.presentationContextProvider = authSessionCoordinator
-        session.prefersEphemeralWebBrowserSession = false
-        self.authSession = session
-        session.start()
+        
+        // Check if account already exists
+        if currentSnapshot.accounts.contains(where: { $0.email == gmailAccount.email }) {
+            // Account already exists, no need to add
+            return
+        }
+        
+        // Create new account (optimistically, before sync)
+        let dateFormatter = ISO8601DateFormatter()
+        let newAccount = EmailAccount(
+            id: gmailAccount.numericId,
+            email: gmailAccount.email,
+            is_active: true,
+            last_sync: nil, // nil = "Never synced" / "Syncing..."
+            created_at: dateFormatter.string(from: Date()),
+            email_count: 0 // Will be updated after sync
+        )
+        
+        // Add to existing accounts
+        var updatedAccounts = currentSnapshot.accounts
+        updatedAccounts.append(newAccount)
+        
+        // Create updated snapshot
+        let updatedSnapshot = DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: updatedAccounts,
+            emails: currentSnapshot.emails,
+            allEmails: currentSnapshot.allEmails,
+            starredEmails: currentSnapshot.starredEmails,
+            labels: currentSnapshot.labels
+        )
+        
+        // Save updated snapshot
+        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        
+        // Update local state
+        await MainActor.run {
+            applySnapshot(updatedSnapshot)
+            // Notify DashboardView to refresh (so new account shows immediately)
+            NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
+        }
     }
     
     @MainActor
@@ -329,6 +381,7 @@ struct AccountRow: View {
 
 struct AccountDetailView: View {
     let account: EmailAccount
+    @EnvironmentObject var authManager: AuthManager
     @State private var emails: [EmailListItem] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -421,17 +474,12 @@ struct AccountDetailView: View {
             await loadCachedEmails()
             await refreshUnreadCountForChip()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadCachedEmails()
-                await refreshUnreadCountForChip()
-            }
-        }
     }
     
     private var catchUpEntry: some View {
         NavigationLink(
             destination: CatchUpView(accountId: account.id, accountEmail: account.email)
+                .environmentObject(authManager)
         ) {
             ShortcutActionChip(
                 title: "Catch up",
@@ -479,7 +527,6 @@ struct AccountDetailView: View {
                     self.mostRecentEmailTime = nil
                 }
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Unable to refresh emails. Please try again."

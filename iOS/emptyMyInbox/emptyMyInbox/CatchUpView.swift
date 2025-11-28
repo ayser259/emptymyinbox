@@ -8,11 +8,11 @@
 import SwiftUI
 import WebKit
 import UIKit
-import AudioToolbox
 
 struct CatchUpView: View {
     let accountId: Int?
     let accountEmail: String?
+    @EnvironmentObject var authManager: AuthManager
     @State private var unreadEmails: [EmailListItem] = []
     @State private var emailDeck: [EmailDetail] = [] // Full deck of loaded emails
     @State private var currentIndex: Int = 0
@@ -25,7 +25,14 @@ struct CatchUpView: View {
     @State private var isAnimating = false
     @State private var reviewedCount: Int = 0 // Track locally reviewed emails
     @State private var lastReviewedEmailId: Int? // Track last reviewed email for visual indicator
+    @State private var sessionStartTime: Date? // Track when session started
+    @State private var initialEmailCount: Int = 0 // Track initial email count for stats
     private let maxVisibleCards = 2 // Show only the current card and one peeking behind
+    
+    private var isOffline: Bool {
+        // Always assume online since we're using direct Gmail API
+        return false
+    }
     
     init(accountId: Int? = nil, accountEmail: String? = nil) {
         self.accountId = accountId
@@ -37,204 +44,249 @@ struct CatchUpView: View {
             AppTheme.primaryBackground
                 .ignoresSafeArea()
             
-            if isLoading && unreadEmails.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if unreadEmails.isEmpty || currentIndex >= unreadEmails.count {
-                CelebrationView()
-            } else {
-                GeometryReader { geometry in
-                    ZStack(alignment: .bottom) {
-                        VStack(spacing: 0) {
-                            // Top bar with unread counter (centered)
-                            HStack {
-                                Spacer()
-                                HStack(spacing: 8) {
-                                    Text("\(max(0, emailDeck.count - currentIndex)) left to review")
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(AppTheme.accent)
-                                    
-                                    // Show check icon if we've reviewed emails
-                                    if reviewedCount > 0 {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 16))
-                                            .foregroundColor(AppTheme.accent)
-                                    }
-                                }
-                                Spacer()
-                            }
-                            .padding(.horizontal, AppTheme.spacingMedium)
-                            .padding(.vertical, AppTheme.spacingSmall)
-                            .background(AppTheme.secondaryBackground.opacity(0.5))
-                            
-                            // Email content area with card stacking
-                            ZStack {
-                                if isLoadingDeck || emailDeck.isEmpty {
-                                    // Show skeleton loader while loading initial deck
-                                    EmailCardSkeleton(geometry: geometry)
-                                } else {
-                                    // Render deck of cards (peeking from behind)
-                                    ForEach(Array(emailDeck.enumerated()), id: \.element.id) { index, email in
-                                        let cardIndex = index - currentIndex
-                                        
-                                        // Only show cards that are visible (current and next few)
-                                        if cardIndex >= 0 && cardIndex < maxVisibleCards {
-                                            EmailCardView(
-                                                email: email,
-                                                geometry: geometry,
-                                                isActive: cardIndex == 0,
-                                                onLoadComplete: {
-                                                    // Mark this email as loaded (for future use if needed)
-                                                    loadedEmailIds.insert(email.id)
-                                                }
-                                            )
-                                                .offset(
-                                                    cardIndex == 0 
-                                                        ? emailOffset
-                                                        : CGSize(width: 0, height: (CGFloat(cardIndex) * 16) - (cardIndex == 1 ? 6 : 0))
-                                                )
-                                                .opacity(
-                                                    cardIndex == 0 
-                                                        ? emailOpacity 
-                                                        : max(0.6, 1.0 - Double(cardIndex) * 0.08)
-                                                )
-                                                .scaleEffect(max(0.96, 1.0 - Double(cardIndex) * 0.01))
-                                                .zIndex(Double(maxVisibleCards - cardIndex))
-                                                .overlay(
-                                                    // Show check icon on last reviewed email
-                                                    cardIndex == 0 && lastReviewedEmailId == email.id
-                                                        ? VStack {
-                                                            HStack {
-                                                                Spacer()
-                                                                Image(systemName: "checkmark.circle.fill")
-                                                                    .font(.system(size: 24))
-                                                                    .foregroundColor(AppTheme.accent)
-                                                                    .padding()
-                                                                    .background(AppTheme.secondaryBackground.opacity(0.9))
-                                                                    .clipShape(Circle())
-                                                                    .padding()
-                                                            }
-                                                            Spacer()
-                                                        }
-                                                        : nil
-                                                )
-                                                .animation(
-                                                    cardIndex == 0
-                                                        ? .spring(response: 0.5, dampingFraction: 0.7) 
-                                                        : .spring(response: 0.3, dampingFraction: 0.8),
-                                                    value: cardIndex == 0 ? emailOffset : .zero
-                                                )
-                                                .animation(.easeInOut(duration: 0.2), value: emailOpacity)
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(maxHeight: .infinity)
-                            .padding(.bottom, 92) // Space for buttons + gap (reduced)
-                        }
-                        
-                        // Bottom action buttons (pinned to bottom)
-                        VStack(spacing: 0) {
-                            Divider()
-                                .background(AppTheme.secondaryText.opacity(0.2))
-                            
-                            GeometryReader { buttonGeometry in
-                                let availableWidth = buttonGeometry.size.width - (AppTheme.spacingLarge * 2)
-                                let buttonSpacing: CGFloat = 12
-                                let buttonHeight: CGFloat = 51.2 // Reduced by 20% from 64
-                                
-                                HStack(spacing: buttonSpacing) {
-                                    // Star button (20% width)
-                                    Button {
-                                        Task {
-                                            await handleStar()
-                                        }
-                                    } label: {
-                                        VStack(spacing: 6) {
-                                            Image(systemName: (currentIndex < emailDeck.count && emailDeck[currentIndex].is_starred) ? "star.fill" : "star")
-                                                .font(.system(size: 20, weight: .medium))
-                                                .foregroundColor(AppTheme.accent)
-                                            
-                                            Text("Star")
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundColor(AppTheme.accent)
-                                        }
-                                        .frame(width: availableWidth * 0.20)
-                                        .frame(height: buttonHeight)
-                                        .background(Color.black)
-                                        .cornerRadius(12)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(
-                                                    currentEmail?.is_starred == true 
-                                                        ? AppTheme.accent 
-                                                        : Color.white.opacity(0.2), 
-                                                    lineWidth: currentEmail?.is_starred == true ? 2 : 1
-                                                )
-                                        )
-                                    }
-                                    .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
-                                    
-                                    // Keep Unread button (40% width)
-                                    Button {
-                                        Task {
-                                            await handleKeepUnread()
-                                        }
-                                    } label: {
-                                        Text("Keep Unread")
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundColor(AppTheme.primaryText)
-                                            .frame(width: availableWidth * 0.40)
-                                            .frame(height: buttonHeight)
-                                            .background(AppTheme.secondaryBackground)
-                                            .cornerRadius(12)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(AppTheme.accent, lineWidth: 2)
-                                            )
-                                    }
-                                    .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
-                                    
-                                    // Mark as Read button (40% width)
-                                    Button {
-                                        Task {
-                                            await handleMarkAsRead()
-                                        }
-                                    } label: {
-                                        Text("Mark as Read")
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundColor(.black)
-                                            .frame(width: availableWidth * 0.40)
-                                            .frame(height: buttonHeight)
-                                            .background(AppTheme.accent)
-                                            .cornerRadius(12)
-                                    }
-                                    .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.horizontal, AppTheme.spacingLarge)
-                                .padding(.top, 12)
-                                .padding(.bottom, 16)
-                            }
-                            .frame(height: 79) // Reduced height for more compact button area
-                        }
-                        .background(AppTheme.primaryBackground)
-                    }
-                }
-            }
+            mainContent
         }
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .task {
-            await EmailActionSynchronizer.shared.resumePendingActions()
-            await loadUnreadEmails()
+            // Only resume pending actions if online
+            if !isOffline {
+                await EmailActionSynchronizer.shared.resumePendingActions()
+            }
+            // Always use cache-only mode for fast loading
+            await loadUnreadEmails(fromCacheOnly: true)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadUnreadEmails(fromCacheOnly: true)
+    }
+    
+    @ViewBuilder
+    private var mainContent: some View {
+        if isLoading && unreadEmails.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if unreadEmails.isEmpty || currentIndex >= unreadEmails.count {
+            CelebrationView(
+                emailsCleared: emailsClearedCount,
+                sessionStartTime: sessionStartTime,
+                accountEmail: accountEmail
+            )
+        } else {
+            emailDeckView
+        }
+    }
+    
+    private var emailsClearedCount: Int? {
+        if initialEmailCount > 0 {
+            return initialEmailCount
+        } else if reviewedCount > 0 {
+            return reviewedCount
+        } else {
+            return nil
+        }
+    }
+    
+    private var emailDeckView: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    topBarSection
+                    emailCardsSection(geometry: geometry)
+                }
+                actionButtonsSection
             }
         }
+    }
+    
+    private var topBarSection: some View {
+        HStack {
+            Spacer()
+            HStack(spacing: 8) {
+                Text("\(max(0, emailDeck.count - currentIndex)) left to review")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(AppTheme.accent)
+                
+                if reviewedCount > 0 {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(AppTheme.accent)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, AppTheme.spacingMedium)
+        .padding(.vertical, AppTheme.spacingSmall)
+        .background(AppTheme.secondaryBackground.opacity(0.5))
+    }
+    
+    @ViewBuilder
+    private func emailCardsSection(geometry: GeometryProxy) -> some View {
+        ZStack {
+            if isLoadingDeck || emailDeck.isEmpty {
+                EmailCardSkeleton(geometry: geometry)
+            } else {
+                emailCardsStack(geometry: geometry)
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .padding(.bottom, 92)
+    }
+    
+    @ViewBuilder
+    private func emailCardsStack(geometry: GeometryProxy) -> some View {
+        ForEach(Array(emailDeck.enumerated()), id: \.element.id) { index, email in
+            let cardIndex = index - currentIndex
+            
+            if cardIndex >= 0 && cardIndex < maxVisibleCards {
+                emailCardView(email: email, cardIndex: cardIndex, geometry: geometry)
+            }
+        }
+    }
+    
+    private func emailCardView(email: EmailDetail, cardIndex: Int, geometry: GeometryProxy) -> some View {
+        EmailCardView(
+            email: email,
+            geometry: geometry,
+            isActive: cardIndex == 0,
+            onLoadComplete: {
+                loadedEmailIds.insert(email.id)
+            }
+        )
+        .onAppear {
+            if cardIndex == 0 && currentIndex == 0 && sessionStartTime == nil {
+                sessionStartTime = Date()
+            }
+        }
+        .offset(cardIndex == 0 ? emailOffset : CGSize(width: 0, height: (CGFloat(cardIndex) * 16) - (cardIndex == 1 ? 6 : 0)))
+        .opacity(cardIndex == 0 ? emailOpacity : max(0.6, 1.0 - Double(cardIndex) * 0.08))
+        .scaleEffect(max(0.96, 1.0 - Double(cardIndex) * 0.01))
+        .zIndex(Double(maxVisibleCards - cardIndex))
+        .overlay(checkmarkOverlay(cardIndex: cardIndex, email: email))
+        .animation(
+            cardIndex == 0 ? .spring(response: 0.5, dampingFraction: 0.7) : .spring(response: 0.3, dampingFraction: 0.8),
+            value: cardIndex == 0 ? emailOffset : .zero
+        )
+        .animation(.easeInOut(duration: 0.2), value: emailOpacity)
+    }
+    
+    @ViewBuilder
+    private func checkmarkOverlay(cardIndex: Int, email: EmailDetail) -> some View {
+        if cardIndex == 0 && lastReviewedEmailId == email.id {
+            VStack {
+                HStack {
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(AppTheme.accent)
+                        .padding()
+                        .background(AppTheme.secondaryBackground.opacity(0.9))
+                        .clipShape(Circle())
+                        .padding()
+                }
+                Spacer()
+            }
+        }
+    }
+    
+    private var actionButtonsSection: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .background(AppTheme.secondaryText.opacity(0.2))
+            
+            GeometryReader { buttonGeometry in
+                let availableWidth = buttonGeometry.size.width - (AppTheme.spacingLarge * 2)
+                let buttonSpacing: CGFloat = 12
+                let buttonHeight: CGFloat = 51.2
+                
+                HStack(spacing: buttonSpacing) {
+                    starButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
+                    keepUnreadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
+                    markAsReadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, AppTheme.spacingLarge)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+            }
+            .frame(height: 79)
+        }
+        .background(AppTheme.primaryBackground)
+    }
+    
+    private func starButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
+        Button {
+            Task {
+                await handleStar()
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: starButtonIcon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(AppTheme.accent)
+                
+                Text("Star")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppTheme.accent)
+            }
+            .frame(width: availableWidth * 0.20)
+            .frame(height: buttonHeight)
+            .background(Color.black)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(starButtonStrokeColor, lineWidth: starButtonStrokeWidth)
+            )
+        }
+        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
+    }
+    
+    private var starButtonIcon: String {
+        (currentIndex < emailDeck.count && emailDeck[currentIndex].is_starred) ? "star.fill" : "star"
+    }
+    
+    private var starButtonStrokeColor: Color {
+        currentEmail?.is_starred == true ? AppTheme.accent : Color.white.opacity(0.2)
+    }
+    
+    private var starButtonStrokeWidth: CGFloat {
+        currentEmail?.is_starred == true ? 2 : 1
+    }
+    
+    private func keepUnreadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
+        Button {
+            Task {
+                await handleKeepUnread()
+            }
+        } label: {
+            Text("Keep Unread")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppTheme.primaryText)
+                .frame(width: availableWidth * 0.40)
+                .frame(height: buttonHeight)
+                .background(AppTheme.secondaryBackground)
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(AppTheme.accent, lineWidth: 2)
+                )
+        }
+        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
+    }
+    
+    private func markAsReadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
+        Button {
+            Task {
+                await handleMarkAsRead()
+            }
+        } label: {
+            Text("Mark as Read")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.black)
+                .frame(width: availableWidth * 0.40)
+                .frame(height: buttonHeight)
+                .background(AppTheme.accent)
+                .cornerRadius(12)
+        }
+        .disabled(isProcessing || currentIndex >= emailDeck.count || isAnimating || isLoadingDeck)
     }
     
     private func loadUnreadEmails(fromCacheOnly: Bool = false) async {
@@ -244,6 +296,10 @@ struct CatchUpView: View {
         let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: accountId)
         await MainActor.run {
             self.unreadEmails = cachedEmails
+            // Track initial count (timer will start when first email is displayed)
+            if !cachedEmails.isEmpty {
+                self.initialEmailCount = cachedEmails.count
+            }
         }
         
         if cachedEmails.isEmpty {
@@ -266,15 +322,10 @@ struct CatchUpView: View {
             return
         }
         
-        if useCacheOnly {
-            await MainActor.run {
-                loadedEmailIds.removeAll()
-            }
-        } else {
-            await MainActor.run {
-                isLoadingDeck = true
-                loadedEmailIds.removeAll()
-            }
+        // Always show loading state when fetching email details
+        await MainActor.run {
+            isLoadingDeck = true
+            loadedEmailIds.removeAll()
         }
         
         let priorityCount = min(3, emails.count)
@@ -287,19 +338,34 @@ struct CatchUpView: View {
             let emailItem = emails[index]
             if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
                 priorityDeck[index] = cachedDetail
-            } else if !useCacheOnly {
+            } else {
+                // Always fetch details if not cached, even in cache-only mode
+                // (we have the list items, so we know the emails exist)
                 priorityFetchIndexes.append(index)
             }
         }
         
-        if !priorityFetchIndexes.isEmpty && !useCacheOnly {
+        if !priorityFetchIndexes.isEmpty {
             await withTaskGroup(of: (Int, EmailDetail?).self) { group in
                 for index in priorityFetchIndexes {
                     let emailItem = emails[index]
                     group.addTask {
                         do {
-                            let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
+                            // Try cache first
+                            var detail: EmailDetail?
+                            if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                                detail = cachedDetail
+                            } else {
+                                // Fetch from Gmail
+                                let gmailService = GmailAPIService.shared
+                                guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
+                                    throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                                }
+                                detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
+                                if let detail = detail {
                             await EmailCache.shared.saveEmailDetail(detail)
+                                }
+                            }
                             return (index, detail)
                         } catch {
                             print("Error loading email details for \(emailItem.id): \(error)")
@@ -325,9 +391,7 @@ struct CatchUpView: View {
             self.emailOffset = .zero
             self.emailOpacity = 1.0
             self.loadedEmailIds.removeAll()
-            if !useCacheOnly {
-                isLoadingDeck = false // Allow UI to show first batch
-            }
+            isLoadingDeck = false // Allow UI to show first batch
         }
         
         // Phase 2: Load remaining emails in background
@@ -339,36 +403,68 @@ struct CatchUpView: View {
                 let emailItem = emails[index]
                 if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
                     remainingDict[index] = cachedDetail
-                } else if !useCacheOnly {
+                } else {
+                    // Always fetch details if not cached, even in cache-only mode
+                    // (we have the list items, so we know the emails exist)
                     remainingFetchIndexes.append(index)
                 }
             }
             
-            if !remainingFetchIndexes.isEmpty && !useCacheOnly {
-                await withTaskGroup(of: (Int, EmailDetail?).self) { group in
-                    for index in remainingFetchIndexes {
-                        let emailItem = emails[index]
-                        group.addTask {
-                            do {
-                                let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
-                                await EmailCache.shared.saveEmailDetail(detail)
-                                return (index, detail)
-                            } catch {
-                                print("Error loading email details for \(emailItem.id): \(error)")
-                                return (index, nil)
+            if !remainingFetchIndexes.isEmpty {
+                // Fetch remaining emails in batches to avoid flooding the connection pool
+                let batchSize = 5
+                for i in stride(from: 0, to: remainingFetchIndexes.count, by: batchSize) {
+                    let end = min(i + batchSize, remainingFetchIndexes.count)
+                    let batch = remainingFetchIndexes[i..<end]
+                    
+                    await withTaskGroup(of: (Int, EmailDetail?).self) { group in
+                        for index in batch {
+                            let emailItem = emails[index]
+                            group.addTask {
+                                do {
+                                    // Try cache first
+                                    var detail: EmailDetail?
+                                    if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                                        detail = cachedDetail
+                                    } else {
+                                        // Fetch from Gmail
+                                        let gmailService = GmailAPIService.shared
+                                        guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
+                                            throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                                        }
+                                        detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
+                                        if let detail = detail {
+                                            await EmailCache.shared.saveEmailDetail(detail)
+                                        }
+                                    }
+                                    return (index, detail)
+                                } catch {
+                                    print("Error loading email details for \(emailItem.id): \(error)")
+                                    return (index, nil)
+                                }
+                            }
+                        }
+                        
+                        for await (index, emailDetail) in group {
+                            if let detail = emailDetail {
+                                remainingDict[index] = detail
                             }
                         }
                     }
                     
-                    for await (index, emailDetail) in group {
-                        if let detail = emailDetail {
-                            remainingDict[index] = detail
+                    // Update deck incrementally with each batch
+                    // This allows UI to populate gradually if user scrolls fast
+                    let currentFullDeck = initialDeck + (priorityCount..<emails.count).compactMap { remainingDict[$0] }
+                     await MainActor.run {
+                        // Only update if we have new data to avoid unnecessary redraws
+                        if currentFullDeck.count > self.emailDeck.count {
+                            self.emailDeck = currentFullDeck
                         }
                     }
                 }
             }
             
-            // Merge with priority deck maintaining original order
+            // Final merge with priority deck maintaining original order (if not already updated incrementally)
             var fullDeck = initialDeck
             for index in priorityCount..<emails.count {
                 if let detail = remainingDict[index] {
@@ -393,13 +489,6 @@ struct CatchUpView: View {
         
         isProcessing = true
         isAnimating = true
-        
-        // Hard haptic feedback for star
-        let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
-        impactFeedback.impactOccurred()
-        
-        // Play sound effect
-        playSoundEffect(.star)
         
         // Animate email shooting up
         await MainActor.run {
@@ -447,9 +536,11 @@ struct CatchUpView: View {
         // Remove from unread cache since we're removing it from the stack
         await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         
-        // Enqueue star action
-        Task {
-            await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
+        // Enqueue star action only if online
+        if !isOffline {
+            Task {
+                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: newStarState)
+            }
         }
         
     }
@@ -458,10 +549,6 @@ struct CatchUpView: View {
         guard !isAnimating else { return }
         
         isAnimating = true
-        
-        // Light haptic feedback for keep unread
-        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-        impactFeedback.impactOccurred()
         
         // Animate email going left
         await MainActor.run {
@@ -493,10 +580,6 @@ struct CatchUpView: View {
         
         isProcessing = true
         isAnimating = true
-        
-        // Hard haptic feedback for mark as read
-        let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
-        impactFeedback.impactOccurred()
         
         // Animate email going right
         await MainActor.run {
@@ -535,34 +618,14 @@ struct CatchUpView: View {
         await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         await EmailCache.shared.deleteEmailDetail(emailId: email.id)
         await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        await MainActor.run {
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        
+        // Only enqueue sync action if online
+        if !isOffline {
+            Task {
+                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email)
+            }
         }
         
-        Task {
-            await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
-        }
-        
-    }
-    
-    
-    private enum SoundEffect {
-        case star
-        case swipe
-        case success
-    }
-    
-    private func playSoundEffect(_ effect: SoundEffect) {
-        let systemSoundId: SystemSoundID
-        switch effect {
-        case .star:
-            systemSoundId = 1054 // Star/Bookmark sound
-        case .swipe:
-            systemSoundId = 1104 // Swipe sound
-        case .success:
-            systemSoundId = 1057 // Success sound
-        }
-        AudioServicesPlaySystemSound(systemSoundId)
     }
     
     private func formatDate(_ dateString: String) -> String {
@@ -588,6 +651,7 @@ struct CatchUpView: View {
 #Preview {
     NavigationStack {
         CatchUpView()
+            .environmentObject(AuthManager())
     }
 }
 

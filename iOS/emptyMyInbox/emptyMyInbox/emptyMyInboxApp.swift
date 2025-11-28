@@ -6,12 +6,31 @@
 //
 
 import SwiftUI
+import GoogleSignIn
 
 @main
 struct emptyMyInboxApp: App {
     @StateObject private var authManager = AuthManager()
     @State private var handleURL: URL?
     @Environment(\.scenePhase) private var scenePhase
+    
+    init() {
+        // Suppress WebKit console noise by setting environment variable
+        // This reduces the RBS assertion errors and process termination messages
+        setenv("OS_ACTIVITY_MODE", "disable", 1)
+        
+        // Configure Google Sign-In
+        // Try GIDClientID first (preferred by Google Sign-In SDK), then fallback to GOOGLE_CLIENT_ID
+        let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "GOOGLE_CLIENT_ID") as? String
+        
+        if let clientID = clientID, !clientID.isEmpty {
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+            print("✅ Google Sign-In configured with Client ID: \(clientID)")
+        } else {
+            print("❌ Warning: GIDClientID or GOOGLE_CLIENT_ID not found in Info.plist")
+        }
+    }
     
     var body: some Scene {
         WindowGroup {
@@ -20,21 +39,17 @@ struct emptyMyInboxApp: App {
             .preferredColorScheme(.dark) // Force dark mode
             .background(AppTheme.primaryBackground)
             .task {
-                // Load user on app start
-                await authManager.loadUser()
+                // Check auth status on app launch
+                authManager.checkAuthStatus()
             }
             .onOpenURL { url in
                 handleURL = url
                 handleIncomingURL(url)
             }
-            .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
-                    NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
-                }
-            }
-            .onChange(of: authManager.sessionState) { _, newState in
-                if newState == .authenticated {
-                    NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                // Only refresh once per day when app comes to foreground
+                if oldPhase != .active && newPhase == .active {
+                    checkAndRefreshIfNeeded()
                 }
             }
         }
@@ -44,9 +59,37 @@ struct emptyMyInboxApp: App {
         // Handle OAuth callback
         if url.scheme == "emptymyinbox" {
             if url.host == "account_connected" || url.query?.contains("account_connected=true") == true {
-                // Post notification to refresh accounts
-                NotificationCenter.default.post(name: NSNotification.Name("AccountConnected"), object: nil)
+                // Account connected - user can manually refresh if needed
             }
+        }
+    }
+    
+    private func checkAndRefreshIfNeeded() {
+        // Only refresh once per day (first time app is opened that day)
+        let userDefaults = UserDefaults.standard
+        let lastAutoRefreshKey = "lastAutoRefreshDate"
+        
+        // Get today's date (just the date, not time)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        
+        // Get last refresh date
+        if let lastRefreshDate = userDefaults.object(forKey: lastAutoRefreshKey) as? Date {
+            let lastRefreshDay = calendar.startOfDay(for: lastRefreshDate)
+            
+            // Only refresh if it's a new day
+            if calendar.isDate(today, inSameDayAs: lastRefreshDay) {
+                // Already refreshed today, skip
+                return
+            }
+        }
+        
+        // It's a new day (or first time), refresh and save the date
+        userDefaults.set(today, forKey: lastAutoRefreshKey)
+        
+        // Post notification to refresh (only if authenticated)
+        if case .authenticated = authManager.sessionState {
+            NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
         }
     }
     
@@ -57,15 +100,6 @@ struct emptyMyInboxApp: App {
             SplashView()
         case .authenticated:
             mainAppView
-        case .offline(let message):
-            mainAppView
-                .overlay(alignment: .top) {
-                    OfflineBanner(message: message) {
-                        Task {
-                            await authManager.loadUser()
-                        }
-                    }
-                }
         case .needsLogin:
             LoginView()
         }
@@ -73,16 +107,8 @@ struct emptyMyInboxApp: App {
     
     @ViewBuilder
     private var mainAppView: some View {
-        // Check if user needs onboarding
-        let state = authManager.currentUser?.state ?? ""
-        let zipCode = authManager.currentUser?.zip_code ?? ""
-        let needsOnboarding = state.isEmpty && zipCode.isEmpty
-        
-        if needsOnboarding {
-            OnboardingView()
-        } else {
+        // No onboarding needed - go straight to dashboard
             DashboardView()
-        }
     }
 }
 

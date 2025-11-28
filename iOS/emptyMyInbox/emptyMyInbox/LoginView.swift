@@ -2,7 +2,7 @@
 //  LoginView.swift
 //  emptyMyInbox
 //
-//  Login view with backend integration
+//  Login view with Google Sign-In
 //
 
 import SwiftUI
@@ -10,24 +10,22 @@ import UIKit
 
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
-    @State private var username = ""
-    @State private var password = ""
     @State private var errorMessage = ""
-    @State private var showSignup = false
     
     var body: some View {
         VStack(spacing: AppTheme.spacingLarge) {
             // Logo
             LogoView(size: 80)
             
-            Text("Welcome Back")
+            Text("Welcome to Empty My Inbox")
                 .font(AppTheme.title)
                 .primaryText()
             
-            Text("Sign in to continue to Empty My Inbox")
+            Text("Sign in with your Google account to get started")
                 .font(AppTheme.body)
                 .secondaryText()
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, AppTheme.spacingMedium)
             
             if !errorMessage.isEmpty {
                 Text(errorMessage)
@@ -36,74 +34,41 @@ struct LoginView: View {
                     .padding(.horizontal, AppTheme.spacingMedium)
             }
             
-            VStack(spacing: AppTheme.spacingMedium) {
-                TextField("Username", text: $username)
-                    .textFieldStyle(CustomTextFieldStyle())
-                    .autocapitalization(.none)
-                    .autocorrectionDisabled()
-                
-                SecureField("Password", text: $password)
-                    .textFieldStyle(CustomTextFieldStyle())
-            }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            
             Button {
                 Task {
-                    await handleLogin()
+                    await handleSignIn()
                 }
             } label: {
+                HStack {
                 if authManager.isLoading {
                     ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: AppTheme.primaryText))
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
                 } else {
-                    Text("Sign In")
+                        Image(systemName: "envelope.fill")
+                        Text("Sign in with Google")
+                    }
                 }
+                .frame(maxWidth: .infinity)
             }
             .primaryButton()
-            .disabled(authManager.isLoading || username.isEmpty || password.isEmpty)
+            .disabled(authManager.isLoading)
             .padding(.horizontal, AppTheme.spacingMedium)
-            
-            HStack {
-                Text("Don't have an account?")
-                    .font(AppTheme.body)
-                    .secondaryText()
-                
-                Button("Sign up") {
-                    showSignup = true
-                }
-                .textButton()
-            }
+            .padding(.top, AppTheme.spacingLarge)
         }
         .padding(AppTheme.spacingXLarge)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .primaryBackground()
-        .sheet(isPresented: $showSignup) {
-            SignupView()
-                .environmentObject(authManager)
-        }
     }
     
-    private func handleLogin() async {
+    private func handleSignIn() async {
         errorMessage = ""
         do {
-            try await authManager.login(username: username, password: password)
+            try await authManager.signInWithGoogle()
         } catch {
+            await MainActor.run {
             errorMessage = error.localizedDescription
         }
     }
-}
-
-struct CustomTextFieldStyle: TextFieldStyle {
-    func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
-            .padding(AppTheme.spacingMedium)
-            .background(AppTheme.secondaryBackground)
-            .cornerRadius(AppTheme.cornerRadiusMedium)
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-            )
-            .primaryText()
     }
 }
 

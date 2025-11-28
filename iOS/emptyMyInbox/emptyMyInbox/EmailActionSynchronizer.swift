@@ -16,16 +16,21 @@ actor EmailActionSynchronizer {
             case star
             case unstar
             case markRead
+            case markUnread
         }
         
         let id: UUID
         let emailId: Int
+        let gmailId: String
+        let accountEmail: String
         let kind: Kind
         let createdAt: Date
         
-        init(emailId: Int, kind: Kind, createdAt: Date = Date()) {
+        init(emailId: Int, gmailId: String, accountEmail: String, kind: Kind, createdAt: Date = Date()) {
             self.id = UUID()
             self.emailId = emailId
+            self.gmailId = gmailId
+            self.accountEmail = accountEmail
             self.kind = kind
             self.createdAt = createdAt
         }
@@ -55,13 +60,17 @@ actor EmailActionSynchronizer {
         }
     }
     
-    func enqueueStar(emailId: Int, shouldStar: Bool) {
+    func enqueueStar(emailId: Int, gmailId: String, accountEmail: String, shouldStar: Bool) {
         let kind: PendingAction.Kind = shouldStar ? .star : .unstar
-        enqueue(PendingAction(emailId: emailId, kind: kind))
+        enqueue(PendingAction(emailId: emailId, gmailId: gmailId, accountEmail: accountEmail, kind: kind))
     }
     
-    func enqueueMarkRead(emailId: Int) {
-        enqueue(PendingAction(emailId: emailId, kind: .markRead))
+    func enqueueMarkRead(emailId: Int, gmailId: String, accountEmail: String) {
+        enqueue(PendingAction(emailId: emailId, gmailId: gmailId, accountEmail: accountEmail, kind: .markRead))
+    }
+    
+    func enqueueMarkUnread(emailId: Int, gmailId: String, accountEmail: String) {
+        enqueue(PendingAction(emailId: emailId, gmailId: gmailId, accountEmail: accountEmail, kind: .markUnread))
     }
     
     func resumePendingActions() {
@@ -103,13 +112,20 @@ actor EmailActionSynchronizer {
     }
     
     private func perform(_ action: PendingAction) async throws {
+        let gmailService = GmailAPIService.shared
+        guard let account = gmailService.getAccount(byEmail: action.accountEmail) else {
+            throw NSError(domain: "EmailActionSynchronizer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+        }
+        
         switch action.kind {
         case .star:
-            _ = try await APIService.shared.starEmail(emailId: action.emailId)
+            try await gmailService.starMessage(for: account, messageId: action.gmailId)
         case .unstar:
-            _ = try await APIService.shared.unstarEmail(emailId: action.emailId)
+            try await gmailService.unstarMessage(for: account, messageId: action.gmailId)
         case .markRead:
-            _ = try await APIService.shared.markEmailAsRead(emailId: action.emailId)
+            try await gmailService.markAsRead(for: account, messageId: action.gmailId)
+        case .markUnread:
+            try await gmailService.markAsUnread(for: account, messageId: action.gmailId)
         }
     }
     
