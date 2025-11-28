@@ -22,74 +22,29 @@ struct AllEmailsView: View {
         ZStack {
             AppTheme.primaryBackground
                 .ignoresSafeArea()
-                
-                if isLoading && emails.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if emails.isEmpty {
-                    VStack {
-                        Image(systemName: "envelope")
-                            .font(.system(size: 48))
-                            .foregroundColor(AppTheme.secondaryText)
-                            .padding()
-                        
-                        Text("No emails")
-                            .font(AppTheme.title3)
-                            .primaryText()
-                        
-                        Text("Your inbox is empty")
-                            .font(AppTheme.body)
-                            .secondaryText()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            // Refresh status header
-                            if let lastRefresh = lastRefreshTime {
-                                RefreshStatusView(
-                                    lastRefreshTime: lastRefresh,
-                                    mostRecentEmailTime: mostRecentEmailTime
-                                )
-                                .padding(.horizontal, AppTheme.spacingMedium)
-                                .padding(.vertical, AppTheme.spacingSmall)
-                            }
-                            
-                            LazyVStack(spacing: 0) {
-                                ForEach(emails, id: \.id) { email in
-                                    HStack(spacing: AppTheme.spacingMedium) {
-                                        if editMode == .active {
-                                            Button {
-                                                toggleSelection(for: email.id)
-                                            } label: {
-                                                Image(systemName: selectedEmailIds.contains(email.id) ? "checkmark.circle.fill" : "circle")
-                                                    .foregroundColor(selectedEmailIds.contains(email.id) ? AppTheme.accent : AppTheme.secondaryText.opacity(0.5))
-                                                    .font(.system(size: 22))
-                                                    .frame(width: 30)
-                                            }
-                                            .buttonStyle(PlainButtonStyle())
-                                        }
-                                        
-                                        GmailStyleEmailRow(email: email)
-                                            .opacity(editMode == .active && !selectedEmailIds.contains(email.id) ? 0.6 : 1.0)
-                                    }
-                                    .padding(.horizontal, AppTheme.spacingMedium)
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                            .padding(.vertical, AppTheme.spacingSmall)
-                        }
-                    }
-                .refreshable {
-                    await performManualRefresh()
-                }
-                }
-            }
-            .navigationTitle("All Emails")
-            .navigationBarTitleDisplayMode(.large)
-            .customBackButton()
-            .primaryBackground()
+            
+            mainContent
+        }
+        .navigationTitle("All Emails")
+        .navigationBarTitleDisplayMode(.large)
+        .customBackButton()
+        .primaryBackground()
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if editMode == .active {
+                        Button {
+                            if selectedEmailIds.count == emails.count {
+                                selectedEmailIds.removeAll()
+                            } else {
+                                selectAllEmails()
+                            }
+                        } label: {
+                            Text(selectedEmailIds.count == emails.count ? "Deselect All" : "Select All")
+                        }
+                        .textButton()
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if editMode == .inactive {
                         Button {
@@ -97,38 +52,26 @@ struct AllEmailsView: View {
                         } label: {
                             Text("Select")
                         }
+                        .textButton()
                     } else {
-                        HStack {
-                            if !selectedEmailIds.isEmpty {
-                                Button {
-                                    Task {
-                                        await markSelectedAsUnread()
-                                    }
-                                } label: {
-                                    Image(systemName: "envelope.badge")
-                                        .foregroundColor(AppTheme.accent)
-                                }
-                                .disabled(isProcessing)
-                            }
-                            
-                            Button {
-                                selectedEmailIds.removeAll()
-                                editMode = .inactive
-                            } label: {
-                                Text("Done")
-                            }
+                        Button {
+                            selectedEmailIds.removeAll()
+                            editMode = .inactive
+                        } label: {
+                            Text("Cancel")
                         }
+                        .textButton()
                     }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if editMode == .active && !selectedEmailIds.isEmpty {
+                    selectionActionBar
                 }
             }
             .environment(\.editMode, $editMode)
         .task {
             await loadCachedEmails()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadCachedEmails()
-            }
         }
     }
     
@@ -151,7 +94,6 @@ struct AllEmailsView: View {
                 applySnapshot(snapshot)
                 errorMessage = nil
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Failed to refresh. Please try again."
@@ -170,6 +112,82 @@ struct AllEmailsView: View {
         }
     }
     
+    @ViewBuilder
+    private var mainContent: some View {
+        if isLoading && emails.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if emails.isEmpty {
+            emptyStateView
+        } else {
+            emailListView
+        }
+    }
+    
+    private var emptyStateView: some View {
+        VStack {
+            Image(systemName: "envelope")
+                .font(.system(size: 48))
+                .foregroundColor(AppTheme.secondaryText)
+                .padding()
+            
+            Text("No emails")
+                .font(AppTheme.title3)
+                .primaryText()
+            
+            Text("Your inbox is empty")
+                .font(AppTheme.body)
+                .secondaryText()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var emailListView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if let lastRefresh = lastRefreshTime {
+                    RefreshStatusView(
+                        lastRefreshTime: lastRefresh,
+                        mostRecentEmailTime: mostRecentEmailTime
+                    )
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingSmall)
+                }
+                
+                LazyVStack(spacing: 0) {
+                    ForEach(emails, id: \.id) { email in
+                        emailRowView(for: email)
+                    }
+                }
+                .padding(.vertical, AppTheme.spacingSmall)
+            }
+        }
+        .refreshable {
+            await performManualRefresh()
+        }
+    }
+    
+    private func emailRowView(for email: EmailListItem) -> some View {
+        HStack(spacing: AppTheme.spacingMedium) {
+            if editMode == .active {
+                Button {
+                    toggleSelection(for: email.id)
+                } label: {
+                    Image(systemName: selectedEmailIds.contains(email.id) ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(selectedEmailIds.contains(email.id) ? AppTheme.accent : AppTheme.secondaryText.opacity(0.5))
+                        .font(.system(size: 22))
+                        .frame(width: 30)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            
+            GmailStyleEmailRow(email: email)
+                .opacity(editMode == .active && !selectedEmailIds.contains(email.id) ? 0.6 : 1.0)
+        }
+        .padding(.horizontal, AppTheme.spacingMedium)
+        .padding(.vertical, 4)
+    }
+    
     private func toggleSelection(for emailId: Int) {
         if selectedEmailIds.contains(emailId) {
             selectedEmailIds.remove(emailId)
@@ -178,11 +196,76 @@ struct AllEmailsView: View {
         }
     }
     
+    private func selectAllEmails() {
+        selectedEmailIds = Set(emails.map { $0.id })
+    }
+    
+    private var selectionActionBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .background(AppTheme.secondaryText.opacity(0.3))
+            
+            HStack(spacing: AppTheme.spacingMedium) {
+                // Selection count
+                Text("\(selectedEmailIds.count) selected")
+                    .font(AppTheme.subheadline)
+                    .foregroundColor(AppTheme.secondaryText)
+                
+                Spacer()
+                
+                // Mark as Read button
+                Button {
+                    Task {
+                        await markSelectedAsRead()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "envelope.open")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Mark Read")
+                            .font(AppTheme.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(AppTheme.primaryText)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingUnit)
+                    .background(AppTheme.secondaryBackground)
+                    .cornerRadius(AppTheme.cornerRadiusMedium)
+                }
+                .disabled(isProcessing)
+                
+                // Delete button
+                Button {
+                    Task {
+                        await deleteSelectedLocally()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Delete")
+                            .font(AppTheme.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.red)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingUnit)
+                    .background(AppTheme.secondaryBackground)
+                    .cornerRadius(AppTheme.cornerRadiusMedium)
+                }
+                .disabled(isProcessing)
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+            .padding(.vertical, AppTheme.spacingSmall)
+            .background(AppTheme.primaryBackground)
+        }
+    }
+    
     private func getAccountId(for accountEmail: String) -> Int? {
         return accounts.first(where: { $0.email == accountEmail })?.id
     }
     
-    private func markSelectedAsUnread() async {
+    private func markSelectedAsRead() async {
         guard !selectedEmailIds.isEmpty, !isProcessing else { return }
         
         isProcessing = true
@@ -195,31 +278,83 @@ struct AllEmailsView: View {
         }
         
         let emailIds = Array(selectedEmailIds)
-        var successfulIds: [Int] = []
+        let gmailService = GmailAPIService.shared
         
-        // Mark each email as unread
+        // Mark each email as read both locally and via API
         for emailId in emailIds {
             do {
-                _ = try await APIService.shared.markEmailAsUnread(emailId: emailId)
+                guard let email = emails.first(where: { $0.id == emailId }),
+                      let account = gmailService.getAccount(byEmail: email.account_email) else {
+                    continue
+                }
                 
-                // Get account ID for this email
-                let email = emails.first { $0.id == emailId }
-                let accountId = email.flatMap { getAccountId(for: $0.account_email) }
+                // Mark as read via Gmail API
+                try await gmailService.markAsRead(for: account, messageId: email.gmail_id)
+                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: emailId, gmailId: email.gmail_id, accountEmail: email.account_email)
                 
                 // Update local cache
-                await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
-                
-                successfulIds.append(emailId)
+                await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
             } catch {
-                print("Error marking email \(emailId) as unread: \(error)")
+                print("Error marking email \(emailId) as read: \(error)")
             }
         }
         
         // Refresh the email list
-        await MainActor.run {
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+        await loadCachedEmails()
+    }
+    
+    private func deleteSelectedLocally() async {
+        guard !selectedEmailIds.isEmpty, !isProcessing else { return }
+        
+        isProcessing = true
+        defer { 
+            Task { @MainActor in
+                isProcessing = false
+                selectedEmailIds.removeAll()
+                editMode = .inactive
+            }
         }
         
+        let emailIds = Array(selectedEmailIds)
+        
+        // Delete emails locally only (doesn't affect Gmail inbox)
+        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+            return
+        }
+        
+        // Remove selected emails from all lists
+        let updatedEmails = snapshot.emails.filter { !emailIds.contains($0.id) }
+        let updatedAllEmails = snapshot.allEmails.filter { !emailIds.contains($0.id) }
+        let updatedStarredEmails = snapshot.starredEmails.filter { !emailIds.contains($0.id) }
+        
+        // Save updated snapshot
+        await DashboardCache.shared.saveSnapshot(
+            accounts: snapshot.accounts,
+            emails: updatedEmails,
+            allEmails: updatedAllEmails,
+            starredEmails: updatedStarredEmails,
+            labels: snapshot.labels
+        )
+        
+        // Remove from EmailCache unread emails (for CatchUpView and other features)
+        // Remove from default unread cache
+        var defaultUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: nil)
+        defaultUnreadEmails = defaultUnreadEmails.filter { !emailIds.contains($0.id) }
+        await EmailCache.shared.saveUnreadEmails(defaultUnreadEmails, accountId: nil)
+        
+        // Remove from account-specific unread caches
+        for account in accounts {
+            var accountUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.id)
+            accountUnreadEmails = accountUnreadEmails.filter { !emailIds.contains($0.id) }
+            await EmailCache.shared.saveUnreadEmails(accountUnreadEmails, accountId: account.id)
+        }
+        
+        // Delete email details from cache
+        for emailId in emailIds {
+            await EmailCache.shared.deleteEmailDetail(emailId: emailId)
+        }
+        
+        // Refresh the email list
         await loadCachedEmails()
     }
     
@@ -345,11 +480,6 @@ struct EmailListView: View {
         .refreshable {
             await refreshEmails()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadCachedEmails()
-            }
-        }
     }
     
     private func loadCachedEmails() async {
@@ -371,7 +501,6 @@ struct EmailListView: View {
                 self.emails = snapshot.emails
                 self.errorMessage = nil
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Unable to refresh emails."
@@ -442,16 +571,23 @@ struct EmailRow: View {
         isUpdating = true
         defer { isUpdating = false }
         
+        let gmailService = GmailAPIService.shared
+        guard let account = gmailService.getAccount(byEmail: email.account_email) else {
+            print("Account not found for email")
+            return
+        }
+        
         do {
-            let updatedEmail: EmailDetail
             if isStarred {
-                updatedEmail = try await APIService.shared.unstarEmail(emailId: email.id)
+                try await gmailService.unstarMessage(for: account, messageId: email.gmail_id)
+                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: false)
             } else {
-                updatedEmail = try await APIService.shared.starEmail(emailId: email.id)
+                try await gmailService.starMessage(for: account, messageId: email.gmail_id)
+                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: true)
             }
             
             await MainActor.run {
-                self.isStarred = updatedEmail.is_starred
+                self.isStarred = !self.isStarred
                 onStarChanged?()
             }
         } catch {

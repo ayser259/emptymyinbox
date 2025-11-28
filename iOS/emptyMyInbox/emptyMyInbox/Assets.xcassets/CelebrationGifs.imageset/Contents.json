@@ -1,0 +1,52 @@
+{
+  "images" : [
+    {
+      "filename" : "catchup1.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup2.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup3.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup4.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup5.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup6.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup7.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup8.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup9.gif",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "catchup10.gif",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "properties" : {
+    "preserves-vector-representation" : true
+  }
+}
+

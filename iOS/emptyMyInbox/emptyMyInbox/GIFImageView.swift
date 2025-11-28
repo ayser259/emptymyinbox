@@ -27,7 +27,26 @@ struct GIFImageView: UIViewRepresentable {
     }
     
     private func loadGIF(into webView: WKWebView) {
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "gif") else {
+        // Try multiple paths to find the GIF
+        var url: URL?
+        
+        // First, try loading from the asset catalog imageset directory
+        if let assetPath = Bundle.main.resourcePath {
+            let imagesetPath = "\(assetPath)/Assets.xcassets/CelebrationGifs.imageset/\(resourceName).gif"
+            url = URL(fileURLWithPath: imagesetPath)
+            if let url = url, FileManager.default.fileExists(atPath: url.path) {
+                // Found it
+            } else {
+                url = nil
+            }
+        }
+        
+        // If not found, try direct bundle resource
+        if url == nil {
+            url = Bundle.main.url(forResource: resourceName, withExtension: "gif")
+        }
+        
+        guard let url = url, FileManager.default.fileExists(atPath: url.path) else {
             print("GIFImageView: Missing resource \(resourceName).gif")
             return
         }

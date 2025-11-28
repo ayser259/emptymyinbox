@@ -26,10 +26,6 @@ struct DashboardView: View {
     @State private var lastRefreshTime: Date?
     @State private var selectedLabel: Label?
     
-    // Collapsible section states
-    @State private var isUnreadCategoriesExpanded = true
-    @State private var isCategoriesExpanded = true
-    
     var isSearchActive: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -56,14 +52,21 @@ struct DashboardView: View {
                 switch destination {
                 case "all_emails":
                     AllEmailsView()
-                case "accounts":
-                    AccountsView()
-                        .environmentObject(authManager)
                 case "starred":
                     StarredEmailsView()
                 case "catch_up":
                     CatchUpView()
                         .environmentObject(authManager)
+                case let catchUpAccount where catchUpAccount.hasPrefix("catch_up_"):
+                    if let accountIdString = catchUpAccount.components(separatedBy: "_").last,
+                       let accountId = Int(accountIdString),
+                       let account = accounts.first(where: { $0.id == accountId }) {
+                        CatchUpView(accountId: accountId, accountEmail: account.email)
+                            .environmentObject(authManager)
+                    } else {
+                        CatchUpView()
+                            .environmentObject(authManager)
+                    }
                 case "senders":
                     SendersView()
                 default:
@@ -90,12 +93,9 @@ struct DashboardView: View {
                 self.lastRefreshTime = nil
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await refreshDashboard(shouldSync: false)
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
+            // Only refresh if not already refreshing to prevent loops
+            // This is only called once per day automatically
             Task {
                 await refreshDashboard(shouldSync: true)
             }
@@ -116,7 +116,7 @@ struct DashboardView: View {
                 actionButtonsSection
                     .padding(.bottom, AppTheme.spacingMedium)
                 
-                collapsibleSections
+                accountSummaryCards
                     .padding(.bottom, AppTheme.spacingLarge)
                 
                 Spacer()
@@ -135,9 +135,9 @@ struct DashboardView: View {
             
             Spacer()
             
-            if let user = authManager.currentUser {
+            if let firstAccount = authManager.accounts.first {
                 ScrollingText(
-                    text: "\(greeting), \(user.displayName.formattedAsName)",
+                    text: "\(greeting), \(firstAccount.email)",
                     font: AppTheme.headline
                 )
                 .frame(maxWidth: .infinity)
@@ -269,15 +269,6 @@ struct DashboardView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 
-                NavigationLink(value: "accounts") {
-                    ActionButton(
-                        title: "Accounts",
-                        count: accounts.count,
-                        icon: "person.crop.circle"
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                
                 NavigationLink(value: "all_emails") {
                     ActionButton(
                         title: "All emails",
@@ -368,64 +359,56 @@ struct DashboardView: View {
         return Date().timeIntervalSince(lastRefreshTime) >= 3600
     }
 
-    private var collapsibleSections: some View {
+    private var accountSummaryCards: some View {
         VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-            CollapsibleSection(
-                title: "Unread - Categories",
-                count: unreadCategoriesCount,
-                isExpanded: $isUnreadCategoriesExpanded
-            ) {
-                if isLoading && unreadCategories.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                } else if unreadCategories.isEmpty {
-                    Text("No unread categories")
-                        .font(AppTheme.subheadline)
-                        .secondaryText()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                        .padding(.vertical, AppTheme.spacingSmall)
-                } else {
-                    VStack(spacing: 2) {
-                        ForEach(unreadCategories, id: \.id) { label in
-                            NavigationLink(value: EmailFilter.category(label: label)) {
-                                SlackStyleLabelRow(label: label)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                }
-            }
+            Text("Accounts")
+                .font(AppTheme.title3)
+                .primaryText()
+                .padding(.horizontal, AppTheme.spacingMedium)
             
-            CollapsibleSection(
-                title: "Categories",
-                count: allCategoriesCount,
-                isExpanded: $isCategoriesExpanded
-            ) {
-                if isLoading && labels.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                } else if labels.isEmpty {
-                    Text("No categories")
-                        .font(AppTheme.subheadline)
-                        .secondaryText()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                        .padding(.vertical, AppTheme.spacingSmall)
-                } else {
-                    VStack(spacing: 2) {
-                        ForEach(labels, id: \.id) { label in
-                            NavigationLink(value: EmailFilter.category(label: label)) {
-                                SlackStyleLabelRow(label: label)
+            if isLoading && accounts.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if accounts.isEmpty {
+                Text("No accounts connected")
+                    .font(AppTheme.subheadline)
+                    .secondaryText()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingSmall)
+            } else {
+                VStack(spacing: AppTheme.spacingMedium) {
+                    ForEach(accounts, id: \.id) { account in
+                        AccountSummaryCard(
+                            account: account,
+                            unreadCount: getUnreadCount(for: account),
+                            starredCount: getStarredCount(for: account),
+                            lastRefreshTime: getLastRefreshTime(for: account),
+                            onRefresh: {
+                                await refreshAccount(accountEmail: account.email)
                             }
-                            .buttonStyle(PlainButtonStyle())
-                        }
+                        )
                     }
                 }
+                .padding(.horizontal, AppTheme.spacingMedium)
             }
         }
+    }
+    
+    private func getUnreadCount(for account: EmailAccount) -> Int {
+        allEmails.filter { $0.account_email == account.email && !$0.is_read }.count
+    }
+    
+    private func getStarredCount(for account: EmailAccount) -> Int {
+        starredEmails.filter { $0.account_email == account.email }.count
+    }
+    
+    private func getLastRefreshTime(for account: EmailAccount) -> Date? {
+        guard let lastSyncString = account.last_sync else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: lastSyncString)
     }
     
     private var greeting: String {
@@ -452,23 +435,11 @@ struct DashboardView: View {
     }
     
     private var draftsCount: Int {
-        // TODO: Implement drafts count when backend supports it
+        // TODO: Implement drafts count
         0
     }
     
-    // MARK: - Category and Sender Grouping
-    
-    private var unreadCategories: [Label] {
-        labels.filter { $0.unread_count > 0 }
-    }
-    
-    private var unreadCategoriesCount: Int {
-        unreadCategories.count
-    }
-    
-    private var allCategoriesCount: Int {
-        labels.count
-    }
+    // MARK: - Sender Grouping
     
     // Computed property for unread senders count (used in action button)
     private var unreadSendersCount: Int {
@@ -527,22 +498,24 @@ struct DashboardView: View {
             // Check if task was cancelled
             guard !Task.isCancelled else { return }
             
-            do {
-                let results = try await APIService.shared.searchEmails(query: trimmedQuery)
+            // Search in cached emails
+            if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+                let filtered = snapshot.allEmails.filter { email in
+                    email.subject.localizedCaseInsensitiveContains(trimmedQuery) ||
+                    email.sender.localizedCaseInsensitiveContains(trimmedQuery) ||
+                    email.sender_name?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
+                    email.snippet.localizedCaseInsensitiveContains(trimmedQuery)
+                }
                 
                 // Check again if task was cancelled
                 guard !Task.isCancelled else { return }
                 
                 await MainActor.run {
-                    self.searchResults = results
+                    self.searchResults = filtered
                     self.isSearching = false
                 }
-            } catch {
-                // Check again if task was cancelled
-                guard !Task.isCancelled else { return }
-                
+            } else {
                 await MainActor.run {
-                    print("Search error: \(error.localizedDescription)")
                     self.searchResults = []
                     self.isSearching = false
                 }
@@ -560,6 +533,14 @@ struct DashboardView: View {
     }
     
     private func refreshDashboard(shouldSync: Bool) async {
+        // Prevent concurrent refreshes
+        let currentlyRefreshing = await MainActor.run {
+            return isRefreshing || isLoading
+        }
+        if currentlyRefreshing {
+            return
+        }
+        
         if shouldSync {
             await MainActor.run {
                 isRefreshing = true
@@ -584,7 +565,7 @@ struct DashboardView: View {
             await MainActor.run {
                 applySnapshot(snapshot)
                 lastRefreshTime = snapshot.timestamp
-                NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
+                // Views will get updated data through their own refresh calls or manual refresh
             }
         }
     }
@@ -600,6 +581,32 @@ struct DashboardView: View {
         self.starredEmails = snapshot.starredEmails
         self.labels = snapshot.labels
         self.lastRefreshTime = snapshot.timestamp
+    }
+    
+    private func refreshAccount(accountEmail: String) async {
+        let gmailService = GmailAPIService.shared
+        let gmailAccounts = gmailService.getAllAccounts()
+        
+        guard let gmailAccount = gmailAccounts.first(where: { $0.email == accountEmail }) else {
+            print("Account not found: \(accountEmail)")
+            return
+        }
+        
+        do {
+            // Sync unread and starred emails for this account
+            _ = try await gmailService.syncUnreadEmails(for: gmailAccount, maxResults: 500, usePagination: false, resetPagination: false)
+            _ = try await gmailService.syncStarredEmails(for: gmailAccount, maxResults: 500)
+            
+            // Refresh dashboard data to update the UI
+            if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: false) {
+                await MainActor.run {
+                    applySnapshot(snapshot)
+                    lastRefreshTime = snapshot.timestamp
+                }
+            }
+        } catch {
+            print("Error refreshing account \(accountEmail): \(error.localizedDescription)")
+        }
     }
 }
 
@@ -829,21 +836,19 @@ struct MenuView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
     @State private var showClearedAlert = false
-    @State private var showConfirmClearDB = false
-    @State private var lastClearDBResult: Int?
     
     var body: some View {
         NavigationView {
             List {
                 Section {
-                    if let user = authManager.currentUser {
+                    if !authManager.accounts.isEmpty {
                         VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                            Text(user.username)
+                            Text("Connected Accounts")
                                 .font(AppTheme.headline)
                                 .primaryText()
                             
-                            if let email = user.email {
-                                Text(email)
+                            ForEach(authManager.accounts) { account in
+                                Text(account.email)
                                     .font(AppTheme.subheadline)
                                     .secondaryText()
                             }
@@ -854,38 +859,29 @@ struct MenuView: View {
                 
                 Section {
                     Button {
-                        showConfirmClearDB = true
-                    } label: {
-                        SwiftUI.Label("Clear Database (emails)", systemImage: "trash.slash")
-                    }
-                    .confirmationDialog(
-                        "Delete all email records stored in the database for your accounts? This does NOT affect Gmail.",
-                        isPresented: $showConfirmClearDB,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Delete emails in database", role: .destructive) {
-                            Task {
-                                do {
-                                    let resp = try await APIService.shared.clearDatabaseEmails()
-                                    lastClearDBResult = resp.deleted
-                                    // Also clear local caches for consistency
-                                    await DashboardCache.shared.clear()
-                                    await EmailCache.shared.clearAll()
-                                    await MainActor.run {
-                                        NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
-                                    }
-                                } catch {
-                                    // No-op: rely on user to retry; could add error toast if desired
+                        Task {
+                            do {
+                                #if canImport(UIKit)
+                                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                      let rootViewController = windowScene.windows.first?.rootViewController else {
+                                    return
                                 }
+                                
+                                _ = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
+                                
+                                // Refresh accounts
+                                authManager.accounts = GmailAPIService.shared.getAllAccounts()
+                                
+                                // Dashboard will refresh on next manual refresh
+                                
+                                dismiss()
+                                #endif
+                            } catch {
+                                print("Error adding Gmail account: \(error)")
                             }
                         }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        if let count = lastClearDBResult {
-                            Text("Deleted \(count) emails from the database.")
-                        } else {
-                            Text("This removes records from our database only, not Gmail.")
-                        }
+                    } label: {
+                        SwiftUI.Label("Add Gmail Account", systemImage: "plus.circle")
                     }
                     
                     Button {
@@ -906,10 +902,8 @@ struct MenuView: View {
                     }
                     
                     Button {
-                        Task {
-                            await authManager.logout()
-                            dismiss()
-                        }
+                        authManager.logout()
+                        dismiss()
                     } label: {
                         SwiftUI.Label("Logout", systemImage: "arrow.right.square")
                             .foregroundColor(.red)
@@ -1064,4 +1058,156 @@ extension String {
     DashboardView()
         .environmentObject(AuthManager())
 }
+
+// MARK: - Account Summary Card
+
+struct AccountSummaryCard: View {
+    let account: EmailAccount
+    let unreadCount: Int
+    let starredCount: Int
+    let lastRefreshTime: Date?
+    let onRefresh: () async -> Void
+    
+    @State private var isRefreshing = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+            // Account header
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(account.email)
+                        .font(AppTheme.headline)
+                        .primaryText()
+                    
+                    if let lastRefresh = lastRefreshTime {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                                .foregroundColor(AppTheme.secondaryText)
+                            Text(formatLastRefreshTime(lastRefresh))
+                                .font(AppTheme.caption)
+                                .secondaryText()
+                        }
+                    } else {
+                        Text("Never synced")
+                            .font(AppTheme.caption)
+                            .secondaryText()
+                    }
+                }
+                
+                Spacer()
+                
+                // Refresh button
+                Button {
+                    Task {
+                        await MainActor.run {
+                            isRefreshing = true
+                        }
+                        await onRefresh()
+                        await MainActor.run {
+                            isRefreshing = false
+                        }
+                    }
+                } label: {
+                    if isRefreshing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(AppTheme.accent)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppTheme.accent)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isRefreshing)
+            }
+            
+            Divider()
+                .background(AppTheme.secondaryText.opacity(0.3))
+            
+            // Stats row
+            HStack(spacing: AppTheme.spacingLarge) {
+                // Unread count
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(unreadCount)")
+                        .font(AppTheme.title2)
+                        .foregroundColor(AppTheme.accent)
+                    Text("Unread")
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                }
+                
+                // Starred count
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(starredCount)")
+                        .font(AppTheme.title2)
+                        .foregroundColor(AppTheme.accent)
+                    Text("Starred")
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                }
+                
+                Spacer()
+                
+                // Catch up button
+                NavigationLink(value: "catch_up_\(account.id)") {
+                    HStack(spacing: 6) {
+                        Image(systemName: "envelope.badge")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Catch Up")
+                            .font(AppTheme.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(AppTheme.primaryText)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.vertical, AppTheme.spacingUnit)
+                    .background(AppTheme.accent)
+                    .cornerRadius(AppTheme.cornerRadiusMedium)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(unreadCount == 0)
+                .opacity(unreadCount == 0 ? 0.5 : 1.0)
+            }
+        }
+        .padding(AppTheme.spacingMedium)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(AppTheme.cornerRadiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+    
+    private func formatLastRefreshTime(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // If refreshed within the last minute, show "just now"
+        if calendar.dateComponents([.second], from: date, to: now).second ?? 0 < 60 {
+            return "just now"
+        }
+        
+        // If refreshed today, show time
+        if calendar.isDateInToday(date) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.timeStyle = .short
+            return "Today at \(timeFormatter.string(from: date))"
+        }
+        
+        // If refreshed yesterday, show yesterday and time
+        if calendar.isDateInYesterday(date) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.timeStyle = .short
+            return "Yesterday at \(timeFormatter.string(from: date))"
+        }
+        
+        // Otherwise show full date and time
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        return dateFormatter.string(from: date)
+    }
+}
+
 

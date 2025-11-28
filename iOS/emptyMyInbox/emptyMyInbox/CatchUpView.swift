@@ -29,9 +29,7 @@ struct CatchUpView: View {
     private let maxVisibleCards = 2 // Show only the current card and one peeking behind
     
     private var isOffline: Bool {
-        if case .offline = authManager.sessionState {
-            return true
-        }
+        // Always assume online since we're using direct Gmail API
         return false
     }
     
@@ -242,11 +240,6 @@ struct CatchUpView: View {
             // Always use cache-only mode for fast loading
             await loadUnreadEmails(fromCacheOnly: true)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadUnreadEmails(fromCacheOnly: true)
-            }
-        }
     }
     
     private func loadUnreadEmails(fromCacheOnly: Bool = false) async {
@@ -278,15 +271,10 @@ struct CatchUpView: View {
             return
         }
         
-        if useCacheOnly {
-            await MainActor.run {
-                loadedEmailIds.removeAll()
-            }
-        } else {
-            await MainActor.run {
-                isLoadingDeck = true
-                loadedEmailIds.removeAll()
-            }
+        // Always show loading state when fetching email details
+        await MainActor.run {
+            isLoadingDeck = true
+            loadedEmailIds.removeAll()
         }
         
         let priorityCount = min(3, emails.count)
@@ -299,19 +287,34 @@ struct CatchUpView: View {
             let emailItem = emails[index]
             if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
                 priorityDeck[index] = cachedDetail
-            } else if !useCacheOnly {
+            } else {
+                // Always fetch details if not cached, even in cache-only mode
+                // (we have the list items, so we know the emails exist)
                 priorityFetchIndexes.append(index)
             }
         }
         
-        if !priorityFetchIndexes.isEmpty && !useCacheOnly {
+        if !priorityFetchIndexes.isEmpty {
             await withTaskGroup(of: (Int, EmailDetail?).self) { group in
                 for index in priorityFetchIndexes {
                     let emailItem = emails[index]
                     group.addTask {
                         do {
-                            let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
+                            // Try cache first
+                            var detail: EmailDetail?
+                            if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                                detail = cachedDetail
+                            } else {
+                                // Fetch from Gmail
+                                let gmailService = GmailAPIService.shared
+                                guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
+                                    throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                                }
+                                detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
+                                if let detail = detail {
                             await EmailCache.shared.saveEmailDetail(detail)
+                                }
+                            }
                             return (index, detail)
                         } catch {
                             print("Error loading email details for \(emailItem.id): \(error)")
@@ -337,9 +340,7 @@ struct CatchUpView: View {
             self.emailOffset = .zero
             self.emailOpacity = 1.0
             self.loadedEmailIds.removeAll()
-            if !useCacheOnly {
-                isLoadingDeck = false // Allow UI to show first batch
-            }
+            isLoadingDeck = false // Allow UI to show first batch
         }
         
         // Phase 2: Load remaining emails in background
@@ -351,19 +352,34 @@ struct CatchUpView: View {
                 let emailItem = emails[index]
                 if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
                     remainingDict[index] = cachedDetail
-                } else if !useCacheOnly {
+                } else {
+                    // Always fetch details if not cached, even in cache-only mode
+                    // (we have the list items, so we know the emails exist)
                     remainingFetchIndexes.append(index)
                 }
             }
             
-            if !remainingFetchIndexes.isEmpty && !useCacheOnly {
+            if !remainingFetchIndexes.isEmpty {
                 await withTaskGroup(of: (Int, EmailDetail?).self) { group in
                     for index in remainingFetchIndexes {
                         let emailItem = emails[index]
                         group.addTask {
                             do {
-                                let detail = try await APIService.shared.getEmailDetails(emailId: emailItem.id)
+                                // Try cache first
+                                var detail: EmailDetail?
+                                if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
+                                    detail = cachedDetail
+                                } else {
+                                    // Fetch from Gmail
+                                    let gmailService = GmailAPIService.shared
+                                    guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
+                                        throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                                    }
+                                    detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
+                                    if let detail = detail {
                                 await EmailCache.shared.saveEmailDetail(detail)
+                                    }
+                                }
                                 return (index, detail)
                             } catch {
                                 print("Error loading email details for \(emailItem.id): \(error)")
@@ -462,7 +478,7 @@ struct CatchUpView: View {
         // Enqueue star action only if online
         if !isOffline {
             Task {
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, shouldStar: newStarState)
+                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: newStarState)
             }
         }
         
@@ -549,14 +565,11 @@ struct CatchUpView: View {
         await EmailCache.shared.removeUnreadEmail(emailId: email.id, accountId: accountId)
         await EmailCache.shared.deleteEmailDetail(emailId: email.id)
         await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        await MainActor.run {
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
-        }
         
         // Only enqueue sync action if online
         if !isOffline {
             Task {
-                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id)
+                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email)
             }
         }
         

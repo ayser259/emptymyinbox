@@ -206,61 +206,56 @@ struct FilteredEmailsView: View {
         isLoading = true
         defer { isLoading = false }
         
-        do {
-            let fetchedEmails: [EmailListItem]
-            
-            switch filter {
-            case .sender(let email, _):
-                fetchedEmails = try await APIService.shared.getEmailsBySender(senderEmail: email)
-            case .category(let label):
-                fetchedEmails = try await APIService.shared.getEmailsByLabel(labelId: label.id)
-            }
-            
+        // Try loading from cache first
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let filteredEmails = filterEmails(from: snapshot.allEmails)
             await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                if let mostRecent = fetchedEmails.first {
+                self.emails = filteredEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = filteredEmails.first {
                     self.mostRecentEmailTime = parseDate(mostRecent.received_at)
                 }
             }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-            }
         }
+        
+        // Then refresh from Gmail
+        await refreshEmails()
     }
     
     private func refreshEmails() async {
         isRefreshing = true
         defer { isRefreshing = false }
         
-        do {
-            // Sync all accounts first
-            let syncResponse = try await APIService.shared.syncAllAccounts()
-            
-            // Then reload emails based on filter
-            let fetchedEmails: [EmailListItem]
-            
-            switch filter {
-            case .sender(let email, _):
-                fetchedEmails = try await APIService.shared.getEmailsBySender(senderEmail: email)
-            case .category(let label):
-                fetchedEmails = try await APIService.shared.getEmailsByLabel(labelId: label.id)
-            }
-            
+        // Refresh dashboard data first
+        _ = await DashboardDataManager.shared.refreshData(shouldSync: true)
+        
+        // Then load from updated cache
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let filteredEmails = filterEmails(from: snapshot.allEmails)
             await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                
-                if let mostRecentTimeStr = syncResponse.most_recent_email_at {
-                    self.mostRecentEmailTime = parseDate(mostRecentTimeStr)
-                } else if let mostRecent = fetchedEmails.first {
+                self.emails = filteredEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = filteredEmails.first {
                     self.mostRecentEmailTime = parseDate(mostRecent.received_at)
                 }
             }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
+        }
+    }
+    
+    private func filterEmails(from emails: [EmailListItem]) -> [EmailListItem] {
+        switch filter {
+        case .sender(let senderEmail, _):
+            return emails.filter { $0.sender == senderEmail }
+        case .category(let label):
+            if label.id == "__UNCATEGORIZED__" {
+                // For uncategorized, filter emails with no user labels
+                let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
+                return emails.filter { email in
+                    let userLabels = email.labels.filter { !systemLabels.contains($0) }
+                    return userLabels.isEmpty
+                }
+            } else {
+                return emails.filter { $0.labels.contains(label.id) }
             }
         }
     }
@@ -371,25 +366,92 @@ struct FilterRulesBottomSheet: View {
         isLoading = true
         defer { isLoading = false }
         
-        do {
-            print("Loading filters for label: \(label.id) (\(label.name))")
-            async let filtersTask = APIService.shared.getFiltersForLabel(labelId: label.id)
-            async let accountsTask = APIService.shared.getAccounts()
+        let gmailService = GmailAPIService.shared
+        let gmailAccounts = gmailService.getAllAccounts()
+        
+        // Convert GmailAccounts to EmailAccounts
+        var emailAccounts: [EmailAccount] = []
+        var allFilters: [GmailFilter] = []
+        
+        for gmailAccount in gmailAccounts {
+            // Create EmailAccount
+            let dateFormatter = ISO8601DateFormatter()
+            let lastSyncString = gmailAccount.lastSync.map { dateFormatter.string(from: $0) }
             
-            let (fetchedFilters, fetchedAccounts) = try await (filtersTask, accountsTask)
+            let emailAccount = EmailAccount(
+                id: gmailAccount.numericId,
+                email: gmailAccount.email,
+                is_active: true,
+                last_sync: lastSyncString,
+                created_at: dateFormatter.string(from: Date()),
+                email_count: 0
+            )
+            emailAccounts.append(emailAccount)
             
-            await MainActor.run {
-                self.filters = fetchedFilters
-                self.accounts = fetchedAccounts
-                if fetchedFilters.isEmpty {
-                    print("No filters found for label \(label.id)")
+            // Get filters for this account
+            do {
+                let gmailFilters = try await gmailService.getAllFilters(for: gmailAccount)
+                
+                // Convert Gmail filters to GmailFilter structs
+                for (index, filterData) in gmailFilters.enumerated() {
+                    guard let gmailFilterId = filterData["id"] as? String,
+                          let criteria = filterData["criteria"] as? [String: Any],
+                          let action = filterData["action"] as? [String: Any] else {
+                        continue
+                    }
+                    
+                    // Check if this filter applies the label
+                    if let addLabelIds = action["addLabelIds"] as? [String],
+                       addLabelIds.contains(label.id) {
+                        
+                        // Parse criteria
+                        let filterCriteria = FilterCriteria(
+                            from: criteria["from"] as? String,
+                            to: criteria["to"] as? String,
+                            subject: criteria["subject"] as? String,
+                            query: criteria["query"] as? String,
+                            negatedQuery: criteria["-query"] as? String,
+                            hasAttachment: criteria["hasAttachment"] as? Bool,
+                            excludeChats: criteria["excludeChats"] as? Bool,
+                            size: criteria["size"] as? Int,
+                            sizeComparison: criteria["sizeComparison"] as? String
+                        )
+                        
+                        // Parse actions
+                        let filterActions = FilterActions(
+                            addLabelIds: action["addLabelIds"] as? [String],
+                            removeLabelIds: action["removeLabelIds"] as? [String],
+                            forward: action["forward"] as? String,
+                            markAsRead: action["markAsRead"] as? Bool,
+                            archive: action["archive"] as? Bool,
+                            delete: action["delete"] as? Bool,
+                            alwaysMarkAsRead: action["alwaysMarkAsRead"] as? Bool,
+                            neverMarkAsRead: action["neverMarkAsRead"] as? Bool,
+                            neverSpam: action["neverSpam"] as? Bool,
+                            star: action["star"] as? Bool
+                        )
+                        
+                        let gmailFilter = GmailFilter(
+                            id: index + 1, // Generate numeric ID
+                            gmail_filter_id: gmailFilterId,
+                            criteria: filterCriteria,
+                            actions: filterActions,
+                            created_at: Date().ISO8601Format(),
+                            updated_at: Date().ISO8601Format()
+                        )
+                        allFilters.append(gmailFilter)
+                    }
                 }
+            } catch {
+                print("Error loading filters for \(gmailAccount.email): \(error)")
             }
-        } catch {
-            print("Error loading filters: \(error)")
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-                print("Error message: \(error.localizedDescription)")
+        }
+        
+        await MainActor.run {
+            self.filters = allFilters
+            self.accounts = emailAccounts
+            if allFilters.isEmpty {
+                print("No filters found for label \(label.id)")
             }
         }
     }

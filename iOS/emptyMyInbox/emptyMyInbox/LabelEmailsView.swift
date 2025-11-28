@@ -93,46 +93,58 @@ struct LabelEmailsView: View {
         isLoading = true
         defer { isLoading = false }
         
-        do {
-            let fetchedEmails = try await APIService.shared.getEmailsByLabel(labelId: label.id)
+        // Try loading from cache first
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let cachedEmails = snapshot.allEmails.filter { email in
+                if label.id == "__UNCATEGORIZED__" {
+                    // For uncategorized, filter emails with no user labels
+                    let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
+                    let userLabels = email.labels.filter { !systemLabels.contains($0) }
+                    return userLabels.isEmpty
+                } else {
+                    return email.labels.contains(label.id)
+                }
+            }
+            
             await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                if let mostRecent = fetchedEmails.first {
+                self.emails = cachedEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = cachedEmails.first {
                     self.mostRecentEmailTime = parseDate(mostRecent.received_at)
                 }
             }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-            }
         }
+        
+        // Then refresh from Gmail
+        await refreshEmails()
     }
     
     private func refreshEmails() async {
         isRefreshing = true
         defer { isRefreshing = false }
         
-        do {
-            // Sync all accounts first
-            let syncResponse = try await APIService.shared.syncAllAccounts()
-            
-            // Then reload emails for this label
-            let fetchedEmails = try await APIService.shared.getEmailsByLabel(labelId: label.id)
-            
-            await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                
-                if let mostRecentTimeStr = syncResponse.most_recent_email_at {
-                    self.mostRecentEmailTime = parseDate(mostRecentTimeStr)
-                } else if let mostRecent = fetchedEmails.first {
-                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
+        // Refresh dashboard data first
+        _ = await DashboardDataManager.shared.refreshData(shouldSync: true)
+        
+        // Then load from updated cache
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let filteredEmails = snapshot.allEmails.filter { email in
+                if label.id == "__UNCATEGORIZED__" {
+                    // For uncategorized, filter emails with no user labels
+                    let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
+                    let userLabels = email.labels.filter { !systemLabels.contains($0) }
+                    return userLabels.isEmpty
+                } else {
+                    return email.labels.contains(label.id)
                 }
             }
-        } catch {
+            
             await MainActor.run {
-                self.errorMessage = error.localizedDescription
+                self.emails = filteredEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = filteredEmails.first {
+                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
+                }
             }
         }
     }

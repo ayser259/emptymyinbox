@@ -2,7 +2,7 @@
 //  AuthManager.swift
 //  emptyMyInbox
 //
-//  Authentication state manager
+//  Authentication state manager - now uses Gmail OAuth only
 //
 
 import Foundation
@@ -13,15 +13,14 @@ class AuthManager: ObservableObject {
         case checking
         case authenticated
         case needsLogin
-        case offline(message: String?)
     }
     
     @Published var isAuthenticated = false
-    @Published var currentUser: User?
     @Published var isLoading = false
     @Published var sessionState: SessionState = .checking
+    @Published var accounts: [GmailAccount] = []
     
-    private let apiService = APIService.shared
+    private let gmailService = GmailAPIService.shared
     
     init() {
         // Check if user is already authenticated
@@ -29,80 +28,66 @@ class AuthManager: ObservableObject {
     }
     
     func checkAuthStatus() {
-        if apiService.hasAccessToken {
             sessionState = .checking
             Task {
-                await loadUser()
-            }
+            await MainActor.run {
+                let gmailAccounts = self.gmailService.getAllAccounts()
+                if !gmailAccounts.isEmpty {
+                    self.accounts = gmailAccounts
+                    self.isAuthenticated = true
+                    self.sessionState = .authenticated
         } else {
-            // For demo purposes, allow offline access even without tokens
-            // Check if we have cached data to work with
-            sessionState = .offline(message: "Working offline - using cached data")
-        }
-    }
-    
-    @MainActor
-    func loadUser() async {
-        sessionState = .checking
-        do {
-            let user = try await apiService.getUser()
-            self.currentUser = user
-            self.isAuthenticated = true
-            self.sessionState = .authenticated
-        } catch let urlError as URLError where urlError.code == .timedOut || urlError.code == .notConnectedToInternet {
-            // Don't clear tokens, allow offline fallback
-            self.sessionState = .offline(message: urlError.localizedDescription)
-        } catch let apiError as APIError {
-            if case .unauthorized = apiError {
-                // For demo purposes, don't clear tokens or force login
-                // Just go offline mode to allow using cached data
-                self.sessionState = .offline(message: "Connection unavailable - using cached data")
-            } else {
-                self.sessionState = .offline(message: apiError.localizedDescription)
+                    // Check if we have cached data for offline access
+            Task {
+                if let cachedSnapshot = await DashboardDataManager.shared.loadCachedSnapshot(),
+                           !cachedSnapshot.accounts.isEmpty {
+                    await MainActor.run {
+                                self.isAuthenticated = true
+                                self.sessionState = .authenticated
+                    }
+                } else {
+                    await MainActor.run {
+                                self.isAuthenticated = false
+                        self.sessionState = .needsLogin
+                            }
+                        }
+                    }
+                }
             }
-        } catch {
-            self.sessionState = .offline(message: "Connection unavailable - using cached data")
         }
     }
     
     @MainActor
-    func login(username: String, password: String) async throws {
+    func signInWithGoogle() async throws {
         isLoading = true
         defer { isLoading = false }
         
-        let response = try await apiService.login(username: username, password: password)
-        self.currentUser = response.user
-        self.isAuthenticated = true
-        self.sessionState = .authenticated
-    }
-    
-    @MainActor
-    func register(_ data: RegisterRequest) async throws {
-        isLoading = true
-        defer { isLoading = false }
-        
-        let response = try await apiService.register(data)
-        self.currentUser = response.user
-        self.isAuthenticated = true
-        self.sessionState = .authenticated
-    }
-    
-    @MainActor
-    func logout() async {
-        do {
-            try await apiService.logout()
-        } catch {
-            // Even if logout fails, clear local state
+        #if canImport(UIKit)
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            throw GmailAPIError.configurationError
         }
+        
+        _ = try await gmailService.signIn(presentingViewController: rootViewController)
+        
+        // Reload accounts
+        self.accounts = gmailService.getAllAccounts()
+        self.isAuthenticated = true
+        self.sessionState = .authenticated
+        #else
+        throw GmailAPIError.configurationError
+        #endif
+    }
+    
+    @MainActor
+    func logout(accountEmail: String? = nil) {
+        gmailService.signOut(accountEmail: accountEmail)
+        self.accounts = gmailService.getAllAccounts()
+        
+        if self.accounts.isEmpty {
         self.isAuthenticated = false
-        self.currentUser = nil
         self.sessionState = .needsLogin
     }
-    
-    @MainActor
-    func updateProfile(state: String?, zipCode: String?) async throws {
-        let user = try await apiService.updateProfile(state: state, zipCode: zipCode)
-        self.currentUser = user
     }
 }
 

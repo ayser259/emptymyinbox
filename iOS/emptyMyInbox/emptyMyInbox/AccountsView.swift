@@ -127,13 +127,6 @@ struct AccountsView: View {
         .task {
             await loadCachedAccounts()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountConnected"))) { _ in
-            Task {
-                // Wait a moment for backend to finish processing
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                await refreshAccounts()
-            }
-        }
     }
     
     private func loadCachedAccounts() async {
@@ -154,7 +147,6 @@ struct AccountsView: View {
             await MainActor.run {
                 applySnapshot(snapshot)
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Unable to refresh accounts. Please try again."
@@ -171,51 +163,36 @@ struct AccountsView: View {
         defer { isAddingAccount = false }
         
         do {
-            // Get Gmail OAuth URL from backend, include redirect back into the app
-            let redirectURI = "emptymyinbox://account_connected"
-            let authURL = try await APIService.shared.getGmailAuthURL(redirectURI: redirectURI)
+            // Get the root view controller for Google Sign-In
+            let rootViewController: UIViewController? = await MainActor.run {
+                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                      let rootVC = windowScene.windows.first?.rootViewController else {
+                    return nil
+                }
+                return rootVC
+            }
             
-            guard let url = URL(string: authURL) else {
+            guard let rootViewController = rootViewController else {
                 await MainActor.run {
-                    self.errorMessage = "Invalid authorization URL"
+                    self.errorMessage = "Unable to start authentication"
                 }
                 return
             }
             
-            await MainActor.run {
-                startAuthenticationSession(with: url)
-            }
+            // Sign in directly with Google using GmailAPIService
+            let account = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
+            
+            print("✅ Successfully authenticated Gmail account: \(account.email)")
+            
+            // Refresh accounts list
+            await refreshAccounts()
+            
         } catch {
             await MainActor.run {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
+            print("❌ Gmail authentication failed: \(error)")
         }
-    }
-    
-    @MainActor
-    private func startAuthenticationSession(with url: URL) {
-        let session = ASWebAuthenticationSession(
-            url: url,
-            callbackURLScheme: "emptymyinbox"
-        ) { callbackURL, error in
-            if let error = error as? ASWebAuthenticationSessionError,
-               error.code == .canceledLogin {
-                return
-            }
-            
-            if let error = error {
-                self.errorMessage = "Authentication failed: \(error.localizedDescription)"
-                return
-            }
-            
-            if callbackURL != nil {
-                NotificationCenter.default.post(name: NSNotification.Name("AccountConnected"), object: nil)
-            }
-        }
-        session.presentationContextProvider = authSessionCoordinator
-        session.prefersEphemeralWebBrowserSession = false
-        self.authSession = session
-        session.start()
     }
     
     @MainActor
@@ -422,12 +399,6 @@ struct AccountDetailView: View {
             await loadCachedEmails()
             await refreshUnreadCountForChip()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadCachedEmails()
-                await refreshUnreadCountForChip()
-            }
-        }
     }
     
     private var catchUpEntry: some View {
@@ -481,7 +452,6 @@ struct AccountDetailView: View {
                     self.mostRecentEmailTime = nil
                 }
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         } else {
             await MainActor.run {
                 self.errorMessage = "Unable to refresh emails. Please try again."

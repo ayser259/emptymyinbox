@@ -79,47 +79,61 @@ struct StarredEmailsView: View {
         isLoading = true
         defer { isLoading = false }
         
-        do {
-            let fetchedEmails = try await APIService.shared.getStarredEmails()
+        // Try loading from cache first
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                if let mostRecent = fetchedEmails.first {
+                self.emails = snapshot.starredEmails
+                self.lastRefreshTime = snapshot.timestamp
+                if let mostRecent = snapshot.starredEmails.first {
                     self.mostRecentEmailTime = parseDate(mostRecent.received_at)
                 }
             }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-            }
         }
+        
+        // Then refresh from Gmail
+        await refreshStarredEmails()
     }
     
     private func refreshStarredEmails() async {
         isRefreshing = true
         defer { isRefreshing = false }
         
-        do {
-            // Sync all accounts first
-            let syncResponse = try await APIService.shared.syncAllAccounts()
-            
-            // Then reload starred emails
-            let fetchedEmails = try await APIService.shared.getStarredEmails()
-            
-            await MainActor.run {
-                self.emails = fetchedEmails
-                self.lastRefreshTime = Date()
-                
-                if let mostRecentTimeStr = syncResponse.most_recent_email_at {
-                    self.mostRecentEmailTime = parseDate(mostRecentTimeStr)
-                } else if let mostRecent = fetchedEmails.first {
-                    self.mostRecentEmailTime = parseDate(mostRecent.received_at)
-                }
+        let gmailService = GmailAPIService.shared
+        let accounts = gmailService.getAllAccounts()
+        
+        var allStarredEmails: [EmailListItem] = []
+        
+        for account in accounts {
+            do {
+                let starredEmails = try await gmailService.syncStarredEmails(for: account, maxResults: 500)
+                allStarredEmails.append(contentsOf: starredEmails)
+            } catch {
+                print("Error syncing starred emails for \(account.email): \(error)")
             }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
+        }
+        
+        // Sort by received_at descending
+        allStarredEmails.sort { $0.received_at > $1.received_at }
+        
+        await MainActor.run {
+            self.emails = allStarredEmails
+            self.lastRefreshTime = Date()
+            if let mostRecent = allStarredEmails.first {
+                self.mostRecentEmailTime = parseDate(mostRecent.received_at)
             }
+        }
+        
+        // Update dashboard cache
+        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+            let updatedSnapshot = DashboardDataSnapshot(
+                timestamp: snapshot.timestamp,
+                accounts: snapshot.accounts,
+                emails: snapshot.emails,
+                allEmails: snapshot.allEmails,
+                starredEmails: allStarredEmails,
+                labels: snapshot.labels
+            )
+            await DashboardCache.shared.saveSnapshot(updatedSnapshot)
         }
     }
     

@@ -15,11 +15,13 @@ actor EmailCache {
     
     private let baseDirectoryURL: URL
     private let defaultUnreadEmailsURL: URL
+    private let defaultNextPageTokenURL: URL
     
     private init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
         baseDirectoryURL = directory.appendingPathComponent("EmailCache", isDirectory: true)
         defaultUnreadEmailsURL = baseDirectoryURL.appendingPathComponent("unread_emails.json")
+        defaultNextPageTokenURL = baseDirectoryURL.appendingPathComponent("next_page_token.json")
         
         if !FileManager.default.fileExists(atPath: baseDirectoryURL.path) {
             try? FileManager.default.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
@@ -85,6 +87,45 @@ actor EmailCache {
         }
     }
     
+    // MARK: - Pagination Token
+    
+    func loadNextPageToken(accountId: Int? = nil) -> String? {
+        let url = nextPageTokenURL(for: accountId)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        
+        do {
+            let data = try Data(contentsOf: url)
+            return try decoder.decode(String.self, from: data)
+        } catch {
+            print("EmailCache loadNextPageToken error: \(error)")
+            return nil
+        }
+    }
+    
+    func saveNextPageToken(_ token: String?, accountId: Int? = nil) {
+        let url = nextPageTokenURL(for: accountId)
+        
+        if let token = token {
+            do {
+                let data = try encoder.encode(token)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                print("EmailCache saveNextPageToken error: \(error)")
+            }
+        } else {
+            // Remove file if token is nil
+            if FileManager.default.fileExists(atPath: url.path) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+    
+    func clearNextPageToken(accountId: Int? = nil) {
+        saveNextPageToken(nil, accountId: accountId)
+    }
+    
     // MARK: - Email Details
     
     private func detailURL(for emailId: Int) -> URL {
@@ -137,6 +178,13 @@ actor EmailCache {
             return defaultUnreadEmailsURL
         }
         return baseDirectoryURL.appendingPathComponent("unread_emails_account_\(accountId).json")
+    }
+    
+    private func nextPageTokenURL(for accountId: Int?) -> URL {
+        guard let accountId = accountId else {
+            return defaultNextPageTokenURL
+        }
+        return baseDirectoryURL.appendingPathComponent("next_page_token_account_\(accountId).json")
     }
 }
 

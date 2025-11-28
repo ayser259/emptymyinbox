@@ -312,11 +312,37 @@ struct FilterEditorView: View {
         isLoading = true
         defer { isLoading = false }
         
+        let gmailService = GmailAPIService.shared
+        let gmailAccounts = gmailService.getAllAccounts()
+        
+        // Find account by ID
+        guard let gmailAccount = gmailAccounts.first(where: { $0.numericId == accountId }) else {
+            await MainActor.run {
+                self.errorMessage = "Account not found"
+            }
+            return
+        }
+        
         do {
-            async let labelsTask = APIService.shared.getLabels()
-            async let accountsTask = APIService.shared.getAccounts()
+            // Get labels
+            let labelsDict = try await gmailService.getAllLabels(for: gmailAccount)
+            let fetchedLabels = labelsDict.map { (id, name) in
+                Label(id: id, name: name, unread_count: 0)
+            }.sorted { $0.name < $1.name }
             
-            let (fetchedLabels, fetchedAccounts) = try await (labelsTask, accountsTask)
+            // Convert GmailAccounts to EmailAccounts
+            let dateFormatter = ISO8601DateFormatter()
+            let fetchedAccounts = gmailAccounts.map { gmailAccount in
+                let lastSyncString = gmailAccount.lastSync.map { dateFormatter.string(from: $0) }
+                return EmailAccount(
+                    id: gmailAccount.numericId,
+                    email: gmailAccount.email,
+                    is_active: true,
+                    last_sync: lastSyncString,
+                    created_at: dateFormatter.string(from: Date()),
+                    email_count: 0
+                )
+            }
             
             await MainActor.run {
                 self.labels = fetchedLabels
@@ -361,48 +387,52 @@ struct FilterEditorView: View {
         
         Task {
             do {
-                // Build criteria
-                let sizeInBytes = sizeText.isEmpty ? nil : Int((Double(sizeText) ?? 0) * 1024 * 1024)
-                let newCriteria = FilterCriteria(
-                    from: fromText.isEmpty ? nil : fromText,
-                    to: toText.isEmpty ? nil : toText,
-                    subject: subjectText.isEmpty ? nil : subjectText,
-                    query: queryText.isEmpty ? nil : queryText,
-                    negatedQuery: negatedQueryText.isEmpty ? nil : negatedQueryText,
-                    hasAttachment: hasAttachment ? true : nil,
-                    excludeChats: excludeChats ? true : nil,
-                    size: sizeInBytes,
-                    sizeComparison: sizeText.isEmpty ? nil : sizeComparison
-                )
+                let gmailService = GmailAPIService.shared
+                let gmailAccounts = gmailService.getAllAccounts()
                 
-                // Build actions
-                let newActions = FilterActions(
-                    addLabelIds: selectedAddLabels.isEmpty ? nil : Array(selectedAddLabels),
-                    removeLabelIds: selectedRemoveLabels.isEmpty ? nil : Array(selectedRemoveLabels),
-                    forward: forwardText.isEmpty ? nil : forwardText,
-                    markAsRead: markAsRead ? true : nil,
-                    archive: archive ? true : nil,
-                    delete: delete ? true : nil,
-                    alwaysMarkAsRead: alwaysMarkAsRead ? true : nil,
-                    neverMarkAsRead: neverMarkAsRead ? true : nil,
-                    neverSpam: neverSpam ? true : nil,
-                    star: star ? true : nil
-                )
+                guard let gmailAccount = gmailAccounts.first(where: { $0.numericId == accountId }) else {
+                    throw NSError(domain: "FilterEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                }
+                
+                // Build Gmail filter data structure
+                var filterData: [String: Any] = [:]
+                
+                // Criteria
+                var criteriaDict: [String: Any] = [:]
+                if !fromText.isEmpty { criteriaDict["from"] = fromText }
+                if !toText.isEmpty { criteriaDict["to"] = toText }
+                if !subjectText.isEmpty { criteriaDict["subject"] = subjectText }
+                if !queryText.isEmpty { criteriaDict["query"] = queryText }
+                if !negatedQueryText.isEmpty { criteriaDict["-query"] = negatedQueryText }
+                if hasAttachment { criteriaDict["hasAttachment"] = true }
+                if excludeChats { criteriaDict["excludeChats"] = true }
+                if let sizeInBytes = sizeText.isEmpty ? nil : Int((Double(sizeText) ?? 0) * 1024 * 1024) {
+                    criteriaDict["size"] = sizeInBytes
+                    criteriaDict["sizeComparison"] = sizeComparison
+                }
+                filterData["criteria"] = criteriaDict
+                
+                // Actions
+                var actionDict: [String: Any] = [:]
+                if !selectedAddLabels.isEmpty { actionDict["addLabelIds"] = Array(selectedAddLabels) }
+                if !selectedRemoveLabels.isEmpty { actionDict["removeLabelIds"] = Array(selectedRemoveLabels) }
+                if !forwardText.isEmpty { actionDict["forward"] = forwardText }
+                if markAsRead { actionDict["markAsRead"] = true }
+                if archive { actionDict["archive"] = true }
+                if delete { actionDict["delete"] = true }
+                if alwaysMarkAsRead { actionDict["alwaysMarkAsRead"] = true }
+                if neverMarkAsRead { actionDict["neverMarkAsRead"] = true }
+                if neverSpam { actionDict["neverSpam"] = true }
+                if star { actionDict["star"] = true }
+                filterData["action"] = actionDict
                 
                 if let filter = filter {
-                    // Update existing filter
-                    _ = try await APIService.shared.updateFilter(
-                        filterId: filter.id,
-                        criteria: newCriteria,
-                        actions: newActions
-                    )
+                    // Update existing filter - Gmail API doesn't support update, so we delete and recreate
+                    try await gmailService.deleteFilter(for: gmailAccount, filterId: filter.gmail_filter_id)
+                    _ = try await gmailService.createFilter(for: gmailAccount, filterData: filterData)
                 } else {
                     // Create new filter
-                    _ = try await APIService.shared.createFilter(
-                        accountId: accountId,
-                        criteria: newCriteria,
-                        actions: newActions
-                    )
+                    _ = try await gmailService.createFilter(for: gmailAccount, filterData: filterData)
                 }
                 
                 await MainActor.run {
@@ -423,7 +453,14 @@ struct FilterEditorView: View {
         
         Task {
             do {
-                try await APIService.shared.deleteFilter(filterId: filter.id)
+                let gmailService = GmailAPIService.shared
+                let gmailAccounts = gmailService.getAllAccounts()
+                
+                guard let gmailAccount = gmailAccounts.first(where: { $0.numericId == accountId }) else {
+                    throw NSError(domain: "FilterEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
+                }
+                
+                try await gmailService.deleteFilter(for: gmailAccount, filterId: filter.gmail_filter_id)
                 await MainActor.run {
                     dismiss()
                 }

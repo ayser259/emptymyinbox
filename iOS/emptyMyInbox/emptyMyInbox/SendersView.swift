@@ -91,11 +91,6 @@ struct SendersView: View {
         .refreshable {
             await refreshFromServer()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshDashboard"))) { _ in
-            Task {
-                await loadCachedEmails()
-            }
-        }
     }
     
     // MARK: - Computed Properties
@@ -163,7 +158,6 @@ struct SendersView: View {
             await MainActor.run {
                 self.allEmails = snapshot.allEmails
             }
-            NotificationCenter.default.post(name: NSNotification.Name("RefreshDashboard"), object: nil)
         }
     }
 }
