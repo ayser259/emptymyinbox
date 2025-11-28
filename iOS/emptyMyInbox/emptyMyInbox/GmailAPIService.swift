@@ -86,6 +86,15 @@ class GmailAPIService {
     private var accounts: [GmailAccount] = []
     private var nextEmailId: Int = 1000 // Starting ID for generated email IDs
     
+    // URLSession with timeout configuration to prevent hanging requests
+    private lazy var urlSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30.0 // 30 second timeout per request
+        configuration.timeoutIntervalForResource = 60.0 // 60 second total timeout
+        configuration.waitsForConnectivity = false // Don't wait for connectivity
+        return URLSession(configuration: configuration)
+    }()
+    
     private init() {
         loadSavedAccounts()
     }
@@ -183,21 +192,21 @@ class GmailAPIService {
             return updatedAccount
         } else {
             // Create new account
-        let account = GmailAccount(
-            id: email,
-            email: email,
-            name: name,
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            tokenExpiry: tokenExpiry,
+            let account = GmailAccount(
+                id: email,
+                email: email,
+                name: name,
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                tokenExpiry: tokenExpiry,
                 lastSync: nil,
                 unreadEmailsNextPageToken: nil
-        )
-        
+            )
+            
             accounts.append(account)
             saveAccounts()
-        
-        return account
+            
+            return account
         }
     }
     #endif
@@ -209,7 +218,7 @@ class GmailAPIService {
             saveAccounts()
         } else {
             // Sign out all accounts
-        GIDSignIn.sharedInstance.signOut()
+            GIDSignIn.sharedInstance.signOut()
             accounts.removeAll()
             clearSavedAccounts()
         }
@@ -254,7 +263,7 @@ class GmailAPIService {
         let body = "client_id=\(clientID)&client_secret=\(clientSecret)&refresh_token=\(refreshToken)&grant_type=refresh_token"
         request.httpBody = body.data(using: .utf8)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -278,7 +287,7 @@ class GmailAPIService {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -288,7 +297,7 @@ class GmailAPIService {
         return try JSONDecoder().decode(GmailProfile.self, from: data)
     }
     
-    func listMessages(for account: GmailAccount, query: String = "is:unread in:inbox", maxResults: Int = 50, pageToken: String? = nil) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
+    func listMessages(for account: GmailAccount, query: String = "is:unread in:inbox", maxResults: Int = 50, pageToken: String? = nil, fields: String? = nil) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
         let token = try await getValidAccessToken(for: account)
         
         var urlComponents = URLComponents(string: "\(baseURL)/users/me/messages")!
@@ -301,6 +310,10 @@ class GmailAPIService {
             urlComponents.queryItems?.append(URLQueryItem(name: "pageToken", value: pageToken))
         }
         
+        if let fields = fields {
+            urlComponents.queryItems?.append(URLQueryItem(name: "fields", value: fields))
+        }
+        
         guard let url = urlComponents.url else {
             throw GmailAPIError.invalidURL
         }
@@ -308,7 +321,7 @@ class GmailAPIService {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -319,14 +332,14 @@ class GmailAPIService {
         return (messages: responseObj.messages ?? [], nextPageToken: responseObj.nextPageToken)
     }
     
-    func getMessage(for account: GmailAccount, messageId: String) async throws -> GmailMessage {
+    func getMessage(for account: GmailAccount, messageId: String, format: String = "full") async throws -> GmailMessage {
         let token = try await getValidAccessToken(for: account)
-        let url = URL(string: "\(baseURL)/users/me/messages/\(messageId)?format=full")!
+        let url = URL(string: "\(baseURL)/users/me/messages/\(messageId)?format=\(format)")!
         
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -388,7 +401,7 @@ class GmailAPIService {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -428,7 +441,7 @@ class GmailAPIService {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -451,7 +464,7 @@ class GmailAPIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: filterData)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -525,72 +538,145 @@ class GmailAPIService {
     // MARK: - High-Level Email Operations
     
     /// Sync unread emails for an account
-    func syncUnreadEmails(for account: GmailAccount, maxResults: Int = 50, usePagination: Bool = true, resetPagination: Bool = false) async throws -> (emails: [EmailListItem], nextPageToken: String?) {
-        var pageToken: String? = nil
-        if usePagination && !resetPagination {
-            pageToken = account.unreadEmailsNextPageToken
-        }
+    /// Optimized strategy:
+    /// 1. Fetch ALL unread message IDs (lightweight)
+    /// 2. Diff with local cache
+    /// 3. Fetch FULL content only for new emails
+    func syncUnreadEmails(for account: GmailAccount, maxResults: Int = 50, usePagination: Bool = true, resetPagination: Bool = false, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> (emails: [EmailListItem], nextPageToken: String?) {
+        // We ignore pagination for the ID fetch because we want to "scan" the inbox
+        // But we respect maxResults for the final return count if needed, 
+        // though the user wants to "fetch all", so we'll try to get a good chunk.
         
-        if resetPagination {
-            // Clear pagination token
-            if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                var updatedAccount = accounts[index]
-                updatedAccount.unreadEmailsNextPageToken = nil
-                accounts[index] = updatedAccount
-                saveAccounts()
-            }
-        }
-        
+        // Step 1: Get message IDs (lightweight)
+        // We'll fetch a large batch of IDs to ensure we cover recent changes
+        // fetching 1000 IDs is very fast and small payload
+        // Optimization: Use 'fields' to fetch ONLY id and threadId (and nextPageToken)
         let (messageRefs, nextPageToken) = try await listMessages(
             for: account,
             query: "is:unread in:inbox",
-            maxResults: maxResults,
-            pageToken: pageToken
+            maxResults: 1000, // Large batch of IDs
+            pageToken: resetPagination ? nil : account.unreadEmailsNextPageToken,
+            fields: "messages(id,threadId),nextPageToken"
         )
+        
+        // Step 2: Load local cache to see what we already have
+        let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.numericId)
+        let cachedGmailIds = Set(cachedEmails.map { $0.gmail_id })
+        
+        // Step 3: Identify new emails (not in cache)
+        // These are the ONLY ones we need to download
+        let newMessageRefs = messageRefs.filter { !cachedGmailIds.contains($0.id) }
         
         var emailItems: [EmailListItem] = []
         
-        // Process messages in batches to avoid connection limits while maximizing throughput
-        let batchSize = 10
-        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
-            let end = min(i + batchSize, messageRefs.count)
-            let batch = messageRefs[i..<end]
+        // Step 4: Add cached emails that are still in the server list
+        // (This effectively removes emails that were archived/read on another device)
+        let serverIdSet = Set(messageRefs.map { $0.id })
+        for cachedEmail in cachedEmails {
+            if serverIdSet.contains(cachedEmail.gmail_id) {
+                emailItems.append(cachedEmail)
+            }
+        }
+        
+        // Step 5: Fetch ONLY new emails with FULL content
+        // This is the "Precision Strike" - no redundancy
+        if !newMessageRefs.isEmpty {
+            let totalNewCount = newMessageRefs.count
+            var fetchedNewCount = 0
+            let batchSize = 20 // Increased batch size for better parallelism (was 10)
             
-            await withTaskGroup(of: EmailListItem?.self) { group in
-                for messageRef in batch {
-                    group.addTask {
-                        do {
-                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
-                            
-                            // Only include emails that actually have both UNREAD and INBOX labels
-                            // This ensures we don't include emails that were marked as read or archived between query and fetch
-                            guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
-                                return nil
+            // Process all batches in parallel for maximum speed
+            // Split into batches but process them concurrently
+            let batches = stride(from: 0, to: newMessageRefs.count, by: batchSize).map { start in
+                let end = min(start + batchSize, newMessageRefs.count)
+                return Array(newMessageRefs[start..<end])
+            }
+            
+            // Process all batches concurrently for maximum parallelism
+            await withTaskGroup(of: [(EmailListItem, EmailDetail)].self) { batchGroup in
+                for batch in batches {
+                    batchGroup.addTask {
+                        var batchResults: [(EmailListItem, EmailDetail)] = []
+                        
+                        await withTaskGroup(of: (EmailListItem?, EmailDetail?).self) { group in
+                            for messageRef in batch {
+                                group.addTask {
+                                    do {
+                                        // Add timeout wrapper to prevent individual emails from hanging (25 second timeout)
+                                        let gmailMessage = try await withThrowingTaskGroup(of: Result<GmailMessage, Error>.self) { timeoutGroup in
+                                            timeoutGroup.addTask {
+                                                do {
+                                                    let message = try await self.getMessage(for: account, messageId: messageRef.id)
+                                                    return .success(message)
+                                                } catch {
+                                                    return .failure(error)
+                                                }
+                                            }
+                                            
+                                            // Add a timeout task
+                                            timeoutGroup.addTask {
+                                                try await Task.sleep(nanoseconds: 25_000_000_000) // 25 seconds
+                                                return .failure(GmailAPIError.apiError("Timeout fetching message \(messageRef.id)"))
+                                            }
+                                            
+                                            // Wait for first task to complete
+                                            let result = try await timeoutGroup.next()!
+                                            timeoutGroup.cancelAll() // Cancel the other task
+                                            
+                                            switch result {
+                                            case .success(let message):
+                                                return message
+                                            case .failure(let error):
+                                                throw error
+                                            }
+                                        }
+                                        
+                                        // Only include emails that actually have both UNREAD and INBOX labels
+                                        guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
+                                            return (nil, nil)
+                                        }
+                                        
+                                        let emailId = self.getEmailId(for: gmailMessage.id)
+                                        let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                        let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                        
+                                        return (emailItem, emailDetail)
+                                    } catch {
+                                        print("Error fetching message \(messageRef.id): \(error)")
+                                        return (nil, nil)
+                                    }
+                                }
                             }
                             
-                            let emailId = self.getEmailId(for: gmailMessage.id)
-                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            
-                            // Also cache the full email detail since we already have the full message
-                            // This prevents Catch Up from needing to re-fetch the same data
-                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            await EmailCache.shared.saveEmailDetail(emailDetail)
-                            
-                            return emailItem
-                        } catch {
-                            print("Error fetching message \(messageRef.id): \(error)")
-                            return nil
+                            for await (item, detail) in group {
+                                if let item = item, let detail = detail {
+                                    batchResults.append((item, detail))
+                                }
+                            }
                         }
+                        
+                        return batchResults
                     }
                 }
                 
-                for await result in group {
-                    if let item = result {
+                // Collect all results from all batches
+                for await batchResults in batchGroup {
+                    for (item, detail) in batchResults {
+                        fetchedNewCount += 1
                         emailItems.append(item)
+                        await progressCallback?(fetchedNewCount, totalNewCount)
+                        
+                        // Cache EmailDetail in background (fire and forget for speed)
+                        Task {
+                            await EmailCache.shared.saveEmailDetail(detail)
+                        }
                     }
                 }
             }
         }
+        
+        // Sort by received_at descending
+        emailItems.sort { $0.received_at > $1.received_at }
         
         // Update pagination token
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -605,49 +691,128 @@ class GmailAPIService {
     }
     
     /// Sync starred emails for an account
-    func syncStarredEmails(for account: GmailAccount, maxResults: Int = 500) async throws -> [EmailListItem] {
+    func syncStarredEmails(for account: GmailAccount, maxResults: Int = 500, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailListItem] {
+        // Step 1: Get all message IDs (fast - one API call)
+        // Optimized: Fetch IDs only first, restricting response fields
         let (messageRefs, _) = try await listMessages(
             for: account,
             query: "is:starred",
             maxResults: maxResults,
-            pageToken: nil
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
         )
+        
+        // Step 2: Load local cache to see what we already have
+        let cachedSnapshot = await DashboardCache.shared.loadSnapshot()
+        let cachedStarredGmailIds = Set((cachedSnapshot?.starredEmails ?? []).map { $0.gmail_id })
+        
+        // Step 3: Identify new starred emails (not in cache)
+        let newMessageRefs = messageRefs.filter { !cachedStarredGmailIds.contains($0.id) }
         
         var emailItems: [EmailListItem] = []
         
-        // Process messages in batches
-        let batchSize = 10
-        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
-            let end = min(i + batchSize, messageRefs.count)
-            let batch = messageRefs[i..<end]
+        // Step 4: Use cached starred emails for emails we already have
+        if let cachedSnapshot = cachedSnapshot {
+            for cachedEmail in cachedSnapshot.starredEmails {
+                // Check if the cached email is still in the server list
+                if messageRefs.contains(where: { $0.id == cachedEmail.gmail_id }) {
+                    emailItems.append(cachedEmail)
+                }
+            }
+        }
+        
+        // Step 5: Fetch only new starred emails with full content
+        if !newMessageRefs.isEmpty {
+            let totalNewCount = newMessageRefs.count
+            var fetchedNewCount = 0
+            let batchSize = 20 // Increased batch size for better parallelism (was 10)
             
-            await withTaskGroup(of: EmailListItem?.self) { group in
-                for messageRef in batch {
-                    group.addTask {
-                        do {
-                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
-                            let emailId = self.getEmailId(for: gmailMessage.id)
-                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            
-                            // Also cache the full email detail
-                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            await EmailCache.shared.saveEmailDetail(emailDetail)
-                            
-                            return emailItem
-                        } catch {
-                            print("Error fetching starred message \(messageRef.id): \(error)")
-                            return nil
+            // Process all batches in parallel for maximum speed
+            let batches = stride(from: 0, to: newMessageRefs.count, by: batchSize).map { start in
+                let end = min(start + batchSize, newMessageRefs.count)
+                return Array(newMessageRefs[start..<end])
+            }
+            
+            // Process all batches concurrently
+            await withTaskGroup(of: [(EmailListItem, EmailDetail)].self) { batchGroup in
+                for batch in batches {
+                    batchGroup.addTask {
+                        var batchResults: [(EmailListItem, EmailDetail)] = []
+                        
+                        await withTaskGroup(of: (EmailListItem?, EmailDetail?).self) { group in
+                    for messageRef in batch {
+                        group.addTask {
+                            do {
+                                // Add timeout wrapper to prevent individual emails from hanging (25 second timeout)
+                                let gmailMessage = try await withThrowingTaskGroup(of: Result<GmailMessage, Error>.self) { timeoutGroup in
+                                    timeoutGroup.addTask {
+                                        do {
+                                            let message = try await self.getMessage(for: account, messageId: messageRef.id)
+                                            return .success(message)
+                                        } catch {
+                                            return .failure(error)
+                                        }
+                                    }
+                                    
+                                    // Add a timeout task
+                                    timeoutGroup.addTask {
+                                        try await Task.sleep(nanoseconds: 25_000_000_000) // 25 seconds
+                                        return .failure(GmailAPIError.apiError("Timeout fetching starred message \(messageRef.id)"))
+                                    }
+                                    
+                                    // Wait for first task to complete
+                                    let result = try await timeoutGroup.next()!
+                                    timeoutGroup.cancelAll() // Cancel the other task
+                                    
+                                    switch result {
+                                    case .success(let message):
+                                        return message
+                                    case .failure(let error):
+                                        throw error
+                                    }
+                                }
+                                
+                                let emailId = self.getEmailId(for: gmailMessage.id)
+                                let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                
+                                return (emailItem, emailDetail)
+                            } catch {
+                                print("Error fetching starred message \(messageRef.id): \(error)")
+                                return (nil, nil)
+                            }
                         }
+                    }
+                    
+                            for await (item, detail) in group {
+                                if let item = item, let detail = detail {
+                                    batchResults.append((item, detail))
+                                }
+                            }
+                        }
+                        
+                        return batchResults
                     }
                 }
                 
-                for await result in group {
-                    if let item = result {
+                // Collect all results from all batches
+                for await batchResults in batchGroup {
+                    for (item, detail) in batchResults {
+                        fetchedNewCount += 1
                         emailItems.append(item)
+                        await progressCallback?(fetchedNewCount, totalNewCount)
+                        
+                        // Cache EmailDetail in background (fire and forget for speed)
+                        Task {
+                            await EmailCache.shared.saveEmailDetail(detail)
+                        }
                     }
                 }
             }
         }
+        
+        // Sort by received_at descending
+        emailItems.sort { $0.received_at > $1.received_at }
         
         // Update lastSync timestamp
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -680,58 +845,111 @@ class GmailAPIService {
         
         var emailItems: [EmailListItem] = []
         
-        // Process messages in batches
-        let batchSize = 10
-        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
-            let end = min(i + batchSize, messageRefs.count)
-            let batch = messageRefs[i..<end]
-            
-            await withTaskGroup(of: EmailListItem?.self) { group in
-                for messageRef in batch {
-                    group.addTask {
-                        do {
-                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
-                            let emailId = self.getEmailId(for: gmailMessage.id)
-                            
-                            // Filter uncategorized if needed
-                            if labelId == "__UNCATEGORIZED__" {
-                                let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
-                                let userLabels = gmailMessage.labelIds.filter { !systemLabels.contains($0) }
-                                if !userLabels.isEmpty {
-                                    return nil // Skip emails with user labels
+        // Process messages in batches (in parallel for speed)
+        let batchSize = 20 // Increased batch size for better parallelism
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+        
+        // Process all batches concurrently
+        await withTaskGroup(of: [EmailListItem].self) { batchGroup in
+            for batch in batches {
+                batchGroup.addTask {
+                    var batchItems: [EmailListItem] = []
+                    
+                    await withTaskGroup(of: (EmailListItem?, EmailDetail?).self) { group in
+                        for messageRef in batch {
+                            group.addTask {
+                                do {
+                                    // Add timeout wrapper to prevent individual emails from hanging (25 second timeout)
+                                    let gmailMessage = try await withThrowingTaskGroup(of: Result<GmailMessage, Error>.self) { timeoutGroup in
+                                        timeoutGroup.addTask {
+                                            do {
+                                                let message = try await self.getMessage(for: account, messageId: messageRef.id)
+                                                return .success(message)
+                                            } catch {
+                                                return .failure(error)
+                                            }
+                                        }
+                                        
+                                        // Add a timeout task
+                                        timeoutGroup.addTask {
+                                            try await Task.sleep(nanoseconds: 25_000_000_000) // 25 seconds
+                                            return .failure(GmailAPIError.apiError("Timeout fetching message \(messageRef.id)"))
+                                        }
+                                        
+                                        // Wait for first task to complete
+                                        let result = try await timeoutGroup.next()!
+                                        timeoutGroup.cancelAll() // Cancel the other task
+                                        
+                                        switch result {
+                                        case .success(let message):
+                                            return message
+                                        case .failure(let error):
+                                            throw error
+                                        }
+                                    }
+                                    
+                                    let emailId = self.getEmailId(for: gmailMessage.id)
+                                    
+                                    // Filter uncategorized if needed
+                                    if labelId == "__UNCATEGORIZED__" {
+                                        let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
+                                        let userLabels = gmailMessage.labelIds.filter { !systemLabels.contains($0) }
+                                        if !userLabels.isEmpty {
+                                            return (nil, nil) // Skip emails with user labels
+                                        }
+                                    }
+                                    
+                                    let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                    
+                                    // Parse detail for caching
+                                    let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                                    
+                                    return (emailItem, emailDetail)
+                                } catch {
+                                    print("Error fetching message \(messageRef.id): \(error)")
+                                    return (nil, nil)
                                 }
                             }
-                            
-                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            
-                            // Also cache the full email detail
-                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                            await EmailCache.shared.saveEmailDetail(emailDetail)
-                            
-                            return emailItem
-                        } catch {
-                            print("Error fetching message \(messageRef.id): \(error)")
-                            return nil
+                        }
+                        
+                        for await (item, detail) in group {
+                            if let item = item {
+                                batchItems.append(item)
+                            }
+                            // Cache detail in background
+                            if let detail = detail {
+                                Task {
+                                    await EmailCache.shared.saveEmailDetail(detail)
+                                }
+                            }
                         }
                     }
+                    
+                    return batchItems
                 }
-                
-                for await result in group {
-                    if let item = result {
-                        emailItems.append(item)
-                    }
-                }
+            }
+            
+            // Collect all results from all batches
+            for await batchItems in batchGroup {
+                emailItems.append(contentsOf: batchItems)
             }
         }
         
         return emailItems
     }
     
-    /// Get email detail by Gmail ID
+    /// Get email detail by Gmail ID (uses full format for body content)
     func getEmailDetail(for account: GmailAccount, gmailId: String) async throws -> EmailDetail {
-        let gmailMessage = try await getMessage(for: account, messageId: gmailId)
+        // Use full format when we need the body (for Catch Up view)
+        let gmailMessage = try await getMessage(for: account, messageId: gmailId, format: "full")
         let emailId = getEmailId(for: gmailId)
-        return parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+        let emailDetail = parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+        // Cache the full detail for future use
+        await EmailCache.shared.saveEmailDetail(emailDetail)
+        return emailDetail
     }
     
     /// Get email detail by numeric ID (searches all accounts)
@@ -740,8 +958,12 @@ class GmailAPIService {
             return nil
         }
         
-        let gmailMessage = try await getMessage(for: account, messageId: gmailId)
-        return parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+        // Use full format when we need the body
+        let gmailMessage = try await getMessage(for: account, messageId: gmailId, format: "full")
+        let emailDetail = parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+        // Cache the full detail for future use
+        await EmailCache.shared.saveEmailDetail(emailDetail)
+        return emailDetail
     }
     
     // MARK: - Configuration
@@ -794,4 +1016,3 @@ enum GmailAPIError: LocalizedError {
         }
     }
 }
-

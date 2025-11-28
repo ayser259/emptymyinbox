@@ -322,160 +322,29 @@ struct CatchUpView: View {
             return
         }
         
-        // Always show loading state when fetching email details
+        // Always show loading state when loading email details
         await MainActor.run {
             isLoadingDeck = true
             loadedEmailIds.removeAll()
         }
         
-        let priorityCount = min(3, emails.count)
+        // Load all emails from cache only - no Gmail API calls
+        var emailDeck: [EmailDetail] = []
         
-        // Phase 1: Load first 3 emails immediately (priority)
-        var priorityDeck: [EmailDetail?] = Array(repeating: nil, count: priorityCount)
-        var priorityFetchIndexes: [Int] = []
-        
-        for index in 0..<priorityCount {
-            let emailItem = emails[index]
+        for emailItem in emails {
             if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
-                priorityDeck[index] = cachedDetail
-            } else {
-                // Always fetch details if not cached, even in cache-only mode
-                // (we have the list items, so we know the emails exist)
-                priorityFetchIndexes.append(index)
+                emailDeck.append(cachedDetail)
             }
+            // Skip emails that aren't cached - they'll be available after next refresh
         }
         
-        if !priorityFetchIndexes.isEmpty {
-            await withTaskGroup(of: (Int, EmailDetail?).self) { group in
-                for index in priorityFetchIndexes {
-                    let emailItem = emails[index]
-                    group.addTask {
-                        do {
-                            // Try cache first
-                            var detail: EmailDetail?
-                            if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
-                                detail = cachedDetail
-                            } else {
-                                // Fetch from Gmail
-                                let gmailService = GmailAPIService.shared
-                                guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
-                                    throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
-                                }
-                                detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
-                                if let detail = detail {
-                            await EmailCache.shared.saveEmailDetail(detail)
-                                }
-                            }
-                            return (index, detail)
-                        } catch {
-                            print("Error loading email details for \(emailItem.id): \(error)")
-                            return (index, nil)
-                        }
-                    }
-                }
-                
-                for await (index, emailDetail) in group {
-                    if let detail = emailDetail {
-                        priorityDeck[index] = detail
-                    }
-                }
-            }
-        }
-        
-        // Build priority deck maintaining order
-        let initialDeck = priorityDeck.compactMap { $0 }
-        
-        // Show first batch immediately
+        // Update deck with all cached emails
         await MainActor.run {
-            self.emailDeck = initialDeck
+            self.emailDeck = emailDeck
             self.emailOffset = .zero
             self.emailOpacity = 1.0
-            self.loadedEmailIds.removeAll()
-            isLoadingDeck = false // Allow UI to show first batch
-        }
-        
-        // Phase 2: Load remaining emails in background
-        if emails.count > priorityCount {
-            var remainingDict: [Int: EmailDetail] = [:]
-            var remainingFetchIndexes: [Int] = []
-            
-            for index in priorityCount..<emails.count {
-                let emailItem = emails[index]
-                if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
-                    remainingDict[index] = cachedDetail
-                } else {
-                    // Always fetch details if not cached, even in cache-only mode
-                    // (we have the list items, so we know the emails exist)
-                    remainingFetchIndexes.append(index)
-                }
-            }
-            
-            if !remainingFetchIndexes.isEmpty {
-                // Fetch remaining emails in batches to avoid flooding the connection pool
-                let batchSize = 5
-                for i in stride(from: 0, to: remainingFetchIndexes.count, by: batchSize) {
-                    let end = min(i + batchSize, remainingFetchIndexes.count)
-                    let batch = remainingFetchIndexes[i..<end]
-                    
-                    await withTaskGroup(of: (Int, EmailDetail?).self) { group in
-                        for index in batch {
-                            let emailItem = emails[index]
-                            group.addTask {
-                                do {
-                                    // Try cache first
-                                    var detail: EmailDetail?
-                                    if let cachedDetail = await EmailCache.shared.loadEmailDetail(emailId: emailItem.id) {
-                                        detail = cachedDetail
-                                    } else {
-                                        // Fetch from Gmail
-                                        let gmailService = GmailAPIService.shared
-                                        guard let account = gmailService.getAccount(byEmail: emailItem.account_email) else {
-                                            throw NSError(domain: "CatchUpView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Account not found"])
-                                        }
-                                        detail = try await gmailService.getEmailDetail(for: account, gmailId: emailItem.gmail_id)
-                                        if let detail = detail {
-                                            await EmailCache.shared.saveEmailDetail(detail)
-                                        }
-                                    }
-                                    return (index, detail)
-                                } catch {
-                                    print("Error loading email details for \(emailItem.id): \(error)")
-                                    return (index, nil)
-                                }
-                            }
-                        }
-                        
-                        for await (index, emailDetail) in group {
-                            if let detail = emailDetail {
-                                remainingDict[index] = detail
-                            }
-                        }
-                    }
-                    
-                    // Update deck incrementally with each batch
-                    // This allows UI to populate gradually if user scrolls fast
-                    let currentFullDeck = initialDeck + (priorityCount..<emails.count).compactMap { remainingDict[$0] }
-                     await MainActor.run {
-                        // Only update if we have new data to avoid unnecessary redraws
-                        if currentFullDeck.count > self.emailDeck.count {
-                            self.emailDeck = currentFullDeck
-                        }
-                    }
-                }
-            }
-            
-            // Final merge with priority deck maintaining original order (if not already updated incrementally)
-            var fullDeck = initialDeck
-            for index in priorityCount..<emails.count {
-                if let detail = remainingDict[index] {
-                    fullDeck.append(detail)
-                }
-            }
-            
-            // Update with full deck
-            await MainActor.run {
-                self.emailDeck = fullDeck
-            }
+            self.loadedEmailIds = Set(emailDeck.map { $0.id })
+            isLoadingDeck = false
         }
     }
     

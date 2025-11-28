@@ -171,6 +171,27 @@ actor EmailCache {
         }.value
     }
     
+    func saveEmailDetails(_ details: [EmailDetail]) async {
+        await Task.detached(priority: .utility) {
+            // Process concurrently but limit parallelism implicitly by the system
+            await withTaskGroup(of: Void.self) { group in
+                for detail in details {
+                    group.addTask {
+                        let url = await self.detailURL(for: detail.id)
+                        do {
+                            // Use self.encoder if possible, but we need to be careful about thread safety of JSONEncoder if it's not sendable.
+                            // JSONEncoder is generally thread safe for encoding.
+                            let data = try JSONEncoder().encode(detail)
+                            try data.write(to: url, options: .atomic)
+                        } catch {
+                            print("EmailCache saveEmailDetails error for \(detail.id): \(error)")
+                        }
+                    }
+                }
+            }
+        }.value
+    }
+    
     func deleteEmailDetail(emailId: Int) async {
         let url = detailURL(for: emailId)
         await Task.detached(priority: .utility) {
@@ -202,5 +223,3 @@ actor EmailCache {
         return baseDirectoryURL.appendingPathComponent("next_page_token_account_\(accountId).json")
     }
 }
-
-

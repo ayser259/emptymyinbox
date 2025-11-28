@@ -25,6 +25,8 @@ struct DashboardView: View {
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
     @State private var selectedLabel: Label?
+    @StateObject private var progressTracker = RefreshProgressTracker()
+    @State private var showProgressModal = false
     
     var isSearchActive: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -105,6 +107,9 @@ struct DashboardView: View {
             Task {
                 await refreshDashboard(shouldSync: false)
             }
+        }
+        .sheet(isPresented: $showProgressModal) {
+            RefreshProgressModal(progressTracker: progressTracker)
         }
     }
 
@@ -320,53 +325,72 @@ struct DashboardView: View {
     }
 
     private var refreshButton: some View {
-        Button {
-            // Set refreshing state immediately on main thread
-            Task { @MainActor in
-                guard !isRefreshing else { return }
-                isRefreshing = true
-            }
-            Task {
-                await refreshDashboard(shouldSync: true)
-            }
-        } label: {
-            VStack(spacing: AppTheme.spacingSmall) {
-                if isRefreshing {
-                    ProgressView()
-                        .tint(AppTheme.accent)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 24))
-                        .foregroundColor(AppTheme.accent)
+        ZStack(alignment: .topTrailing) {
+            Button {
+                // Set refreshing state immediately on main thread
+                Task { @MainActor in
+                    guard !isRefreshing else { return }
+                    isRefreshing = true
+                    progressTracker.reset()
                 }
-                
-                Text("Refresh")
-                    .font(AppTheme.subheadline)
-                    .primaryText()
-                
-                if let lastRefresh = lastRefreshTime {
-                    Text(formatLastRefreshTime(lastRefresh))
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                } else {
-                    Text("Never")
-                        .font(AppTheme.caption)
-                        .secondaryText()
+                Task {
+                    await refreshDashboard(shouldSync: true)
                 }
+            } label: {
+                VStack(spacing: AppTheme.spacingSmall) {
+                    if isRefreshing {
+                        ProgressView()
+                            .tint(AppTheme.accent)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 24))
+                            .foregroundColor(AppTheme.accent)
+                    }
+                    
+                    Text("Refresh")
+                        .font(AppTheme.subheadline)
+                        .primaryText()
+                    
+                    if let lastRefresh = lastRefreshTime {
+                        Text(formatLastRefreshTime(lastRefresh))
+                            .font(AppTheme.caption)
+                            .secondaryText()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
+                        Text("Never")
+                            .font(AppTheme.caption)
+                            .secondaryText()
+                    }
+                }
+                .frame(width: 100, height: 100)
+                .background(AppTheme.secondaryBackground)
+                .cornerRadius(AppTheme.cornerRadiusMedium)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
             }
-            .frame(width: 100, height: 100)
-            .background(AppTheme.secondaryBackground)
-            .cornerRadius(AppTheme.cornerRadiusMedium)
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-            )
+            .buttonStyle(PlainButtonStyle())
+            .contentShape(Rectangle())
+            .disabled(isRefreshing)
+            
+            // Info button
+            Button {
+                showProgressModal = true
+            } label: {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(AppTheme.accent)
+                    .background(
+                        Circle()
+                            .fill(AppTheme.primaryBackground)
+                            .frame(width: 20, height: 20)
+                    )
+            }
+            .offset(x: -4, y: 4)
         }
-        .buttonStyle(PlainButtonStyle())
-        .contentShape(Rectangle())
-        .disabled(isRefreshing)
+        .frame(width: 100, height: 100)
     }
 
     private var shouldPrioritizeRefreshButton: Bool {
@@ -570,6 +594,7 @@ struct DashboardView: View {
                 if !isRefreshing {
                     isRefreshing = true
                 }
+                progressTracker.reset()
             }
         } else if !hasCachedData {
             await MainActor.run {
@@ -587,7 +612,14 @@ struct DashboardView: View {
             }
         }
         
-        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync) {
+        // Create progress callback
+        let progressCallback: DashboardDataManager.ProgressCallback = { stage, status, detail, accountEmail, currentCount, totalCount in
+            await MainActor.run {
+                progressTracker.updateStage(stage, status: status, detail: detail, accountEmail: accountEmail, currentCount: currentCount, totalCount: totalCount)
+            }
+        }
+        
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync, progressCallback: progressCallback) {
             await MainActor.run {
                 applySnapshot(snapshot)
                 lastRefreshTime = snapshot.timestamp
