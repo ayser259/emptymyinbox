@@ -17,6 +17,7 @@ import UIKit
 struct GmailAccount: Codable, Identifiable {
     let id: String // Gmail address
     let email: String
+    var name: String? // User's display name from Google profile
     var accessToken: String
     var refreshToken: String?
     var tokenExpiry: Date?
@@ -160,6 +161,9 @@ class GmailAPIService {
         // Get user's email from Google Sign-In
         let email = result.user.profile?.email ?? ""
         
+        // Get user's name from Google Sign-In profile
+        let name = result.user.profile?.name
+        
         // Get token expiry (typically 1 hour)
         let tokenExpiry = Date().addingTimeInterval(3600)
         
@@ -170,6 +174,10 @@ class GmailAPIService {
             updatedAccount.accessToken = accessToken
             updatedAccount.refreshToken = refreshToken ?? updatedAccount.refreshToken
             updatedAccount.tokenExpiry = tokenExpiry
+            // Update name if available (don't overwrite with nil if name already exists)
+            if let name = name {
+                updatedAccount.name = name
+            }
             accounts[existingIndex] = updatedAccount
             saveAccounts()
             return updatedAccount
@@ -178,6 +186,7 @@ class GmailAPIService {
         let account = GmailAccount(
             id: email,
             email: email,
+            name: name,
             accessToken: accessToken,
             refreshToken: refreshToken,
             tokenExpiry: tokenExpiry,
@@ -540,27 +549,46 @@ class GmailAPIService {
         )
         
         var emailItems: [EmailListItem] = []
-        for messageRef in messageRefs {
-            do {
-                let gmailMessage = try await getMessage(for: account, messageId: messageRef.id)
-                
-                // Only include emails that actually have both UNREAD and INBOX labels
-                // This ensures we don't include emails that were marked as read or archived between query and fetch
-                guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
-                    continue
+        
+        // Process messages in batches to avoid connection limits while maximizing throughput
+        let batchSize = 10
+        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
+            let end = min(i + batchSize, messageRefs.count)
+            let batch = messageRefs[i..<end]
+            
+            await withTaskGroup(of: EmailListItem?.self) { group in
+                for messageRef in batch {
+                    group.addTask {
+                        do {
+                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
+                            
+                            // Only include emails that actually have both UNREAD and INBOX labels
+                            // This ensures we don't include emails that were marked as read or archived between query and fetch
+                            guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
+                                return nil
+                            }
+                            
+                            let emailId = self.getEmailId(for: gmailMessage.id)
+                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            
+                            // Also cache the full email detail since we already have the full message
+                            // This prevents Catch Up from needing to re-fetch the same data
+                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            await EmailCache.shared.saveEmailDetail(emailDetail)
+                            
+                            return emailItem
+                        } catch {
+                            print("Error fetching message \(messageRef.id): \(error)")
+                            return nil
+                        }
+                    }
                 }
                 
-                let emailId = getEmailId(for: gmailMessage.id)
-                let emailItem = parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                emailItems.append(emailItem)
-                
-                // Also cache the full email detail since we already have the full message
-                // This prevents Catch Up from needing to re-fetch the same data
-                let emailDetail = parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                await EmailCache.shared.saveEmailDetail(emailDetail)
-            } catch {
-                print("Error fetching message \(messageRef.id): \(error)")
-                continue
+                for await result in group {
+                    if let item = result {
+                        emailItems.append(item)
+                    }
+                }
             }
         }
         
@@ -586,19 +614,38 @@ class GmailAPIService {
         )
         
         var emailItems: [EmailListItem] = []
-        for messageRef in messageRefs {
-            do {
-                let gmailMessage = try await getMessage(for: account, messageId: messageRef.id)
-                let emailId = getEmailId(for: gmailMessage.id)
-                let emailItem = parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                emailItems.append(emailItem)
+        
+        // Process messages in batches
+        let batchSize = 10
+        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
+            let end = min(i + batchSize, messageRefs.count)
+            let batch = messageRefs[i..<end]
+            
+            await withTaskGroup(of: EmailListItem?.self) { group in
+                for messageRef in batch {
+                    group.addTask {
+                        do {
+                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
+                            let emailId = self.getEmailId(for: gmailMessage.id)
+                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            
+                            // Also cache the full email detail
+                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            await EmailCache.shared.saveEmailDetail(emailDetail)
+                            
+                            return emailItem
+                        } catch {
+                            print("Error fetching starred message \(messageRef.id): \(error)")
+                            return nil
+                        }
+                    }
+                }
                 
-                // Also cache the full email detail since we already have the full message
-                let emailDetail = parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                await EmailCache.shared.saveEmailDetail(emailDetail)
-            } catch {
-                print("Error fetching starred message \(messageRef.id): \(error)")
-                continue
+                for await result in group {
+                    if let item = result {
+                        emailItems.append(item)
+                    }
+                }
             }
         }
         
@@ -632,29 +679,48 @@ class GmailAPIService {
         )
         
         var emailItems: [EmailListItem] = []
-        for messageRef in messageRefs {
-            do {
-                let gmailMessage = try await getMessage(for: account, messageId: messageRef.id)
-                let emailId = getEmailId(for: gmailMessage.id)
-                
-                // Filter uncategorized if needed
-                if labelId == "__UNCATEGORIZED__" {
-                    let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
-                    let userLabels = gmailMessage.labelIds.filter { !systemLabels.contains($0) }
-                    if !userLabels.isEmpty {
-                        continue // Skip emails with user labels
+        
+        // Process messages in batches
+        let batchSize = 10
+        for i in stride(from: 0, to: messageRefs.count, by: batchSize) {
+            let end = min(i + batchSize, messageRefs.count)
+            let batch = messageRefs[i..<end]
+            
+            await withTaskGroup(of: EmailListItem?.self) { group in
+                for messageRef in batch {
+                    group.addTask {
+                        do {
+                            let gmailMessage = try await self.getMessage(for: account, messageId: messageRef.id)
+                            let emailId = self.getEmailId(for: gmailMessage.id)
+                            
+                            // Filter uncategorized if needed
+                            if labelId == "__UNCATEGORIZED__" {
+                                let systemLabels = Set(["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "UNREAD", "STARRED", "IMPORTANT"])
+                                let userLabels = gmailMessage.labelIds.filter { !systemLabels.contains($0) }
+                                if !userLabels.isEmpty {
+                                    return nil // Skip emails with user labels
+                                }
+                            }
+                            
+                            let emailItem = self.parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            
+                            // Also cache the full email detail
+                            let emailDetail = self.parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                            await EmailCache.shared.saveEmailDetail(emailDetail)
+                            
+                            return emailItem
+                        } catch {
+                            print("Error fetching message \(messageRef.id): \(error)")
+                            return nil
+                        }
                     }
                 }
                 
-                let emailItem = parseEmailListItem(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                emailItems.append(emailItem)
-                
-                // Also cache the full email detail since we already have the full message
-                let emailDetail = parseEmailDetail(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                await EmailCache.shared.saveEmailDetail(emailDetail)
-            } catch {
-                print("Error fetching message \(messageRef.id): \(error)")
-                continue
+                for await result in group {
+                    if let item = result {
+                        emailItems.append(item)
+                    }
+                }
             }
         }
         

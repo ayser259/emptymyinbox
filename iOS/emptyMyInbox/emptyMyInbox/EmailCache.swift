@@ -42,32 +42,37 @@ actor EmailCache {
     
     // MARK: - Unread Emails
     
-    func loadUnreadEmails(accountId: Int? = nil) -> [EmailListItem] {
+    func loadUnreadEmails(accountId: Int? = nil) async -> [EmailListItem] {
         let url = unreadEmailsURL(for: accountId)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return []
-        }
-        
-        do {
-            let data = try Data(contentsOf: url)
-            return try decoder.decode([EmailListItem].self, from: data)
-        } catch {
-            print("EmailCache loadUnreadEmails error: \(error)")
-            return []
-        }
+        return await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return []
+            }
+            
+            do {
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder().decode([EmailListItem].self, from: data)
+            } catch {
+                print("EmailCache loadUnreadEmails error: \(error)")
+                return []
+            }
+        }.value
     }
     
-    func saveUnreadEmails(_ emails: [EmailListItem], accountId: Int? = nil) {
-        do {
-            let data = try encoder.encode(emails)
-            try data.write(to: unreadEmailsURL(for: accountId), options: .atomic)
-        } catch {
-            print("EmailCache saveUnreadEmails error: \(error)")
-        }
+    func saveUnreadEmails(_ emails: [EmailListItem], accountId: Int? = nil) async {
+        let url = unreadEmailsURL(for: accountId)
+        await Task.detached(priority: .utility) {
+            do {
+                let data = try JSONEncoder().encode(emails)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                print("EmailCache saveUnreadEmails error: \(error)")
+            }
+        }.value
     }
     
-    func upsertUnreadEmail(_ email: EmailListItem, accountId: Int? = nil) {
-        var storedEmails = loadUnreadEmails(accountId: accountId)
+    func upsertUnreadEmail(_ email: EmailListItem, accountId: Int? = nil) async {
+        var storedEmails = await loadUnreadEmails(accountId: accountId)
         
         if let index = storedEmails.firstIndex(where: { $0.id == email.id }) {
             storedEmails[index] = email
@@ -76,54 +81,58 @@ actor EmailCache {
             storedEmails.sort { $0.received_at > $1.received_at }
         }
         
-        saveUnreadEmails(storedEmails, accountId: accountId)
+        await saveUnreadEmails(storedEmails, accountId: accountId)
     }
     
-    func removeUnreadEmail(emailId: Int, accountId: Int? = nil) {
-        var storedEmails = loadUnreadEmails(accountId: accountId)
+    func removeUnreadEmail(emailId: Int, accountId: Int? = nil) async {
+        var storedEmails = await loadUnreadEmails(accountId: accountId)
         if let index = storedEmails.firstIndex(where: { $0.id == emailId }) {
             storedEmails.remove(at: index)
-            saveUnreadEmails(storedEmails, accountId: accountId)
+            await saveUnreadEmails(storedEmails, accountId: accountId)
         }
     }
     
     // MARK: - Pagination Token
     
-    func loadNextPageToken(accountId: Int? = nil) -> String? {
+    func loadNextPageToken(accountId: Int? = nil) async -> String? {
         let url = nextPageTokenURL(for: accountId)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        
-        do {
-            let data = try Data(contentsOf: url)
-            return try decoder.decode(String.self, from: data)
-        } catch {
-            print("EmailCache loadNextPageToken error: \(error)")
-            return nil
-        }
-    }
-    
-    func saveNextPageToken(_ token: String?, accountId: Int? = nil) {
-        let url = nextPageTokenURL(for: accountId)
-        
-        if let token = token {
+        return await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return nil
+            }
+            
             do {
-                let data = try encoder.encode(token)
-                try data.write(to: url, options: .atomic)
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder().decode(String.self, from: data)
             } catch {
-                print("EmailCache saveNextPageToken error: \(error)")
+                print("EmailCache loadNextPageToken error: \(error)")
+                return nil
             }
-        } else {
-            // Remove file if token is nil
-            if FileManager.default.fileExists(atPath: url.path) {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
+        }.value
     }
     
-    func clearNextPageToken(accountId: Int? = nil) {
-        saveNextPageToken(nil, accountId: accountId)
+    func saveNextPageToken(_ token: String?, accountId: Int? = nil) async {
+        let url = nextPageTokenURL(for: accountId)
+        
+        await Task.detached(priority: .utility) {
+            if let token = token {
+                do {
+                    let data = try JSONEncoder().encode(token)
+                    try data.write(to: url, options: .atomic)
+                } catch {
+                    print("EmailCache saveNextPageToken error: \(error)")
+                }
+            } else {
+                // Remove file if token is nil
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }.value
+    }
+    
+    func clearNextPageToken(accountId: Int? = nil) async {
+        await saveNextPageToken(nil, accountId: accountId)
     }
     
     // MARK: - Email Details
@@ -132,43 +141,49 @@ actor EmailCache {
         baseDirectoryURL.appendingPathComponent("email_\(emailId).json")
     }
     
-    func loadEmailDetail(emailId: Int) -> EmailDetail? {
+    func loadEmailDetail(emailId: Int) async -> EmailDetail? {
         let url = detailURL(for: emailId)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        
-        do {
-            let data = try Data(contentsOf: url)
-            return try decoder.decode(EmailDetail.self, from: data)
-        } catch {
-            print("EmailCache loadEmailDetail error: \(error)")
-            return nil
-        }
+        return await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return nil
+            }
+            
+            do {
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder().decode(EmailDetail.self, from: data)
+            } catch {
+                print("EmailCache loadEmailDetail error: \(error)")
+                return nil
+            }
+        }.value
     }
     
-    func saveEmailDetail(_ detail: EmailDetail) {
+    func saveEmailDetail(_ detail: EmailDetail) async {
         let url = detailURL(for: detail.id)
         
-        do {
-            let data = try encoder.encode(detail)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            print("EmailCache saveEmailDetail error: \(error)")
-        }
+        await Task.detached(priority: .utility) {
+            do {
+                let data = try JSONEncoder().encode(detail)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                print("EmailCache saveEmailDetail error: \(error)")
+            }
+        }.value
     }
     
-    func deleteEmailDetail(emailId: Int) {
+    func deleteEmailDetail(emailId: Int) async {
         let url = detailURL(for: emailId)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return
-        }
-        
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch {
-            print("EmailCache deleteEmailDetail error: \(error)")
-        }
+        await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return
+            }
+            
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                print("EmailCache deleteEmailDetail error: \(error)")
+            }
+        }.value
     }
     
     // MARK: - Helpers

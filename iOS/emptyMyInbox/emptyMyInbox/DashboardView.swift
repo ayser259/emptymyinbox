@@ -100,6 +100,12 @@ struct DashboardView: View {
                 await refreshDashboard(shouldSync: true)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountAdded"))) { _ in
+            // New account was added, refresh to show it immediately
+            Task {
+                await refreshDashboard(shouldSync: false)
+            }
+        }
     }
 
     @ViewBuilder
@@ -135,16 +141,18 @@ struct DashboardView: View {
             
             Spacer()
             
-            if let firstAccount = authManager.accounts.first {
-                ScrollingText(
-                    text: "\(greeting), \(firstAccount.email)",
-                    font: AppTheme.headline
-                )
-                .frame(maxWidth: .infinity)
-            } else {
-                Text(greeting)
-                    .font(AppTheme.headline)
-                    .primaryText()
+            Group {
+                if let firstAccount = authManager.accounts.first {
+                    ScrollingText(
+                        text: greetingText(for: firstAccount),
+                        font: AppTheme.headline
+                    )
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Text(greeting)
+                        .font(AppTheme.headline)
+                        .primaryText()
+                }
             }
             
             Button {
@@ -258,6 +266,7 @@ struct DashboardView: View {
             HStack(spacing: AppTheme.spacingMedium) {
                 if shouldPrioritizeRefreshButton {
                     refreshButton
+                        .padding(.leading, AppTheme.spacingMedium)
                 }
                 
                 NavigationLink(value: "catch_up") {
@@ -312,6 +321,11 @@ struct DashboardView: View {
 
     private var refreshButton: some View {
         Button {
+            // Set refreshing state immediately on main thread
+            Task { @MainActor in
+                guard !isRefreshing else { return }
+                isRefreshing = true
+            }
             Task {
                 await refreshDashboard(shouldSync: true)
             }
@@ -351,6 +365,7 @@ struct DashboardView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .contentShape(Rectangle())
         .disabled(isRefreshing)
     }
 
@@ -422,6 +437,14 @@ struct DashboardView: View {
             return "Good evening"
         default:
             return "Good night"
+        }
+    }
+    
+    private func greetingText(for account: GmailAccount) -> String {
+        if let name = account.name, !name.isEmpty {
+            return "\(greeting), \(name)"
+        } else {
+            return greeting
         }
     }
     
@@ -541,9 +564,12 @@ struct DashboardView: View {
             return
         }
         
+        // Set loading state (only if not already set by button tap)
         if shouldSync {
             await MainActor.run {
-                isRefreshing = true
+                if !isRefreshing {
+                    isRefreshing = true
+                }
             }
         } else if !hasCachedData {
             await MainActor.run {
@@ -1087,6 +1113,16 @@ struct AccountSummaryCard: View {
                             Text(formatLastRefreshTime(lastRefresh))
                                 .font(AppTheme.caption)
                                 .secondaryText()
+                        }
+                    } else if account.email_count == 0 {
+                        // New account that's being synced
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .tint(AppTheme.accent)
+                            Text("Syncing...")
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.accent)
                         }
                     } else {
                         Text("Never synced")

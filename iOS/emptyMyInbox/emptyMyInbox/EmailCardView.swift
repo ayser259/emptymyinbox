@@ -50,6 +50,7 @@ struct EmailCardView: View {
                     VStack(alignment: .center, spacing: 0) {
                         if let bodyHtml = email.body_html, !bodyHtml.isEmpty {
                             // Render HTML content - use light mode for better readability
+                            // HTMLWebView now handles unescaping and validation internally
                             HTMLWebView(htmlContent: bodyHtml, isDarkMode: false, onLoadComplete: onLoadComplete)
                                 .frame(maxWidth: .infinity)
                                 .frame(minHeight: scrollGeometry.size.height)

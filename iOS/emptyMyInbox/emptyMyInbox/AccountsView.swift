@@ -180,11 +180,14 @@ struct AccountsView: View {
             }
             
             // Sign in directly with Google using GmailAPIService
-            let account = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
+            let gmailAccount = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
             
-            print("✅ Successfully authenticated Gmail account: \(account.email)")
+            print("✅ Successfully authenticated Gmail account: \(gmailAccount.email)")
             
-            // Refresh accounts list
+            // Immediately add account to snapshot optimistically (so it shows up right away)
+            await addAccountOptimistically(gmailAccount: gmailAccount)
+            
+            // Then do full sync in background
             await refreshAccounts()
             
         } catch {
@@ -192,6 +195,78 @@ struct AccountsView: View {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
             print("❌ Gmail authentication failed: \(error)")
+        }
+    }
+    
+    private func addAccountOptimistically(gmailAccount: GmailAccount) async {
+        // Load current snapshot
+        guard let currentSnapshot = await DashboardDataManager.shared.loadCachedSnapshot() else {
+            // No snapshot yet, create a new one with just this account
+            let dateFormatter = ISO8601DateFormatter()
+            let newAccount = EmailAccount(
+                id: gmailAccount.numericId,
+                email: gmailAccount.email,
+                is_active: true,
+                last_sync: nil, // nil = "Never synced" / "Syncing..."
+                created_at: dateFormatter.string(from: Date()),
+                email_count: 0 // Will be updated after sync
+            )
+            
+            let newSnapshot = DashboardDataSnapshot(
+                timestamp: Date(),
+                accounts: [newAccount],
+                emails: [],
+                allEmails: [],
+                starredEmails: [],
+                labels: []
+            )
+            
+            await DashboardCache.shared.saveSnapshot(newSnapshot)
+            await MainActor.run {
+                applySnapshot(newSnapshot)
+            }
+            return
+        }
+        
+        // Check if account already exists
+        if currentSnapshot.accounts.contains(where: { $0.email == gmailAccount.email }) {
+            // Account already exists, no need to add
+            return
+        }
+        
+        // Create new account (optimistically, before sync)
+        let dateFormatter = ISO8601DateFormatter()
+        let newAccount = EmailAccount(
+            id: gmailAccount.numericId,
+            email: gmailAccount.email,
+            is_active: true,
+            last_sync: nil, // nil = "Never synced" / "Syncing..."
+            created_at: dateFormatter.string(from: Date()),
+            email_count: 0 // Will be updated after sync
+        )
+        
+        // Add to existing accounts
+        var updatedAccounts = currentSnapshot.accounts
+        updatedAccounts.append(newAccount)
+        
+        // Create updated snapshot
+        let updatedSnapshot = DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: updatedAccounts,
+            emails: currentSnapshot.emails,
+            allEmails: currentSnapshot.allEmails,
+            starredEmails: currentSnapshot.starredEmails,
+            labels: currentSnapshot.labels
+        )
+        
+        // Save updated snapshot
+        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        
+        // Update local state
+        await MainActor.run {
+            applySnapshot(updatedSnapshot)
+            // Notify DashboardView to refresh (so new account shows immediately)
+            NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
         }
     }
     

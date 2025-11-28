@@ -30,24 +30,29 @@ struct GIFImageView: UIViewRepresentable {
         // Try multiple paths to find the GIF
         var url: URL?
         
-        // First, try loading from the asset catalog imageset directory
-        if let assetPath = Bundle.main.resourcePath {
-            let imagesetPath = "\(assetPath)/Assets.xcassets/CelebrationGifs.imageset/\(resourceName).gif"
-            url = URL(fileURLWithPath: imagesetPath)
-            if let url = url, FileManager.default.fileExists(atPath: url.path) {
-                // Found it
-            } else {
-                url = nil
-            }
-        }
+        // First, try in GIFs subfolder (primary location)
+        url = Bundle.main.url(forResource: "GIFs/\(resourceName)", withExtension: "gif")
         
-        // If not found, try direct bundle resource
+        // If not found, try loading as bundle resource (direct in bundle root)
         if url == nil {
             url = Bundle.main.url(forResource: resourceName, withExtension: "gif")
         }
         
+        // Fallback: try old CelebrationGifs.imageset structure
+        if url == nil, let assetPath = Bundle.main.resourcePath {
+            let imagesetPath = "\(assetPath)/Assets.xcassets/CelebrationGifs.imageset/\(resourceName).gif"
+            let fileURL = URL(fileURLWithPath: imagesetPath)
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                url = fileURL
+            }
+        }
+        
         guard let url = url, FileManager.default.fileExists(atPath: url.path) else {
             print("GIFImageView: Missing resource \(resourceName).gif")
+            print("GIFImageView: Tried paths:")
+            print("  - GIFs/\(resourceName).gif")
+            print("  - \(resourceName).gif")
+            print("  - Asset catalog imagesets")
             return
         }
         

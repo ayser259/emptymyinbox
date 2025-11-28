@@ -15,6 +15,10 @@ struct emptyMyInboxApp: App {
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
+        // Suppress WebKit console noise by setting environment variable
+        // This reduces the RBS assertion errors and process termination messages
+        setenv("OS_ACTIVITY_MODE", "disable", 1)
+        
         // Configure Google Sign-In
         // Try GIDClientID first (preferred by Google Sign-In SDK), then fallback to GOOGLE_CLIENT_ID
         let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String
