@@ -25,6 +25,9 @@ struct DashboardView: View {
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
     @State private var selectedLabel: Label?
+    @StateObject private var progressTracker = RefreshProgressTracker()
+    @State private var showProgressModal = false
+    @State private var accountHealthStatuses: [String: AccountHealthStatus] = [:] // email -> status
     
     var isSearchActive: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -40,7 +43,12 @@ struct DashboardView: View {
                 content
             }
             .navigationDestination(for: EmailFilter.self) { filter in
-                FilteredEmailsView(filter: filter)
+                switch filter {
+                case .accountSenders(let accountEmail):
+                    AccountSendersView(accountEmail: accountEmail)
+                default:
+                    FilteredEmailsView(filter: filter)
+                }
             }
             .navigationDestination(for: Label.self) { label in
                 FilteredEmailsView(filter: .category(label: label))
@@ -103,8 +111,50 @@ struct DashboardView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountAdded"))) { _ in
             // New account was added, refresh to show it immediately
             Task {
-                await refreshDashboard(shouldSync: false)
+                await refreshDashboard(shouldSync: true)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .emailMetadataLoaded)) { notification in
+            // CatchUp loaded new email data - update our counts
+            let count = notification.userInfo?["count"] as? Int ?? 0
+            logInfo("Dashboard received emailMetadataLoaded notification: \(count) emails", category: "Dashboard")
+            Task {
+                // Reload from cache to get the updated counts
+                if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+                    await MainActor.run {
+                        applySnapshot(snapshot)
+                        logInfo("Dashboard updated from CatchUp data: \(self.emails.count) emails", category: "Dashboard")
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .starredEmailsUpdated)) { notification in
+            // Starred emails were updated - reload from cache
+            let count = notification.userInfo?["count"] as? Int ?? 0
+            logInfo("Dashboard received starredEmailsUpdated notification: \(count) starred emails", category: "Dashboard")
+            Task {
+                if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+                    await MainActor.run {
+                        applySnapshot(snapshot)
+                        logInfo("Dashboard updated starred count: \(self.starredEmails.count)", category: "Dashboard")
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
+            // Email status changed somewhere - reload from cache to update counters
+            logInfo("Dashboard received dashboardNeedsUpdate notification", category: "Dashboard")
+            Task {
+                if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+                    await MainActor.run {
+                        applySnapshot(snapshot)
+                        logInfo("Dashboard updated from cache: \(self.allEmails.count) emails, \(self.starredEmails.count) starred", category: "Dashboard")
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showProgressModal) {
+            RefreshProgressModal(progressTracker: progressTracker)
         }
     }
 
@@ -270,10 +320,9 @@ struct DashboardView: View {
                 }
                 
                 NavigationLink(value: "catch_up") {
-                    ActionButton(
+                    CatchUpActionButton(
                         title: "Catch up",
-                        count: unreadCount,
-                        icon: "envelope.badge"
+                        count: unreadCount
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -281,7 +330,7 @@ struct DashboardView: View {
                 NavigationLink(value: "all_emails") {
                     ActionButton(
                         title: "All emails",
-                        count: emails.count,
+                        count: allEmails.count,
                         icon: "envelope"
                     )
                 }
@@ -290,7 +339,7 @@ struct DashboardView: View {
                 NavigationLink(value: "senders") {
                     ActionButton(
                         title: "Senders",
-                        count: unreadSendersCount,
+                        count: totalSendersCount,
                         icon: "person.2.fill"
                     )
                 }
@@ -299,7 +348,7 @@ struct DashboardView: View {
                 NavigationLink(value: "starred") {
                     ActionButton(
                         title: "Saved",
-                        count: savedCount,
+                        count: starredEmails.count,
                         icon: "star.fill"
                     )
                 }
@@ -320,53 +369,72 @@ struct DashboardView: View {
     }
 
     private var refreshButton: some View {
-        Button {
-            // Set refreshing state immediately on main thread
-            Task { @MainActor in
-                guard !isRefreshing else { return }
-                isRefreshing = true
-            }
-            Task {
-                await refreshDashboard(shouldSync: true)
-            }
-        } label: {
-            VStack(spacing: AppTheme.spacingSmall) {
-                if isRefreshing {
-                    ProgressView()
-                        .tint(AppTheme.accent)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 24))
-                        .foregroundColor(AppTheme.accent)
+        ZStack(alignment: .topTrailing) {
+            Button {
+                // Set refreshing state immediately on main thread
+                Task { @MainActor in
+                    guard !isRefreshing else { return }
+                    isRefreshing = true
+                    progressTracker.reset()
                 }
-                
-                Text("Refresh")
-                    .font(AppTheme.subheadline)
-                    .primaryText()
-                
-                if let lastRefresh = lastRefreshTime {
-                    Text(formatLastRefreshTime(lastRefresh))
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                } else {
-                    Text("Never")
-                        .font(AppTheme.caption)
-                        .secondaryText()
+                Task {
+                    await refreshDashboard(shouldSync: true)
                 }
+            } label: {
+                VStack(spacing: AppTheme.spacingSmall) {
+                    if isRefreshing {
+                        ProgressView()
+                            .tint(AppTheme.accent)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 24))
+                            .foregroundColor(AppTheme.accent)
+                    }
+                    
+                    Text("Refresh")
+                        .font(AppTheme.subheadline)
+                        .primaryText()
+                    
+                    if let lastRefresh = lastRefreshTime {
+                        Text(formatLastRefreshTime(lastRefresh))
+                            .font(AppTheme.caption)
+                            .secondaryText()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
+                        Text("Never")
+                            .font(AppTheme.caption)
+                            .secondaryText()
+                    }
+                }
+                .frame(width: 100, height: 100)
+                .background(AppTheme.secondaryBackground)
+                .cornerRadius(AppTheme.cornerRadiusMedium)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
             }
-            .frame(width: 100, height: 100)
-            .background(AppTheme.secondaryBackground)
-            .cornerRadius(AppTheme.cornerRadiusMedium)
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-            )
+            .buttonStyle(PlainButtonStyle())
+            .contentShape(Rectangle())
+            .disabled(isRefreshing)
+            
+            // Info button
+            Button {
+                showProgressModal = true
+            } label: {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(AppTheme.accent)
+                    .background(
+                        Circle()
+                            .fill(AppTheme.primaryBackground)
+                            .frame(width: 20, height: 20)
+                    )
+            }
+            .offset(x: -4, y: 4)
         }
-        .buttonStyle(PlainButtonStyle())
-        .contentShape(Rectangle())
-        .disabled(isRefreshing)
+        .frame(width: 100, height: 100)
     }
 
     private var shouldPrioritizeRefreshButton: Bool {
@@ -399,9 +467,16 @@ struct DashboardView: View {
                             account: account,
                             unreadCount: getUnreadCount(for: account),
                             starredCount: getStarredCount(for: account),
+                            totalEmailCount: getTotalEmailCount(for: account),
+                            senderCount: getSenderCount(for: account),
+                            unreadSenderCount: getUnreadSenderCount(for: account),
                             lastRefreshTime: getLastRefreshTime(for: account),
+                            healthStatus: accountHealthStatuses[account.email],
                             onRefresh: {
                                 await refreshAccount(accountEmail: account.email)
+                            },
+                            onDisconnect: {
+                                disconnectAccount(email: account.email)
                             }
                         )
                     }
@@ -412,11 +487,27 @@ struct DashboardView: View {
     }
     
     private func getUnreadCount(for account: EmailAccount) -> Int {
-        allEmails.filter { $0.account_email == account.email && !$0.is_read }.count
+        allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read }.count
     }
     
     private func getStarredCount(for account: EmailAccount) -> Int {
-        starredEmails.filter { $0.account_email == account.email }.count
+        starredEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }.count
+    }
+    
+    private func getTotalEmailCount(for account: EmailAccount) -> Int {
+        allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }.count
+    }
+    
+    private func getSenderCount(for account: EmailAccount) -> Int {
+        let accountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }
+        let uniqueSenders = Set(accountEmails.map { $0.sender })
+        return uniqueSenders.count
+    }
+    
+    private func getUnreadSenderCount(for account: EmailAccount) -> Int {
+        let unreadAccountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read }
+        let uniqueSenders = Set(unreadAccountEmails.map { $0.sender })
+        return uniqueSenders.count
     }
     
     private func getLastRefreshTime(for account: EmailAccount) -> Date? {
@@ -424,6 +515,10 @@ struct DashboardView: View {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: lastSyncString)
+    }
+    
+    private func getHealthStatus(for account: EmailAccount) -> AccountHealthStatus? {
+        return accountHealthStatuses[account.email]
     }
     
     private var greeting: String {
@@ -452,11 +547,6 @@ struct DashboardView: View {
         emails.filter { !$0.is_read }.count
     }
     
-    private var savedCount: Int {
-        // Count all starred emails (synced separately to ensure we get all of them)
-        starredEmails.count
-    }
-    
     private var draftsCount: Int {
         // TODO: Implement drafts count
         0
@@ -464,7 +554,15 @@ struct DashboardView: View {
     
     // MARK: - Sender Grouping
     
-    // Computed property for unread senders count (used in action button)
+    // Computed property for total senders count (all unique senders on device)
+    private var totalSendersCount: Int {
+        let grouped = Dictionary(grouping: allEmails) { email in
+            email.sender
+        }
+        return grouped.count
+    }
+    
+    // Computed property for unread senders count
     private var unreadSendersCount: Int {
         let unreadEmails = allEmails.filter { !$0.is_read }
         let grouped = Dictionary(grouping: unreadEmails) { email in
@@ -521,78 +619,138 @@ struct DashboardView: View {
             // Check if task was cancelled
             guard !Task.isCancelled else { return }
             
-            // Search in cached emails
+            // Search in both list items AND full cached email bodies
+            var matchingEmailIds = Set<Int>()
+            var resultEmails: [EmailListItem] = []
+            
+            // First: Search in cached email details (includes body text)
+            // This searches the full body content that's been downloaded
+            let fullBodyMatches = await EmailCache.shared.searchCachedEmails(query: trimmedQuery)
+            for match in fullBodyMatches {
+                matchingEmailIds.insert(match.id)
+            }
+            
+            // Check if task was cancelled
+            guard !Task.isCancelled else { return }
+            
+            // Second: Search in list items (for emails not yet fully cached)
             if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
-                let filtered = snapshot.allEmails.filter { email in
-                    email.subject.localizedCaseInsensitiveContains(trimmedQuery) ||
-                    email.sender.localizedCaseInsensitiveContains(trimmedQuery) ||
-                    email.sender_name?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
-                    email.snippet.localizedCaseInsensitiveContains(trimmedQuery)
+                for email in snapshot.allEmails {
+                    // Skip if already matched via full body search
+                    if matchingEmailIds.contains(email.id) {
+                        resultEmails.append(email)
+                        continue
+                    }
+                    
+                    // Search in list item fields
+                    if email.subject.localizedCaseInsensitiveContains(trimmedQuery) ||
+                       email.sender.localizedCaseInsensitiveContains(trimmedQuery) ||
+                       email.sender_name?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
+                       email.snippet.localizedCaseInsensitiveContains(trimmedQuery) {
+                        resultEmails.append(email)
+                    }
                 }
-                
-                // Check again if task was cancelled
-                guard !Task.isCancelled else { return }
-                
-                await MainActor.run {
-                    self.searchResults = filtered
-                    self.isSearching = false
-                }
-            } else {
-                await MainActor.run {
-                    self.searchResults = []
-                    self.isSearching = false
-                }
+            }
+            
+            // Sort by received_at descending
+            resultEmails.sort { $0.received_at > $1.received_at }
+            
+            // Check again if task was cancelled
+            guard !Task.isCancelled else { return }
+            
+            await MainActor.run {
+                self.searchResults = resultEmails
+                self.isSearching = false
             }
         }
     }
     
     private func loadInitialData() async {
+        // First, quickly show any cached data
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
                 applySnapshot(snapshot)
+                logInfo("Loaded cached snapshot: \(snapshot.emails.count) emails", category: "Dashboard")
             }
         }
-        await refreshDashboard(shouldSync: false)
+        
+        // Always sync on initial load to get fresh data
+        // This ensures we don't show stale counts
+        logInfo("Initial load - syncing with Gmail...", category: "Dashboard")
+        await refreshDashboard(shouldSync: true)
     }
     
     private func refreshDashboard(shouldSync: Bool) async {
-        // Prevent concurrent refreshes
-        let currentlyRefreshing = await MainActor.run {
-            return isRefreshing || isLoading
-        }
-        if currentlyRefreshing {
-            return
+        logDebug("DashboardView.refreshDashboard called - shouldSync: \(shouldSync)", category: "Dashboard")
+        
+        // Check current state
+        let (currentlyRefreshing, currentlyLoading) = await MainActor.run {
+            return (isRefreshing, isLoading)
         }
         
-        // Set loading state (only if not already set by button tap)
+        // If a sync is requested, always allow it (don't skip)
+        // Only skip if we're already syncing
         if shouldSync {
-            await MainActor.run {
-                if !isRefreshing {
-                    isRefreshing = true
-                }
+            if currentlyRefreshing {
+                logWarning("Skipping sync - already syncing", category: "Dashboard")
+                return
             }
-        } else if !hasCachedData {
-            await MainActor.run {
+            // If just loading (non-sync), we can override it with a sync
+        } else {
+            // Non-sync request - skip if any refresh is happening
+            if currentlyRefreshing || currentlyLoading {
+                logWarning("Skipping non-sync refresh - already refreshing", category: "Dashboard")
+                return
+            }
+        }
+        
+        // Set loading state
+        await MainActor.run {
+            if shouldSync {
+                isRefreshing = true
+                isLoading = false // Clear loading if we're now syncing
+                progressTracker.reset()
+            } else {
                 isLoading = true
             }
         }
         
-        defer {
-            Task { @MainActor in
-                if shouldSync {
-                    isRefreshing = false
-                } else {
-                    isLoading = false
-                }
+        // Create progress callback
+        let progressCallback: DashboardDataManager.ProgressCallback = { stage, status, detail, accountEmail, currentCount, totalCount in
+            await MainActor.run {
+                self.progressTracker.updateStage(stage, status: status, detail: detail, accountEmail: accountEmail, currentCount: currentCount, totalCount: totalCount)
             }
         }
         
-        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync) {
-            await MainActor.run {
-                applySnapshot(snapshot)
-                lastRefreshTime = snapshot.timestamp
-                // Views will get updated data through their own refresh calls or manual refresh
+        do {
+            if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync, progressCallback: progressCallback) {
+                // Get health statuses after refresh
+                let healthStatuses = await DashboardDataManager.shared.getAccountHealth()
+                logDebug("Received \(healthStatuses.count) health statuses", category: "Dashboard")
+                
+                await MainActor.run {
+                    applySnapshot(snapshot)
+                    lastRefreshTime = snapshot.timestamp
+                    
+                    // Update health statuses
+                    for health in healthStatuses {
+                        accountHealthStatuses[health.email] = health.status
+                        logDebug("Set health for \(health.email): \(health.status)", category: "Health")
+                    }
+                    
+                    logSuccess("Dashboard updated: \(accounts.count) accounts, \(emails.count) emails", category: "Dashboard")
+                }
+            } else {
+                logWarning("refreshData returned nil", category: "Dashboard")
             }
+        }
+        
+        // Always reset loading states when done
+        await MainActor.run {
+            if shouldSync {
+                isRefreshing = false
+            }
+            isLoading = false
         }
     }
     
@@ -610,29 +768,25 @@ struct DashboardView: View {
     }
     
     private func refreshAccount(accountEmail: String) async {
-        let gmailService = GmailAPIService.shared
-        let gmailAccounts = gmailService.getAllAccounts()
-        
-        guard let gmailAccount = gmailAccounts.first(where: { $0.email == accountEmail }) else {
-            print("Account not found: \(accountEmail)")
-            return
-        }
-        
-        do {
-            // Sync unread and starred emails for this account
-            _ = try await gmailService.syncUnreadEmails(for: gmailAccount, maxResults: 500, usePagination: false, resetPagination: false)
-            _ = try await gmailService.syncStarredEmails(for: gmailAccount, maxResults: 500)
-            
-            // Refresh dashboard data to update the UI
-            if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: false) {
-                await MainActor.run {
-                    applySnapshot(snapshot)
-                    lastRefreshTime = snapshot.timestamp
-                }
+        // Use full dashboard refresh with sync for this account
+        // This now uses fast metadata-only sync
+        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
+            await MainActor.run {
+                applySnapshot(snapshot)
+                lastRefreshTime = snapshot.timestamp
             }
-        } catch {
-            print("Error refreshing account \(accountEmail): \(error.localizedDescription)")
         }
+    }
+    
+    private func disconnectAccount(email: String) {
+        authManager.logout(accountEmail: email)
+        // Remove from local state
+        accounts.removeAll { $0.email == email }
+        accountHealthStatuses.removeValue(forKey: email)
+        // Clear emails for this account from local state
+        allEmails.removeAll { $0.account_email == email }
+        emails.removeAll { $0.account_email == email }
+        starredEmails.removeAll { $0.account_email == email }
     }
 }
 
@@ -662,6 +816,39 @@ struct ActionButton: View {
             RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Catch Up Action Button (Featured with yellow border)
+
+struct CatchUpActionButton: View {
+    let title: String
+    let count: Int
+    
+    var body: some View {
+        VStack(spacing: AppTheme.spacingSmall) {
+            // Custom Catchup image asset
+            Image("Catchup")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 28, height: 28)
+            
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .primaryText()
+            
+            Text("\(count)")
+                .font(AppTheme.caption)
+                .secondaryText()
+        }
+        .frame(width: 100, height: 100)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(AppTheme.cornerRadiusMedium)
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
+                .stroke(AppTheme.accent, lineWidth: 2)
+        )
+        .shadow(color: AppTheme.accent.opacity(0.2), radius: 6, x: 0, y: 2)
     }
 }
 
@@ -861,53 +1048,70 @@ struct SlackStyleSenderRow: View {
 struct MenuView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    @StateObject private var debugSettings = DebugSettings.shared
     @State private var showClearedAlert = false
+    @State private var showDebugLogs = false
+    @State private var cachedEmailCount: Int = 0
+    @State private var accountToDisconnect: GmailAccount?
+    @State private var showDisconnectConfirmation = false
+    @State private var isAddingAccount = false
     
     var body: some View {
         NavigationView {
             List {
+                // Connected Accounts section with individual account management
                 Section {
-                    if !authManager.accounts.isEmpty {
-                        VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                            Text("Connected Accounts")
-                                .font(AppTheme.headline)
-                                .primaryText()
+                    // Account rows with disconnect buttons
+                    ForEach(authManager.accounts) { account in
+                        ConnectedAccountRow(
+                            account: account,
+                            onDisconnect: {
+                                accountToDisconnect = account
+                                showDisconnectConfirmation = true
+                            }
+                        )
+                    }
+                    
+                    // Add Gmail button - inside the Connected Accounts section
+                    Button {
+                        addGmailAccount()
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(AppTheme.accent)
                             
-                            ForEach(authManager.accounts) { account in
-                                Text(account.email)
-                                    .font(AppTheme.subheadline)
-                                    .secondaryText()
+                            Text("Add Gmail Account")
+                                .font(AppTheme.body)
+                                .foregroundColor(AppTheme.accent)
+                            
+                            Spacer()
+                            
+                            if isAddingAccount {
+                                ProgressView()
+                                    .scaleEffect(0.8)
                             }
                         }
-                        .padding(.vertical, AppTheme.spacingSmall)
+                    }
+                    .disabled(isAddingAccount)
+                } header: {
+                    Text("Connected Accounts")
+                } footer: {
+                    if authManager.accounts.isEmpty {
+                        Text("No accounts connected. Add a Gmail account to get started.")
+                    } else {
+                        Text("Tap the disconnect button to remove an account. You can reconnect it anytime.")
                     }
                 }
                 
+                // Storage section
                 Section {
-                    Button {
-                        Task {
-                            do {
-                                #if canImport(UIKit)
-                                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                      let rootViewController = windowScene.windows.first?.rootViewController else {
-                                    return
-                                }
-                                
-                                _ = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
-                                
-                                // Refresh accounts
-                                authManager.accounts = GmailAPIService.shared.getAllAccounts()
-                                
-                                // Dashboard will refresh on next manual refresh
-                                
-                                dismiss()
-                                #endif
-                            } catch {
-                                print("Error adding Gmail account: \(error)")
-                            }
-                        }
-                    } label: {
-                        SwiftUI.Label("Add Gmail Account", systemImage: "plus.circle")
+                    HStack {
+                        SwiftUI.Label("Cached Emails", systemImage: "internaldrive")
+                        Spacer()
+                        Text("\(cachedEmailCount) emails")
+                            .font(AppTheme.caption)
+                            .foregroundColor(AppTheme.secondaryText)
                     }
                     
                     Button {
@@ -915,24 +1119,67 @@ struct MenuView: View {
                             await DashboardCache.shared.clear()
                             await EmailCache.shared.clearAll()
                             await MainActor.run {
+                                cachedEmailCount = 0
                                 NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
                                 showClearedAlert = true
-                                // Auto-dismiss the sheet shortly after clearing
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                                    dismiss()
-                                }
                             }
                         }
                     } label: {
                         SwiftUI.Label("Clear Cache", systemImage: "trash")
+                            .foregroundColor(.orange)
                     }
-                    
+                } header: {
+                    Text("Local Storage")
+                } footer: {
+                    Text("Email content is stored locally for fast access and offline search.")
+                }
+                
+                // Account actions section
+                Section {
                     Button {
                         authManager.logout()
                         dismiss()
                     } label: {
-                        SwiftUI.Label("Logout", systemImage: "arrow.right.square")
-                            .foregroundColor(.red)
+                        HStack {
+                            SwiftUI.Label("Logout All Accounts", systemImage: "arrow.right.square")
+                                .foregroundColor(.red)
+                        }
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("This will disconnect all accounts and clear local data.")
+                }
+                
+                // Debug section
+                Section {
+                    // Debug Mode Toggle
+                    Toggle(isOn: $debugSettings.isDebugModeEnabled) {
+                        HStack {
+                            Image(systemName: "hammer.fill")
+                                .foregroundColor(debugSettings.isDebugModeEnabled ? .purple : AppTheme.secondaryText)
+                            Text("Debug Mode")
+                        }
+                    }
+                    .tint(.purple)
+                    
+                    Button {
+                        showDebugLogs = true
+                    } label: {
+                        HStack {
+                            SwiftUI.Label("Debug Logs", systemImage: "ladybug")
+                            Spacer()
+                            Text("\(DebugLogger.shared.entries.count)")
+                                .font(AppTheme.caption)
+                                .foregroundColor(AppTheme.secondaryText)
+                        }
+                    }
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    if debugSettings.isDebugModeEnabled {
+                        Text("Debug mode is ON. Copy buttons will appear in email views.")
+                            .foregroundColor(.purple)
                     }
                 }
             }
@@ -952,7 +1199,122 @@ struct MenuView: View {
             } message: {
                 Text("Local cache was removed.")
             }
+            .alert("Disconnect Account?", isPresented: $showDisconnectConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    accountToDisconnect = nil
+                }
+                Button("Disconnect", role: .destructive) {
+                    if let account = accountToDisconnect {
+                        authManager.logout(accountEmail: account.email)
+                        NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                    }
+                    accountToDisconnect = nil
+                }
+            } message: {
+                if let account = accountToDisconnect {
+                    Text("This will disconnect \(account.email) from the app. You can reconnect it later.")
+                } else {
+                    Text("This will disconnect the account from the app.")
+                }
+            }
+            .sheet(isPresented: $showDebugLogs) {
+                DebugLogView()
+            }
+            .task {
+                // Load cached email count
+                cachedEmailCount = await EmailCache.shared.cachedEmailCount()
+            }
         }
+    }
+    
+    private func addGmailAccount() {
+        isAddingAccount = true
+        Task {
+            do {
+                #if canImport(UIKit)
+                guard let windowScene = await MainActor.run(body: {
+                    UIApplication.shared.connectedScenes.first as? UIWindowScene
+                }),
+                      let rootViewController = await MainActor.run(body: {
+                          windowScene.windows.first?.rootViewController
+                      }) else {
+                    await MainActor.run { isAddingAccount = false }
+                    return
+                }
+                
+                _ = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
+                
+                await MainActor.run {
+                    // Refresh accounts
+                    authManager.accounts = GmailAPIService.shared.getAllAccounts()
+                    // Notify dashboard
+                    NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
+                    isAddingAccount = false
+                }
+                #endif
+            } catch {
+                logError("Error adding Gmail account: \(error)", category: "Auth")
+                await MainActor.run { isAddingAccount = false }
+            }
+        }
+    }
+}
+
+// MARK: - Connected Account Row
+
+struct ConnectedAccountRow: View {
+    let account: GmailAccount
+    let onDisconnect: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Account icon with gradient
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [AppTheme.accent.opacity(0.3), AppTheme.accent.opacity(0.1)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 40, height: 40)
+                
+                Image(systemName: "envelope.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(AppTheme.accent)
+            }
+            
+            // Account info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.email)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(AppTheme.primaryText)
+                    .lineLimit(1)
+                
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color(hex: "#4ade80"))
+                        .frame(width: 6, height: 6)
+                    Text("Connected")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppTheme.secondaryText)
+                }
+            }
+            
+            Spacer()
+            
+            // Disconnect button
+            Button {
+                onDisconnect()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(AppTheme.secondaryText.opacity(0.5))
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -1085,164 +1447,505 @@ extension String {
         .environmentObject(AuthManager())
 }
 
-// MARK: - Account Summary Card
+// MARK: - Account Summary Card (Redesigned)
 
 struct AccountSummaryCard: View {
     let account: EmailAccount
     let unreadCount: Int
     let starredCount: Int
+    let totalEmailCount: Int
+    let senderCount: Int
+    let unreadSenderCount: Int
     let lastRefreshTime: Date?
+    let healthStatus: AccountHealthStatus?
     let onRefresh: () async -> Void
+    var onDisconnect: (() -> Void)? = nil
     
     @State private var isRefreshing = false
+    @State private var catchUpPressed = false
+    @State private var showDisconnectConfirmation = false
+    
+    // Gradient colors for card
+    private let cardGradient = LinearGradient(
+        colors: [
+            Color(hex: "#1a1a1a"),
+            Color(hex: "#0d0d0d")
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
     
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-            // Account header
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            // Top section: Email + Refresh button
+            HStack(alignment: .center) {
+                // Account info
                 VStack(alignment: .leading, spacing: 4) {
+                    // Email address with subtle shadow for depth
                     Text(account.email)
-                        .font(AppTheme.headline)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
                         .primaryText()
+                        .lineLimit(1)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
                     
-                    if let lastRefresh = lastRefreshTime {
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 10))
-                                .foregroundColor(AppTheme.secondaryText)
+                    // Last sync time
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(AppTheme.secondaryText.opacity(0.6))
+                        
+                        if let lastRefresh = lastRefreshTime {
                             Text(formatLastRefreshTime(lastRefresh))
-                                .font(AppTheme.caption)
-                                .secondaryText()
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(AppTheme.secondaryText.opacity(0.7))
+                        } else if account.email_count == 0 {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .tint(AppTheme.accent)
+                                Text("Syncing...")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(AppTheme.accent)
+                            }
+                        } else {
+                            Text("Never synced")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(AppTheme.secondaryText.opacity(0.7))
                         }
-                    } else if account.email_count == 0 {
-                        // New account that's being synced
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                                .tint(AppTheme.accent)
-                            Text("Syncing...")
-                                .font(AppTheme.caption)
-                                .foregroundColor(AppTheme.accent)
-                        }
-                    } else {
-                        Text("Never synced")
-                            .font(AppTheme.caption)
-                            .secondaryText()
                     }
                 }
                 
                 Spacer()
                 
-                // Refresh button
+                // Refresh button - pill style
                 Button {
                     Task {
-                        await MainActor.run {
-                            isRefreshing = true
-                        }
+                        await MainActor.run { isRefreshing = true }
                         await onRefresh()
-                        await MainActor.run {
-                            isRefreshing = false
-                        }
+                        await MainActor.run { isRefreshing = false }
                     }
                 } label: {
-                    if isRefreshing {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                            .tint(AppTheme.accent)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14))
-                            .foregroundColor(AppTheme.accent)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(AppTheme.accent.opacity(0.15))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(AppTheme.accent.opacity(0.3), lineWidth: 1)
+                            )
+                        
+                        if isRefreshing {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .tint(AppTheme.accent)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(AppTheme.accent)
+                        }
                     }
+                    .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .disabled(isRefreshing)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
             
-            Divider()
-                .background(AppTheme.secondaryText.opacity(0.3))
-            
-            // Stats row
-            HStack(spacing: AppTheme.spacingLarge) {
-                // Unread count
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(unreadCount)")
-                        .font(AppTheme.title2)
-                        .foregroundColor(AppTheme.accent)
-                    Text("Unread")
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                }
+            // Health status bar - glass morphism style
+            HStack(spacing: 8) {
+                Image(systemName: healthIconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(healthColor)
                 
-                // Starred count
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(starredCount)")
-                        .font(AppTheme.title2)
-                        .foregroundColor(AppTheme.accent)
-                    Text("Starred")
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                }
+                Text(healthText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(healthColor)
                 
                 Spacer()
                 
-                // Catch up button
-                NavigationLink(value: "catch_up_\(account.id)") {
-                    HStack(spacing: 6) {
-                        Image(systemName: "envelope.badge")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Catch Up")
-                            .font(AppTheme.subheadline)
-                            .fontWeight(.medium)
+                // Disconnect button when not healthy
+                if !isHealthy, let onDisconnect = onDisconnect {
+                    Button {
+                        showDisconnectConfirmation = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Reconnect")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(healthColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(healthColor.opacity(0.15))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(healthColor.opacity(0.3), lineWidth: 1)
+                                )
+                        )
                     }
-                    .foregroundColor(AppTheme.primaryText)
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.vertical, AppTheme.spacingUnit)
-                    .background(AppTheme.accent)
-                    .cornerRadius(AppTheme.cornerRadiusMedium)
+                    .buttonStyle(PlainButtonStyle())
+                } else {
+                    // Animated health indicator
+                    Circle()
+                        .fill(healthColor)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: healthColor.opacity(0.6), radius: 4, x: 0, y: 0)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 0)
+                    .fill(healthColor.opacity(0.08))
+                    .overlay(
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [healthColor.opacity(0.15), healthColor.opacity(0.05)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+            )
+            
+            // Error/Warning message if applicable
+            if let status = healthStatus {
+                switch status {
+                case .error(let message):
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.red.opacity(0.9))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                case .warning(let message):
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.orange.opacity(0.9))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                default:
+                    EmptyView()
+                }
+            }
+            
+            // Stats section with better visual hierarchy
+            VStack(spacing: 12) {
+                // Top row stats - Unread & Starred (primary)
+                HStack(spacing: 12) {
+                    NavigationLink(value: EmailFilter.accountUnread(accountEmail: account.email)) {
+                        PremiumStatBadge(
+                            icon: "envelope.badge",
+                            count: unreadCount,
+                            label: "Unread",
+                            isHighlighted: unreadCount > 0,
+                            highlightColor: AppTheme.accent
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    NavigationLink(value: EmailFilter.accountStarred(accountEmail: account.email)) {
+                        PremiumStatBadge(
+                            icon: "star.fill",
+                            count: starredCount,
+                            label: "Starred",
+                            isHighlighted: starredCount > 0,
+                            highlightColor: .yellow
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                
+                // Bottom row stats - Total & Senders (secondary)
+                HStack(spacing: 12) {
+                    NavigationLink(value: EmailFilter.accountAll(accountEmail: account.email)) {
+                        PremiumStatBadge(
+                            icon: "envelope",
+                            count: totalEmailCount,
+                            label: "Total",
+                            isHighlighted: false,
+                            highlightColor: AppTheme.secondaryText
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    NavigationLink(value: EmailFilter.accountSenders(accountEmail: account.email)) {
+                        PremiumStatBadge(
+                            icon: "person.2.fill",
+                            count: senderCount,
+                            label: "Senders",
+                            isHighlighted: unreadSenderCount > 0,
+                            highlightColor: AppTheme.accent,
+                            secondaryText: unreadSenderCount > 0 ? "\(unreadSenderCount) unread" : nil
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            
+            // Catch up button - subtle dark style that blends in
+            if unreadCount > 0 {
+                NavigationLink(value: "catch_up_\(account.id)") {
+                    HStack(spacing: 8) {
+                        // Yellow catchup icon for accent
+                        Image("Catchup")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 14, height: 14)
+                        
+                        Text("Catch Up")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                        
+                        Spacer()
+                        
+                        // Count badge
+                        Text("\(unreadCount)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(AppTheme.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule()
+                                    .fill(AppTheme.accent.opacity(0.15))
+                            )
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(AppTheme.secondaryText.opacity(0.6))
+                    }
+                    .foregroundColor(AppTheme.primaryText.opacity(0.9))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(unreadCount == 0)
-                .opacity(unreadCount == 0 ? 0.5 : 1.0)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
             }
         }
-        .padding(AppTheme.spacingMedium)
-        .background(AppTheme.secondaryBackground)
-        .cornerRadius(AppTheme.cornerRadiusMedium)
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(cardGradient)
+                .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 6)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.12),
+                            Color.white.opacity(0.04),
+                            healthBorderGlow
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .alert("Disconnect Account?", isPresented: $showDisconnectConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Disconnect", role: .destructive) {
+                onDisconnect?()
+            }
+        } message: {
+            Text("This will disconnect \(account.email) from the app. You can reconnect it later from the menu.")
+        }
+    }
+    
+    // MARK: - Health Properties
+    
+    private var healthIconName: String {
+        guard let status = healthStatus else { return "circle.dotted" }
+        switch status {
+        case .healthy: return "checkmark.shield.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.shield.fill"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+    
+    private var healthColor: Color {
+        guard let status = healthStatus else { return AppTheme.secondaryText }
+        switch status {
+        case .healthy: return Color(hex: "#4ade80") // Brighter green
+        case .warning: return .orange
+        case .error: return .red
+        case .unknown: return AppTheme.secondaryText
+        }
+    }
+    
+    private var healthText: String {
+        guard let status = healthStatus else { return "Checking..." }
+        switch status {
+        case .healthy: return "Connected"
+        case .warning: return "Warning"
+        case .error: return "Error"
+        case .unknown: return "Unknown"
+        }
+    }
+    
+    private var healthBorderGlow: Color {
+        guard let status = healthStatus else { return Color.clear }
+        switch status {
+        case .healthy: return Color.clear
+        case .warning: return Color.orange.opacity(0.3)
+        case .error: return Color.red.opacity(0.3)
+        case .unknown: return Color.clear
+        }
+    }
+    
+    private var isHealthy: Bool {
+        guard let status = healthStatus else { return true }
+        if case .healthy = status { return true }
+        return false
     }
     
     private func formatLastRefreshTime(_ date: Date) -> String {
         let calendar = Calendar.current
         let now = Date()
         
-        // If refreshed within the last minute, show "just now"
-        if calendar.dateComponents([.second], from: date, to: now).second ?? 0 < 60 {
+        if let seconds = calendar.dateComponents([.second], from: date, to: now).second, seconds < 60 {
             return "just now"
         }
         
-        // If refreshed today, show time
         if calendar.isDateInToday(date) {
             let timeFormatter = DateFormatter()
             timeFormatter.timeStyle = .short
-            return "Today at \(timeFormatter.string(from: date))"
+            return timeFormatter.string(from: date)
         }
         
-        // If refreshed yesterday, show yesterday and time
         if calendar.isDateInYesterday(date) {
-            let timeFormatter = DateFormatter()
-            timeFormatter.timeStyle = .short
-            return "Yesterday at \(timeFormatter.string(from: date))"
+            return "Yesterday"
         }
         
-        // Otherwise show full date and time
         let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .short
+        dateFormatter.dateFormat = "MMM d"
         return dateFormatter.string(from: date)
+    }
+}
+
+// MARK: - Premium Stat Badge
+
+struct PremiumStatBadge: View {
+    let icon: String
+    let count: Int
+    let label: String
+    let isHighlighted: Bool
+    let highlightColor: Color
+    var secondaryText: String? = nil
+    
+    private var displayColor: Color {
+        isHighlighted ? highlightColor : AppTheme.secondaryText.opacity(0.7)
+    }
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(displayColor)
+                
+                Text("\(count)")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(displayColor)
+            }
+            
+            if let secondary = secondaryText {
+                VStack(spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(AppTheme.secondaryText.opacity(0.6))
+                    Text(secondary)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(highlightColor.opacity(0.9))
+                }
+            } else {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppTheme.secondaryText.opacity(0.6))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    isHighlighted
+                        ? highlightColor.opacity(0.08)
+                        : Color.white.opacity(0.03)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(
+                            isHighlighted
+                                ? highlightColor.opacity(0.2)
+                                : Color.white.opacity(0.06),
+                            lineWidth: 1
+                        )
+                )
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Legacy Account Stat Cell (for compatibility)
+
+struct AccountStatCell: View {
+    let icon: String
+    let count: Int
+    let label: String
+    var secondaryCount: Int? = nil
+    var secondaryLabel: String? = nil
+    var color: Color = AppTheme.accent
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(color)
+                
+                Text("\(count)")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(color)
+            }
+            
+            if let secondary = secondaryCount, let secondaryLabel = secondaryLabel {
+                HStack(spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 11))
+                        .secondaryText()
+                    Text("•")
+                        .font(.system(size: 11))
+                        .secondaryText()
+                    Text("\(secondary) \(secondaryLabel)")
+                        .font(.system(size: 11))
+                        .foregroundColor(AppTheme.accent)
+                }
+            } else {
+                Text(label)
+                    .font(.system(size: 11))
+                    .secondaryText()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, AppTheme.spacingSmall)
+        .contentShape(Rectangle())
     }
 }
 

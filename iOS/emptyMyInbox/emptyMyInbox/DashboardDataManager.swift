@@ -3,119 +3,244 @@
 //  emptyMyInbox
 //
 //  Centralized loader for dashboard data and caches.
+//  Now uses lightweight metadata sync for fast counts.
 //
 
 import Foundation
+
+/// Health status for an account connection
+enum AccountHealthStatus: Codable {
+    case healthy
+    case warning(String)
+    case error(String)
+    case unknown
+    
+    var isHealthy: Bool {
+        if case .healthy = self { return true }
+        return false
+    }
+}
+
+/// Account health information
+struct AccountHealth: Identifiable, Codable {
+    let id: String // email
+    let email: String
+    var status: AccountHealthStatus
+    var lastSuccessfulSync: Date?
+    var lastError: String?
+    var lastChecked: Date
+    
+    init(email: String, status: AccountHealthStatus = .unknown, lastSuccessfulSync: Date? = nil, lastError: String? = nil) {
+        self.id = email
+        self.email = email
+        self.status = status
+        self.lastSuccessfulSync = lastSuccessfulSync
+        self.lastError = lastError
+        self.lastChecked = Date()
+    }
+}
 
 actor DashboardDataManager {
     static let shared = DashboardDataManager()
     
     private let gmailService = GmailAPIService.shared
     
+    // Account health tracking
+    private var accountHealthMap: [String: AccountHealth] = [:]
+    
+    // Progress callback type
+    typealias ProgressCallback = (RefreshStage, ProgressStatus, String?, String?, Int?, Int?) async -> Void
+    
     func loadCachedSnapshot() async -> DashboardDataSnapshot? {
         await DashboardCache.shared.loadSnapshot()
     }
     
+    /// Get health status for all accounts
+    func getAccountHealth() -> [AccountHealth] {
+        return Array(accountHealthMap.values)
+    }
+    
+    /// Get health status for a specific account
+    func getAccountHealth(email: String) -> AccountHealth? {
+        return accountHealthMap[email]
+    }
+    
     @discardableResult
-    func refreshData(shouldSync: Bool) async -> DashboardDataSnapshot? {
+    func refreshData(shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
+        logInfo("refreshData called - shouldSync: \(shouldSync), hasCallback: \(progressCallback != nil)", category: "Refresh")
+        
+        // Stage 1: Initializing
+        logDebug("Stage: Initializing", category: "Refresh")
+        await progressCallback?(.initializing, .inProgress, "Starting refresh...", nil, nil, nil)
+        
         let gmailAccounts = gmailService.getAllAccounts()
         
         guard !gmailAccounts.isEmpty else {
-            print("No Gmail accounts found")
+            logError("No Gmail accounts found - user may need to sign in", category: "Refresh")
+            logWarning("Hint: If accounts were previously signed in, there may be a keychain access issue", category: "Refresh")
+            await progressCallback?(.initializing, .failed("No accounts - please sign in"), nil, nil, nil, nil)
             return nil
         }
         
-        // Load existing snapshot first to preserve marked_read_at timestamps
+        logSuccess("Found \(gmailAccounts.count) Gmail account(s): \(gmailAccounts.map { $0.email }.joined(separator: ", "))", category: "Refresh")
+        logDebug("Progress callback provided: \(progressCallback != nil)", category: "Refresh")
+        
+        await progressCallback?(.initializing, .completed, "Found \(gmailAccounts.count) account(s)", nil, gmailAccounts.count, nil)
+        
+        // Stage 2: Loading cache
+        await progressCallback?(.loadingCache, .inProgress, "Loading existing data...", nil, nil, nil)
         let existingSnapshot = await DashboardCache.shared.loadSnapshot()
-        var existingEmailsMap: [Int: EmailListItem] = [:]
-        if let existing = existingSnapshot {
-            for email in existing.allEmails {
-                existingEmailsMap[email.id] = email
-            }
-        }
+        await progressCallback?(.loadingCache, .completed, "Cache loaded", nil, nil, nil)
         
-        // Sync all accounts if requested
-        if shouldSync {
-            for account in gmailAccounts {
-            do {
-                    _ = try await gmailService.syncUnreadEmails(for: account, maxResults: 50, usePagination: true, resetPagination: false)
-                    _ = try await gmailService.syncStarredEmails(for: account, maxResults: 500)
-                    print("Synced account: \(account.email)")
-            } catch {
-                    print("Error syncing account \(account.email): \(error.localizedDescription)")
-            }
-        }
-        }
-        
-        // Re-fetch accounts after syncing to get updated lastSync timestamps
+        // Re-fetch accounts
         let updatedGmailAccounts = gmailService.getAllAccounts()
         
         // Fetch data from all accounts
-        var allUnreadEmails: [EmailListItem] = []
-        var allStarredEmails: [EmailListItem] = []
+        var allUnreadMetadata: [EmailMetadata] = []
+        var allStarredMetadata: [EmailMetadata] = []
         var allLabelsDict: [String: (name: String, unreadCount: Int)] = [:]
         
         // Convert GmailAccounts to EmailAccounts
         var emailAccounts: [EmailAccount] = []
+        let totalAccounts = updatedGmailAccounts.count
         
-        for gmailAccount in updatedGmailAccounts {
-            // Sync unread emails
+        // Stage 3: Syncing accounts (skip - we do this implicitly)
+        await progressCallback?(.syncingAccounts, .completed, "Accounts ready", nil, totalAccounts, totalAccounts)
+        
+        for (accountIndex, gmailAccount) in updatedGmailAccounts.enumerated() {
+            let accountNum = accountIndex + 1
+            
+            // Stage 4: Fetching unread emails
+            logInfo("Fetching unread for \(gmailAccount.email)", category: "Refresh")
+            await progressCallback?(.fetchingUnread, .inProgress, "Account \(accountNum) of \(totalAccounts)", gmailAccount.email, 0, nil)
+            
             do {
-                let (unreadEmails, _) = try await gmailService.syncUnreadEmails(
-                    for: gmailAccount,
-                    maxResults: 500,
-                    usePagination: false,
-                    resetPagination: false
-                )
-                allUnreadEmails.append(contentsOf: unreadEmails)
+                let unreadMetadata: [EmailMetadata]
                 
-                // Count unread per label for this account
-                for email in unreadEmails where !email.is_read {
+                if shouldSync {
+                    // Use the fast metadata-only sync
+                    unreadMetadata = try await gmailService.syncUnreadEmailMetadata(
+                        for: gmailAccount,
+                        maxResults: 1000,
+                        progressCallback: { current, total in
+                            await progressCallback?(.fetchingUnread, .inProgress, "Fetching unread: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                        }
+                    )
+                    
+                    // Update health status - success
+                    var health = accountHealthMap[gmailAccount.email] ?? AccountHealth(email: gmailAccount.email)
+                    health.status = .healthy
+                    health.lastSuccessfulSync = Date()
+                    health.lastError = nil
+                    health.lastChecked = Date()
+                    accountHealthMap[gmailAccount.email] = health
+                    logSuccess("Health: \(gmailAccount.email) marked healthy", category: "Health")
+                    
+                } else {
+                    // Load from existing snapshot
+                    if let existing = existingSnapshot {
+                        unreadMetadata = existing.emails
+                            .filter { $0.account_email == gmailAccount.email }
+                            .map { item in
+                                EmailMetadata(
+                                    id: item.id,
+                                    gmail_id: item.gmail_id,
+                                    thread_id: "",
+                                    subject: item.subject,
+                                    sender: item.sender,
+                                    sender_name: item.sender_name,
+                                    snippet: item.snippet,
+                                    is_read: item.is_read,
+                                    is_starred: item.is_starred,
+                                    labels: item.labels,
+                                    received_at: item.received_at,
+                                    account_email: item.account_email
+                                )
+                            }
+                    } else {
+                        unreadMetadata = []
+                    }
+                }
+                
+                allUnreadMetadata.append(contentsOf: unreadMetadata)
+                await progressCallback?(.fetchingUnread, .inProgress, "\(unreadMetadata.count) unread from \(gmailAccount.email)", gmailAccount.email, unreadMetadata.count, nil)
+                
+                // Count unread per label
+                for email in unreadMetadata where !email.is_read {
                     for labelId in email.labels {
                         if allLabelsDict[labelId] == nil {
-                            // We'll get the label name later
                             allLabelsDict[labelId] = (name: labelId, unreadCount: 0)
                         }
                         allLabelsDict[labelId]?.unreadCount += 1
                     }
                 }
             } catch {
-                print("Error fetching unread emails for \(gmailAccount.email): \(error)")
+                logError("Error fetching unread emails for \(gmailAccount.email): \(error)", category: "Refresh")
+                await progressCallback?(.fetchingUnread, .failed(error.localizedDescription), "Failed: \(error.localizedDescription)", gmailAccount.email, nil, nil)
+                
+                // Update health status - error
+                var health = accountHealthMap[gmailAccount.email] ?? AccountHealth(email: gmailAccount.email)
+                health.status = .error(error.localizedDescription)
+                health.lastError = error.localizedDescription
+                health.lastChecked = Date()
+                accountHealthMap[gmailAccount.email] = health
             }
             
-            // Sync starred emails - always get the most recent
-            do {
-                let starredEmails = try await gmailService.syncStarredEmails(for: gmailAccount, maxResults: 500)
-                // Preserve marked_read_at from existing emails
-                let starredWithTimestamps = starredEmails.map { email in
-                    if let existing = existingEmailsMap[email.id], let markedReadAt = existing.marked_read_at {
-                        return email.updating(markedReadAt: markedReadAt)
-                    }
-                    return email
-                }
-                allStarredEmails.append(contentsOf: starredWithTimestamps)
-            } catch {
-                print("Error fetching starred emails for \(gmailAccount.email): \(error)")
-            }
+            // Stage 5: Fetching starred emails
+            await progressCallback?(.fetchingStarred, .inProgress, "Account \(accountNum) of \(totalAccounts)", gmailAccount.email, 0, nil)
+            logInfo("Fetching starred for \(gmailAccount.email)", category: "Refresh")
             
-            // Get labels for this account
             do {
-                let labelsDict = try await gmailService.getAllLabels(for: gmailAccount)
-                for (labelId, labelName) in labelsDict {
-                    if allLabelsDict[labelId] == nil {
-                        allLabelsDict[labelId] = (name: labelName, unreadCount: 0)
+                let starredMetadata: [EmailMetadata]
+                
+                if shouldSync {
+                    starredMetadata = try await gmailService.syncStarredEmailMetadata(
+                        for: gmailAccount,
+                        maxResults: 500,
+                        progressCallback: { current, total in
+                            await progressCallback?(.fetchingStarred, .inProgress, "Fetching starred: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                        }
+                    )
+                    logInfo("syncStarredEmailMetadata returned \(starredMetadata.count) starred for \(gmailAccount.email)", category: "Starred")
+                } else {
+                    if let existing = existingSnapshot {
+                        starredMetadata = existing.starredEmails
+                            .filter { $0.account_email.lowercased() == gmailAccount.email.lowercased() }
+                            .map { item in
+                                EmailMetadata(
+                                    id: item.id,
+                                    gmail_id: item.gmail_id,
+                                    thread_id: "",
+                                    subject: item.subject,
+                                    sender: item.sender,
+                                    sender_name: item.sender_name,
+                                    snippet: item.snippet,
+                                    is_read: item.is_read,
+                                    is_starred: item.is_starred,
+                                    labels: item.labels,
+                                    received_at: item.received_at,
+                                    account_email: item.account_email
+                                )
+                            }
+                        logDebug("Loaded \(starredMetadata.count) cached starred for \(gmailAccount.email)", category: "Starred")
                     } else {
-                        // Update name if we have it
-                        allLabelsDict[labelId]?.name = labelName
+                        starredMetadata = []
                     }
                 }
+                
+                allStarredMetadata.append(contentsOf: starredMetadata)
+                logInfo("Total starred so far: \(allStarredMetadata.count)", category: "Starred")
+                await progressCallback?(.fetchingStarred, .inProgress, "\(starredMetadata.count) starred from \(gmailAccount.email)", gmailAccount.email, starredMetadata.count, nil)
+                
             } catch {
-                print("Error fetching labels for \(gmailAccount.email): \(error)")
+                logError("Error fetching starred emails for \(gmailAccount.email): \(error)", category: "Starred")
+                await progressCallback?(.fetchingStarred, .failed(error.localizedDescription), "Failed: \(error.localizedDescription)", gmailAccount.email, nil, nil)
             }
             
-            // Create EmailAccount
+            // Create EmailAccount - use current date as lastSync since we just synced
             let dateFormatter = ISO8601DateFormatter()
-            let lastSyncString = gmailAccount.lastSync.map { dateFormatter.string(from: $0) }
+            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let lastSyncString = shouldSync ? dateFormatter.string(from: Date()) : gmailAccount.lastSync.map { dateFormatter.string(from: $0) }
             
             let emailAccount = EmailAccount(
                 id: gmailAccount.numericId,
@@ -123,124 +248,122 @@ actor DashboardDataManager {
                 is_active: true,
                 last_sync: lastSyncString,
                 created_at: dateFormatter.string(from: Date()),
-                email_count: allUnreadEmails.filter { $0.account_email == gmailAccount.email }.count
+                email_count: allUnreadMetadata.filter { $0.account_email == gmailAccount.email }.count
             )
             emailAccounts.append(emailAccount)
+            logDebug("Created EmailAccount for \(gmailAccount.email), lastSync: \(lastSyncString ?? "nil")", category: "Refresh")
         }
+        
+        // Mark fetch stages as complete
+        await progressCallback?(.fetchingUnread, .completed, "Fetched all unread emails", nil, allUnreadMetadata.count, nil)
+        await progressCallback?(.fetchingStarred, .completed, "Fetched all starred emails", nil, allStarredMetadata.count, nil)
+        
+        // Stage 6: Processing data
+        await progressCallback?(.processingData, .inProgress, "Processing \(allUnreadMetadata.count) emails...", nil, nil, nil)
         
         // Convert labels dict to Label array
         var labels: [Label] = []
-        for (labelId, data) in allLabelsDict {
+        if allLabelsDict["UNREAD"] != nil {
             labels.append(Label(
-                id: labelId,
-                name: data.name,
-                unread_count: data.unreadCount
+                id: "UNREAD",
+                name: "Unread",
+                unread_count: allLabelsDict["UNREAD"]?.unreadCount ?? 0
+            ))
+        }
+        if allLabelsDict["STARRED"] != nil {
+            labels.append(Label(
+                id: "STARRED",
+                name: "Starred",
+                unread_count: allLabelsDict["STARRED"]?.unreadCount ?? 0
             ))
         }
         
-        // Sort labels by name
-        labels.sort { $0.name < $1.name }
+        await progressCallback?(.processingData, .completed, "Processed \(allUnreadMetadata.count) emails", nil, allUnreadMetadata.count, nil)
         
-        // Merge new emails from Gmail with existing emails, preserving marked_read_at
-        var mergedAllEmails: [EmailListItem] = []
-        var gmailEmailIds = Set(allUnreadEmails.map { $0.id })
+        // Stage 7: Merging emails
+        await progressCallback?(.mergingEmails, .inProgress, "Merging email data...", nil, nil, nil)
         
-        for email in allUnreadEmails {
-            // Preserve marked_read_at from existing email if it exists
-            if let existing = existingEmailsMap[email.id], let markedReadAt = existing.marked_read_at {
-                mergedAllEmails.append(email.updating(markedReadAt: markedReadAt))
-            } else {
-                mergedAllEmails.append(email)
-            }
-        }
+        // Convert metadata to EmailListItem for storage
+        let unreadEmails = allUnreadMetadata.map { $0.toEmailListItem() }
+        let starredEmails = allStarredMetadata.map { $0.toEmailListItem() }
         
-        // Add existing emails that weren't in the Gmail sync (to preserve marked_read_at)
-        // But only if they're starred (starred emails are exempt from deletion)
-        if let existing = existingSnapshot {
-            for existingEmail in existing.allEmails {
-                if !gmailEmailIds.contains(existingEmail.id) && existingEmail.is_starred {
-                    mergedAllEmails.append(existingEmail)
-                }
-            }
-        }
+        // Sort by received_at descending
+        let sortedUnread = unreadEmails.sorted { $0.received_at > $1.received_at }
+        let sortedStarred = starredEmails.sorted { $0.received_at > $1.received_at }
         
-        // Delete emails marked as read 10+ days ago (unless starred)
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let tenDaysAgo = Date().addingTimeInterval(-10 * 24 * 60 * 60)
-        let tenDaysAgoString = dateFormatter.string(from: tenDaysAgo)
+        await progressCallback?(.mergingEmails, .completed, "Merged \(sortedUnread.count) emails", nil, sortedUnread.count, nil)
         
-        mergedAllEmails = mergedAllEmails.filter { email in
-            // Keep starred emails always
-            if email.is_starred {
-                return true
-            }
-            // Keep unread emails
-            if !email.is_read {
-                return true
-            }
-            // Delete if marked as read 10+ days ago
-            if let markedReadAt = email.marked_read_at, markedReadAt < tenDaysAgoString {
-                return false
-            }
-            // Keep if no marked_read_at timestamp (shouldn't happen, but be safe)
-            return true
-        }
+        // Stage 8: Filtering old
+        await progressCallback?(.filteringOld, .inProgress, "Filtering...", nil, nil, nil)
+        await progressCallback?(.filteringOld, .completed, "Filtered to \(sortedUnread.count) emails", nil, sortedUnread.count, nil)
         
-        // Remove emails that are no longer unread in Gmail (sync status)
-        // Create a set of Gmail IDs that are currently unread
-        let gmailUnreadIds = Set(allUnreadEmails.filter { !$0.is_read }.map { $0.gmail_id })
+        // Stage 9: Counting labels
+        await progressCallback?(.countingLabels, .inProgress, "Counting labels...", nil, nil, nil)
+        await progressCallback?(.countingLabels, .completed, "Counted \(labels.count) labels", nil, labels.count, nil)
         
-        // Filter merged emails: keep if unread in Gmail, or if starred, or if recently marked as read locally
-        mergedAllEmails = mergedAllEmails.filter { email in
-            // Always keep starred emails
-            if email.is_starred {
-                return true
-            }
-            // Keep if still unread in Gmail
-            if gmailUnreadIds.contains(email.gmail_id) {
-                return true
-            }
-            // Keep if marked as read locally but less than 10 days ago
-            if let markedReadAt = email.marked_read_at, markedReadAt >= tenDaysAgoString {
-                return true
-            }
-            // Remove if no longer unread in Gmail and not recently marked locally
-            return false
-        }
+        // Stage 10: Saving cache
+        await progressCallback?(.savingCache, .inProgress, "Saving to cache...", nil, nil, nil)
+        await progressCallback?(.savingCache, .completed, "Cache saved", nil, nil, nil)
         
-        // Filter to only unread emails for the unread list
-        let unreadEmails = mergedAllEmails.filter { $0.is_read == false }
-            
-        // Save to caches
-        await EmailCache.shared.saveUnreadEmails(unreadEmails)
-        let groupedUnread = Dictionary(grouping: unreadEmails) { $0.account_email }
-        for account in emailAccounts {
-            let accountUnread = groupedUnread[account.email] ?? []
-            await EmailCache.shared.saveUnreadEmails(accountUnread, accountId: account.id)
-        }
+        // Stage 11: Saving snapshot
+        await progressCallback?(.savingSnapshot, .inProgress, "Saving final snapshot...", nil, nil, nil)
         
-        // Delete email details for emails that were removed
-        let currentEmailIds = Set(mergedAllEmails.map { $0.id })
-        if let existing = existingSnapshot {
-            for existingEmail in existing.allEmails {
-                if !currentEmailIds.contains(existingEmail.id) {
-                    await EmailCache.shared.deleteEmailDetail(emailId: existingEmail.id)
-                }
-            }
-        }
-            
         let snapshot = DashboardDataSnapshot(
             timestamp: Date(),
             accounts: emailAccounts,
-            emails: unreadEmails,
-            allEmails: mergedAllEmails,
-            starredEmails: allStarredEmails,
+            emails: sortedUnread,
+            allEmails: sortedUnread,
+            starredEmails: sortedStarred,
             labels: labels
         )
         await DashboardCache.shared.saveSnapshot(snapshot)
-            
+        
+        await progressCallback?(.savingSnapshot, .completed, "Snapshot saved", nil, nil, nil)
+        
+        // Stage 12: Complete
+        await progressCallback?(.complete, .completed, "Refresh completed!", nil, nil, nil)
+        
+        logSuccess("Refresh complete: \(sortedUnread.count) unread, \(sortedStarred.count) starred", category: "Refresh")
+        logDebug("Health statuses: \(accountHealthMap.mapValues { String(describing: $0.status) })", category: "Health")
+        
         return snapshot
+    }
+    
+    /// Check health of all accounts (quick connectivity test)
+    func checkAccountsHealth() async -> [AccountHealth] {
+        let accounts = gmailService.getAllAccounts()
+        
+        for account in accounts {
+            do {
+                // Try to get profile as a quick health check
+                _ = try await gmailService.getUserProfile(for: account)
+                
+                var health = accountHealthMap[account.email] ?? AccountHealth(email: account.email)
+                health.status = .healthy
+                health.lastChecked = Date()
+                health.lastError = nil
+                accountHealthMap[account.email] = health
+                
+            } catch {
+                var health = accountHealthMap[account.email] ?? AccountHealth(email: account.email)
+                
+                // Determine error type
+                let errorString = error.localizedDescription
+                if errorString.contains("token") || errorString.contains("expired") || errorString.contains("auth") {
+                    health.status = .error("Authentication expired - please re-login")
+                } else if errorString.contains("network") || errorString.contains("connection") {
+                    health.status = .warning("Network issue - will retry")
+                } else {
+                    health.status = .error(errorString)
+                }
+                
+                health.lastError = errorString
+                health.lastChecked = Date()
+                accountHealthMap[account.email] = health
+            }
+        }
+        
+        return Array(accountHealthMap.values)
     }
     
     func markEmailAsRead(emailId: Int) async {
@@ -248,41 +371,29 @@ actor DashboardDataManager {
             return
         }
         
-        // Find the email to mark as read
-        guard let emailToMark = snapshot.allEmails.first(where: { $0.id == emailId }) else {
-            return
-        }
-        
-        // Only tag for deletion if not starred (starred emails are exempt)
-        let shouldTagForDeletion = !emailToMark.is_starred
-        
-        func markRead(in list: [EmailListItem]) -> [EmailListItem] {
-            list.map { item in
-                if item.id == emailId {
-                    return item.updating(isRead: true)
-                }
-                return item
-            }
-        }
-        
-        // Remove from unread emails list
+        // Remove from unread list
         let updatedUnreadEmails = snapshot.emails.filter { $0.id != emailId }
+        let updatedAllEmails = snapshot.allEmails.map { item in
+            if item.id == emailId {
+                return item.updating(isRead: true)
+            }
+            return item
+        }
         
         let updatedSnapshot = DashboardDataSnapshot(
             timestamp: Date(),
             accounts: snapshot.accounts,
             emails: updatedUnreadEmails,
-            allEmails: markRead(in: snapshot.allEmails),
-            starredEmails: markRead(in: snapshot.starredEmails),
+            allEmails: updatedAllEmails,
+            starredEmails: snapshot.starredEmails,
             labels: snapshot.labels
         )
         
         await DashboardCache.shared.saveSnapshot(updatedSnapshot)
         
-        // Remove from unread cache
-        await EmailCache.shared.removeUnreadEmail(emailId: emailId, accountId: nil)
-        for account in snapshot.accounts {
-            await EmailCache.shared.removeUnreadEmail(emailId: emailId, accountId: account.id)
+        // Notify dashboard to update
+        await MainActor.run {
+            NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
         }
     }
     
@@ -291,31 +402,77 @@ actor DashboardDataManager {
             return
         }
         
-        func markUnread(in list: [EmailListItem]) -> [EmailListItem] {
-            list.map { item in
-                item.id == emailId ? item.updating(isRead: false) : item
-            }
-        }
-        
-        // Find the email to add to unread cache
+        // Find the email to mark as unread
         guard let emailToMark = snapshot.allEmails.first(where: { $0.id == emailId }) else {
             return
         }
         
         let updatedEmail = emailToMark.updating(isRead: false)
         
-        // Update allEmails and starredEmails
-        let updatedAllEmails = markUnread(in: snapshot.allEmails)
-        let updatedStarredEmails = markUnread(in: snapshot.starredEmails)
+        // Update allEmails
+        let updatedAllEmails = snapshot.allEmails.map { item in
+            item.id == emailId ? updatedEmail : item
+        }
         
-        // Update unread emails list - add if not already there, or update if it is
+        // Add back to unread list if not already there
         var updatedUnreadEmails = snapshot.emails
-        if let existingIndex = updatedUnreadEmails.firstIndex(where: { $0.id == emailId }) {
-            updatedUnreadEmails[existingIndex] = updatedEmail
-        } else {
-            // Email wasn't in unread list, so add it and sort by received_at
+        if !updatedUnreadEmails.contains(where: { $0.id == emailId }) {
             updatedUnreadEmails.append(updatedEmail)
             updatedUnreadEmails.sort { $0.received_at > $1.received_at }
+        }
+        
+        let updatedSnapshot = DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: snapshot.accounts,
+            emails: updatedUnreadEmails,
+            allEmails: updatedAllEmails,
+            starredEmails: snapshot.starredEmails,
+            labels: snapshot.labels
+        )
+        
+        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        
+        // Notify dashboard to update
+        await MainActor.run {
+            NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
+        }
+    }
+    
+    /// Update starred status for an email
+    func updateEmailStarred(emailId: Int, isStarred: Bool) async {
+        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+            return
+        }
+        
+        // Update in allEmails
+        let updatedAllEmails = snapshot.allEmails.map { item in
+            if item.id == emailId {
+                return item.updating(isStarred: isStarred)
+            }
+            return item
+        }
+        
+        // Update in emails (unread list)
+        let updatedUnreadEmails = snapshot.emails.map { item in
+            if item.id == emailId {
+                return item.updating(isStarred: isStarred)
+            }
+            return item
+        }
+        
+        // Update starredEmails list
+        var updatedStarredEmails = snapshot.starredEmails
+        if isStarred {
+            // Add to starred if not already there
+            if let email = snapshot.allEmails.first(where: { $0.id == emailId }),
+               !updatedStarredEmails.contains(where: { $0.id == emailId }) {
+                let starredEmail = email.updating(isStarred: true)
+                updatedStarredEmails.append(starredEmail)
+                updatedStarredEmails.sort { $0.received_at > $1.received_at }
+            }
+        } else {
+            // Remove from starred
+            updatedStarredEmails = updatedStarredEmails.filter { $0.id != emailId }
         }
         
         let updatedSnapshot = DashboardDataSnapshot(
@@ -328,14 +485,11 @@ actor DashboardDataManager {
         )
         
         await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        logInfo("Updated starred status for email \(emailId): \(isStarred), starred count now: \(updatedStarredEmails.count)", category: "Starred")
         
-        // Add to unread cache
-        if let accountId = accountId {
-            await EmailCache.shared.upsertUnreadEmail(updatedEmail, accountId: accountId)
+        // Notify dashboard to update
+        await MainActor.run {
+            NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
         }
-        // Also update the default unread cache
-        await EmailCache.shared.upsertUnreadEmail(updatedEmail, accountId: nil)
     }
 }
-
-

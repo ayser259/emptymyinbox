@@ -10,6 +10,39 @@ import Foundation
 extension GmailAPIService {
     // MARK: - Message Parsing
     
+    /// Parse GmailMessage to EmailMetadata (lightweight - no body content)
+    func parseEmailMetadata(from gmailMessage: GmailMessage, accountEmail: String, emailId: Int) -> EmailMetadata {
+        let headers = extractHeaders(from: gmailMessage.payload)
+        let subject = headers["subject"] ?? ""
+        let from = headers["from"] ?? ""
+        let senderEmail = extractEmail(from: from)
+        let senderName = extractName(from: from)
+        
+        let isRead = !gmailMessage.labelIds.contains("UNREAD")
+        let isStarred = gmailMessage.labelIds.contains("STARRED")
+        
+        // Parse date
+        let receivedAt = parseDate(from: gmailMessage.internalDate) ?? Date()
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let receivedAtString = dateFormatter.string(from: receivedAt)
+        
+        return EmailMetadata(
+            id: emailId,
+            gmail_id: gmailMessage.id,
+            thread_id: gmailMessage.threadId,
+            subject: subject,
+            sender: senderEmail,
+            sender_name: senderName.isEmpty ? nil : senderName,
+            snippet: gmailMessage.snippet,
+            is_read: isRead,
+            is_starred: isStarred,
+            labels: gmailMessage.labelIds,
+            received_at: receivedAtString,
+            account_email: accountEmail
+        )
+    }
+    
     /// Parse GmailMessage to EmailListItem
     func parseEmailListItem(from gmailMessage: GmailMessage, accountEmail: String, emailId: Int) -> EmailListItem {
         let headers = extractHeaders(from: gmailMessage.payload)
@@ -147,10 +180,15 @@ extension GmailAPIService {
             }
         }
         
-        // Check if payload has direct body
+        // Check if payload has direct body - MUST check mimeType to determine if HTML or plain text
         if let body = payload.body, let data = body.data {
             if let decoded = decodeBase64URL(data) {
-                bodyText = decoded
+                // Check the payload's mimeType to store in correct field
+                if payload.mimeType == "text/html" {
+                    bodyHTML = decoded
+                } else {
+                    bodyText = decoded
+                }
             }
         }
         
@@ -158,6 +196,17 @@ extension GmailAPIService {
         if let parts = payload.parts {
             for part in parts {
                 extractFromPart(part)
+            }
+        }
+        
+        // Fallback: If bodyHTML is nil but bodyText looks like HTML, move it to bodyHTML
+        // This handles edge cases where HTML content ends up in bodyText
+        if bodyHTML == nil && !bodyText.isEmpty {
+            let trimmed = bodyText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html") || 
+               (trimmed.hasPrefix("<") && (trimmed.contains("<head") || trimmed.contains("<body") || trimmed.contains("<div") || trimmed.contains("<table"))) {
+                bodyHTML = bodyText
+                bodyText = "" // Clear bodyText since it's actually HTML
             }
         }
         

@@ -8,10 +8,19 @@
 import SwiftUI
 import UIKit
 
+/// Session stats for detailed celebration
+struct CatchUpSessionStats {
+    var reviewed: Int = 0
+    var markedAsRead: Int = 0
+    var keptUnread: Int = 0
+    var starred: Int = 0
+}
+
 struct CelebrationView: View {
     let emailsCleared: Int?
     let sessionStartTime: Date?
     let accountEmail: String?
+    let sessionStats: CatchUpSessionStats?
     
     @State private var currentMessageIndex = 0
     @State private var timerEndTime: Date? // When celebration view appeared (timer stops)
@@ -24,10 +33,11 @@ struct CelebrationView: View {
     @State private var backgroundGlow: Double = 0.0
     @Environment(\.dismiss) var dismiss
     
-    init(emailsCleared: Int? = nil, sessionStartTime: Date? = nil, accountEmail: String? = nil) {
+    init(emailsCleared: Int? = nil, sessionStartTime: Date? = nil, accountEmail: String? = nil, sessionStats: CatchUpSessionStats? = nil) {
         self.emailsCleared = emailsCleared
         self.sessionStartTime = sessionStartTime
         self.accountEmail = accountEmail
+        self.sessionStats = sessionStats
     }
     
     private var messages: [String] {
@@ -88,6 +98,7 @@ struct CelebrationView: View {
         }
         return "\(seconds)s"
     }
+    
     
     var body: some View {
         ZStack {
@@ -151,7 +162,47 @@ struct CelebrationView: View {
                         .transition(.opacity.combined(with: .scale))
                     
                     // Stats area
-                    if let cleared = emailsCleared, cleared > 0 {
+                    if let stats = sessionStats, stats.reviewed > 0 {
+                        Divider()
+                            .background(Color.white.opacity(0.2))
+                            .padding(.horizontal, AppTheme.spacingLarge)
+                        
+                        VStack(spacing: 8) {
+                            // Main stat line
+                            if let time = formattedTime {
+                                Text("You reviewed \(stats.reviewed) email\(stats.reviewed == 1 ? "" : "s") in \(time)")
+                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                    .foregroundColor(AppTheme.accent)
+                                    .multilineTextAlignment(.center)
+                            } else {
+                                Text("You reviewed \(stats.reviewed) email\(stats.reviewed == 1 ? "" : "s")")
+                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                    .foregroundColor(AppTheme.accent)
+                                    .multilineTextAlignment(.center)
+                            }
+                            
+                            // Breakdown lines (3 separate lines)
+                            VStack(spacing: 4) {
+                                if stats.markedAsRead > 0 {
+                                    Text("\(stats.markedAsRead) marked as read")
+                                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                                        .foregroundColor(AppTheme.secondaryText)
+                                }
+                                if stats.keptUnread > 0 {
+                                    Text("\(stats.keptUnread) kept unread")
+                                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                                        .foregroundColor(AppTheme.secondaryText)
+                                }
+                                if stats.starred > 0 {
+                                    Text("\(stats.starred) starred")
+                                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                                        .foregroundColor(AppTheme.secondaryText)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, AppTheme.spacingMedium)
+                    } else if let cleared = emailsCleared, cleared > 0 {
+                        // Fallback to old style if no detailed stats
                         Divider()
                             .background(Color.white.opacity(0.2))
                             .padding(.horizontal, AppTheme.spacingLarge)
@@ -458,5 +509,10 @@ struct ConfettiShape: Shape {
 }
 
 #Preview {
-    CelebrationView(emailsCleared: 15, sessionStartTime: Date().addingTimeInterval(-300), accountEmail: "test@example.com")
+    CelebrationView(
+        emailsCleared: 15,
+        sessionStartTime: Date().addingTimeInterval(-300),
+        accountEmail: "test@example.com",
+        sessionStats: CatchUpSessionStats(reviewed: 15, markedAsRead: 10, keptUnread: 3, starred: 2)
+    )
 }

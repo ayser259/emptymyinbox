@@ -279,3 +279,40 @@ struct FilterActions: Codable {
     }
 }
 
+// MARK: - Email Metadata (Lightweight - No Body Content)
+
+/// Lightweight email metadata for fast loading and counts
+/// Contains everything needed for lists and counters, but NO body content
+struct EmailMetadata: Codable, Identifiable {
+    let id: Int
+    let gmail_id: String
+    let thread_id: String
+    let subject: String
+    let sender: String
+    let sender_name: String?
+    let snippet: String
+    let is_read: Bool
+    let is_starred: Bool
+    let labels: [String]
+    let received_at: String
+    let account_email: String
+    
+    /// Convert to EmailListItem for compatibility with existing views
+    func toEmailListItem() -> EmailListItem {
+        EmailListItem(
+            id: id,
+            gmail_id: gmail_id,
+            subject: subject,
+            sender: sender,
+            sender_name: sender_name,
+            snippet: snippet,
+            is_read: is_read,
+            is_starred: is_starred,
+            labels: labels,
+            received_at: received_at,
+            account_email: account_email,
+            marked_read_at: nil
+        )
+    }
+}
+
