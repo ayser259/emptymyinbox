@@ -123,7 +123,7 @@ extension GmailAPIService {
     
     // MARK: - Helper Methods
     
-    private func extractHeaders(from payload: GmailPayload?) -> [String: String] {
+    func extractHeaders(from payload: GmailPayload?) -> [String: String] {
         guard let payload = payload else { return [:] }
         
         var headers: [String: String] = [:]
