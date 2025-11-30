@@ -259,7 +259,7 @@ struct HTMLWebView: UIViewRepresentable {
                             let bodyContent = String(trimmed[bodyContentStart..<bodyEndRange.lowerBound])
                             let cleaned = bodyContent.trimmingCharacters(in: .whitespacesAndNewlines)
                             if !cleaned.isEmpty {
-                                print("HTMLWebView: Extracted body content (\(cleaned.prefix(100))...)")
+                                logDebug("HTMLWebView: Extracted body content (\(cleaned.prefix(100))...)", category: "UI")
                                 return cleaned
                             }
                         }
@@ -269,10 +269,10 @@ struct HTMLWebView: UIViewRepresentable {
                 }
                 
                 if !foundBodyStart {
-                    print("HTMLWebView: Found <body> tag but couldn't find closing >")
+                    logWarning("HTMLWebView: Found <body> tag but couldn't find closing >", category: "UI")
                 }
             } else {
-                print("HTMLWebView: No <body> tag found in HTML document")
+                logDebug("HTMLWebView: No <body> tag found in HTML document", category: "UI")
             }
         }
         
@@ -314,10 +314,10 @@ struct HTMLWebView: UIViewRepresentable {
                 })();
             """) { result, error in
                 if let error = error {
-                    print("HTMLWebView: Error checking content - \(error.localizedDescription)")
+                    logError("HTMLWebView: Error checking content - \(error.localizedDescription)", category: "UI")
                 } else if let dict = result as? [String: Any] {
                     if let mightBeRaw = dict["mightBeRawHTML"] as? Bool, mightBeRaw {
-                        print("HTMLWebView: Warning - Content might be displaying as raw HTML")
+                        logWarning("HTMLWebView: Warning - Content might be displaying as raw HTML", category: "UI")
                     }
                 }
             }
@@ -407,7 +407,7 @@ struct HTMLWebView: UIViewRepresentable {
             // Only log non-cancellation errors to reduce console noise
             let nsError = error as NSError
             if nsError.code != NSURLErrorCancelled && nsError.domain != "WebKitErrorDomain" {
-                print("HTMLWebView: Failed to load HTML - \(error.localizedDescription)")
+                logError("HTMLWebView: Failed to load HTML - \(error.localizedDescription)", category: "UI")
             }
         }
         
@@ -415,7 +415,7 @@ struct HTMLWebView: UIViewRepresentable {
             // Only log non-cancellation errors to reduce console noise
             let nsError = error as NSError
             if nsError.code != NSURLErrorCancelled && nsError.domain != "WebKitErrorDomain" {
-                print("HTMLWebView: Failed provisional navigation - \(error.localizedDescription)")
+                logError("HTMLWebView: Failed provisional navigation - \(error.localizedDescription)", category: "UI")
             }
         }
     }

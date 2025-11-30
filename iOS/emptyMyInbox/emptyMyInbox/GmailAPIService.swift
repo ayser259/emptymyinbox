@@ -461,7 +461,7 @@ class GmailAPIService {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -575,7 +575,7 @@ class GmailAPIService {
         request.httpMethod = "DELETE"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await urlSession.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
@@ -590,7 +590,7 @@ class GmailAPIService {
     
     private func saveAccounts() {
         guard let data = try? JSONEncoder().encode(accounts) else {
-            print("⚠️ Failed to encode accounts for keychain")
+            logWarning("Failed to encode accounts for keychain", category: "Auth")
             return
         }
         
@@ -613,9 +613,9 @@ class GmailAPIService {
         
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status != errSecSuccess {
-            print("⚠️ Keychain save failed with status: \(status)")
+            logWarning("Keychain save failed with status: \(status)", category: "Auth")
         } else {
-            print("✅ Saved \(accounts.count) accounts to keychain")
+            logSuccess("Saved \(accounts.count) accounts to keychain", category: "Auth")
         }
     }
     
@@ -632,26 +632,26 @@ class GmailAPIService {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         
         if status == errSecItemNotFound {
-            print("ℹ️ No accounts found in keychain (first launch or cleared)")
+            logInfo("No accounts found in keychain (first launch or cleared)", category: "Auth")
             // Try to migrate from old keychain format
             migrateOldKeychainData()
             return
         }
         
         guard status == errSecSuccess else {
-            print("⚠️ Keychain load failed with status: \(status)")
+            logWarning("Keychain load failed with status: \(status)", category: "Auth")
             return
         }
         
         guard let data = result as? Data else {
-            print("⚠️ Keychain returned non-data result")
+            logWarning("Keychain returned non-data result", category: "Auth")
             return
         }
         
         do {
             let loadedAccounts = try JSONDecoder().decode([GmailAccount].self, from: data)
             accounts = loadedAccounts
-            print("✅ Loaded \(accounts.count) accounts from keychain")
+            logSuccess("Loaded \(accounts.count) accounts from keychain", category: "Auth")
         } catch {
             logError("Failed to decode accounts from keychain: \(error)", category: "Auth")
         }
@@ -675,7 +675,7 @@ class GmailAPIService {
             return
         }
         
-        print("🔄 Migrating \(loadedAccounts.count) accounts from old keychain format")
+        logInfo("Migrating \(loadedAccounts.count) accounts from old keychain format", category: "Auth")
         accounts = loadedAccounts
         
         // Save to new format
@@ -696,7 +696,7 @@ class GmailAPIService {
             kSecAttrAccount as String: keychainAccount
         ]
         let status = SecItemDelete(query as CFDictionary)
-        print("🗑️ Cleared keychain accounts (status: \(status))")
+        logInfo("Cleared keychain accounts (status: \(status))", category: "Auth")
         
         // Also try to clear old format
         let oldQuery: [String: Any] = [
@@ -731,8 +731,10 @@ class GmailAPIService {
         )
         
         // Step 2: Load local cache to see what we already have
-        let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.numericId)
-        let cachedGmailIds = Set(cachedEmails.map { $0.gmail_id })
+        let cachedMetadata = await EmailCache.shared.loadEmailMetadata(accountId: account.numericId)
+        // Filter out starred emails (catch up should only show unread, non-starred emails)
+        let cachedMetadataFiltered = cachedMetadata.filter { !$0.is_starred }
+        let cachedGmailIds = Set(cachedMetadataFiltered.map { $0.gmail_id })
         
         // Step 3: Identify new emails (not in cache)
         // These are the ONLY ones we need to download
@@ -743,9 +745,9 @@ class GmailAPIService {
         // Step 4: Add cached emails that are still in the server list
         // (This effectively removes emails that were archived/read on another device)
         let serverIdSet = Set(messageRefs.map { $0.id })
-        for cachedEmail in cachedEmails {
-            if serverIdSet.contains(cachedEmail.gmail_id) {
-                emailItems.append(cachedEmail)
+        for cachedMetadataItem in cachedMetadataFiltered {
+            if serverIdSet.contains(cachedMetadataItem.gmail_id) {
+                emailItems.append(cachedMetadataItem.toEmailListItem())
             }
         }
         

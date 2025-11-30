@@ -48,11 +48,7 @@ struct GIFImageView: UIViewRepresentable {
         }
         
         guard let url = url, FileManager.default.fileExists(atPath: url.path) else {
-            print("GIFImageView: Missing resource \(resourceName).gif")
-            print("GIFImageView: Tried paths:")
-            print("  - GIFs/\(resourceName).gif")
-            print("  - \(resourceName).gif")
-            print("  - Asset catalog imagesets")
+            logWarning("GIFImageView: Missing resource \(resourceName).gif. Tried paths: GIFs/\(resourceName).gif, \(resourceName).gif, Asset catalog imagesets", category: "UI")
             return
         }
         
@@ -65,7 +61,7 @@ struct GIFImageView: UIViewRepresentable {
                 baseURL: url.deletingLastPathComponent()
             )
         } catch {
-            print("GIFImageView: Failed to load \(resourceName).gif - \(error.localizedDescription)")
+            logError("GIFImageView: Failed to load \(resourceName).gif - \(error.localizedDescription)", category: "UI")
         }
     }
 }

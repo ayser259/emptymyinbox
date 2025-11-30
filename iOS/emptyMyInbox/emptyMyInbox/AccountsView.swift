@@ -182,7 +182,7 @@ struct AccountsView: View {
             // Sign in directly with Google using GmailAPIService
             let gmailAccount = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
             
-            print("✅ Successfully authenticated Gmail account: \(gmailAccount.email)")
+            logSuccess("Successfully authenticated Gmail account: \(gmailAccount.email)", category: "Auth")
             
             // Immediately add account to snapshot optimistically (so it shows up right away)
             await addAccountOptimistically(gmailAccount: gmailAccount)
@@ -194,7 +194,7 @@ struct AccountsView: View {
             await MainActor.run {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
-            print("❌ Gmail authentication failed: \(error)")
+            logError("Gmail authentication failed: \(error)", category: "Auth")
         }
     }
     
@@ -492,10 +492,11 @@ struct AccountDetailView: View {
     }
     
     private func refreshUnreadCountForChip() async {
-        // loadUnreadEmails already filters out starred emails
-        let count = await EmailCache.shared.loadUnreadEmails(accountId: account.id).count
+        // Load metadata and filter out starred emails (catch up should only show unread, non-starred emails)
+        let metadata = await EmailCache.shared.loadEmailMetadata(accountId: account.id)
+        let unreadNonStarred = metadata.filter { !$0.is_starred }
         await MainActor.run {
-            self.unreadCountForChip = count
+            self.unreadCountForChip = unreadNonStarred.count
         }
     }
     

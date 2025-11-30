@@ -11,7 +11,6 @@ import GoogleSignIn
 @main
 struct emptyMyInboxApp: App {
     @StateObject private var authManager = AuthManager()
-    @State private var handleURL: URL?
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
@@ -26,9 +25,9 @@ struct emptyMyInboxApp: App {
         
         if let clientID = clientID, !clientID.isEmpty {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
-            print("✅ Google Sign-In configured with Client ID: \(clientID)")
+            logSuccess("Google Sign-In configured with Client ID: \(clientID)", category: "Auth")
         } else {
-            print("❌ Warning: GIDClientID or GOOGLE_CLIENT_ID not found in Info.plist")
+            logWarning("GIDClientID or GOOGLE_CLIENT_ID not found in Info.plist", category: "Auth")
         }
     }
     
@@ -49,7 +48,6 @@ struct emptyMyInboxApp: App {
                 }
             }
             .onOpenURL { url in
-                handleURL = url
                 handleIncomingURL(url)
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in

@@ -36,7 +36,7 @@ actor DashboardCache {
             let data = try Data(contentsOf: fileURL)
             return try decoder.decode(DashboardDataSnapshot.self, from: data)
         } catch {
-            print("DashboardCache load error: \(error)")
+            logError("DashboardCache load error: \(error)", category: "Cache")
             return nil
         }
     }
@@ -62,7 +62,7 @@ actor DashboardCache {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            print("DashboardCache save error: \(error)")
+            logError("DashboardCache save error: \(error)", category: "Cache")
         }
     }
     
@@ -72,7 +72,7 @@ actor DashboardCache {
                 try FileManager.default.removeItem(at: fileURL)
             }
         } catch {
-            print("DashboardCache clear error: \(error)")
+            logError("DashboardCache clear error: \(error)", category: "Cache")
         }
     }
 }

@@ -58,7 +58,7 @@ actor EmailCache {
             return
         }
         cachedEmailIndex = Set(ids)
-        print("📧 EmailCache: Loaded index with \(cachedEmailIndex.count) cached emails")
+        logInfo("EmailCache: Loaded index with \(cachedEmailIndex.count) cached emails", category: "Cache")
     }
     
     private func saveEmailIndex() {
@@ -66,7 +66,7 @@ actor EmailCache {
             let data = try JSONEncoder().encode(Array(cachedEmailIndex))
             try data.write(to: emailIndexURL, options: .atomic)
         } catch {
-            print("EmailCache saveEmailIndex error: \(error)")
+            logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
         }
     }
     
@@ -133,7 +133,7 @@ actor EmailCache {
                 let data = try Data(contentsOf: url)
                 return try JSONDecoder().decode([EmailMetadata].self, from: data)
             } catch {
-                print("EmailCache loadEmailMetadata error: \(error)")
+                logError("EmailCache loadEmailMetadata error: \(error)", category: "Cache")
                 return []
             }
         }.value
@@ -147,81 +147,11 @@ actor EmailCache {
                 let data = try JSONEncoder().encode(metadata)
                 try data.write(to: url, options: .atomic)
             } catch {
-                print("EmailCache saveEmailMetadata error: \(error)")
+                logError("EmailCache saveEmailMetadata error: \(error)", category: "Cache")
             }
         }.value
     }
     
-    // MARK: - Legacy Compatibility (for old code that still uses these)
-    
-    /// Load unread emails - legacy compatibility
-    func loadUnreadEmails(accountId: Int? = nil) async -> [EmailListItem] {
-        let metadata = await loadEmailMetadata(accountId: accountId)
-        // Filter out starred emails - catch up should only show unread, non-starred emails
-        return metadata
-            .map { $0.toEmailListItem() }
-            .filter { !$0.is_starred }
-    }
-    
-    /// Save unread emails - legacy compatibility
-    func saveUnreadEmails(_ emails: [EmailListItem], accountId: Int? = nil) async {
-        // Convert to metadata and save
-        let metadata = emails.map { email in
-            EmailMetadata(
-                id: email.id,
-                gmail_id: email.gmail_id,
-                thread_id: "",
-                subject: email.subject,
-                sender: email.sender,
-                sender_name: email.sender_name,
-                snippet: email.snippet,
-                is_read: email.is_read,
-                is_starred: email.is_starred,
-                labels: email.labels,
-                received_at: email.received_at,
-                account_email: email.account_email
-            )
-        }
-        await saveEmailMetadata(metadata, accountId: accountId)
-    }
-    
-    /// Remove an email from the unread cache - legacy compatibility
-    func removeUnreadEmail(emailId: Int, accountId: Int? = nil) async {
-        var metadata = await loadEmailMetadata(accountId: accountId)
-        if let index = metadata.firstIndex(where: { $0.id == emailId }) {
-            metadata.remove(at: index)
-            await saveEmailMetadata(metadata, accountId: accountId)
-        }
-    }
-    
-    /// Upsert an email in the unread cache - legacy compatibility
-    func upsertUnreadEmail(_ email: EmailListItem, accountId: Int? = nil) async {
-        var metadata = await loadEmailMetadata(accountId: accountId)
-        
-        let newMetadata = EmailMetadata(
-            id: email.id,
-            gmail_id: email.gmail_id,
-            thread_id: "",
-            subject: email.subject,
-            sender: email.sender,
-            sender_name: email.sender_name,
-            snippet: email.snippet,
-            is_read: email.is_read,
-            is_starred: email.is_starred,
-            labels: email.labels,
-            received_at: email.received_at,
-            account_email: email.account_email
-        )
-        
-        if let index = metadata.firstIndex(where: { $0.id == email.id }) {
-            metadata[index] = newMetadata
-        } else {
-            metadata.append(newMetadata)
-            metadata.sort { $0.received_at > $1.received_at }
-        }
-        
-        await saveEmailMetadata(metadata, accountId: accountId)
-    }
     
     // MARK: - Email Detail Cache (Persistent)
     
@@ -250,7 +180,7 @@ actor EmailCache {
                 let data = try Data(contentsOf: fileURL)
                 return try decoder.decode(EmailDetail.self, from: data)
             } catch {
-                print("EmailCache loadEmailDetail error for \(emailId): \(error)")
+                logError("EmailCache loadEmailDetail error for \(emailId): \(error)", category: "Cache")
                 return nil
             }
         }.value
@@ -302,7 +232,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailDetail error for \(detail.id): \(error)")
+                logError("EmailCache saveEmailDetail error for \(detail.id): \(error)", category: "Cache")
             }
         }.value
     }
@@ -325,7 +255,7 @@ actor EmailCache {
                     let data = try encoder.encode(detail)
                     try data.write(to: fileURL, options: .atomic)
                 } catch {
-                    print("EmailCache saveEmailDetail batch error for \(detail.id): \(error)")
+                    logError("EmailCache saveEmailDetail batch error for \(detail.id): \(error)", category: "Cache")
                 }
             }
             
@@ -334,11 +264,11 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
         
-        print("📧 EmailCache: Saved \(details.count) emails to disk. Total cached: \(cachedEmailIndex.count)")
+        logInfo("EmailCache: Saved \(details.count) emails to disk. Total cached: \(cachedEmailIndex.count)", category: "Cache")
     }
     
     /// Delete email detail from persistent storage
@@ -360,7 +290,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
     }
@@ -387,7 +317,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
     }
@@ -488,7 +418,7 @@ actor EmailCache {
         
         if !emailsToDelete.isEmpty {
             await deleteEmailDetails(emailIds: emailsToDelete)
-            print("📧 EmailCache: Cleaned up \(emailsToDelete.count) old emails")
+            logInfo("EmailCache: Cleaned up \(emailsToDelete.count) old emails", category: "Cache")
         }
     }
     

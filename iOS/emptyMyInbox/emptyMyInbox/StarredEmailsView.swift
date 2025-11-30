@@ -111,7 +111,7 @@ struct StarredEmailsView: View {
                 let starredEmails = try await gmailService.syncStarredEmails(for: account, maxResults: 500)
                 allStarredEmails.append(contentsOf: starredEmails)
             } catch {
-                print("Error syncing starred emails for \(account.email): \(error)")
+                logError("Error syncing starred emails for \(account.email): \(error)", category: "Email")
             }
         }
         

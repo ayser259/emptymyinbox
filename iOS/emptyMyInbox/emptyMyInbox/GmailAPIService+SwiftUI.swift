@@ -42,7 +42,7 @@ struct GoogleSignInButton: View {
                 do {
                     try await action()
                 } catch {
-                    print("Sign in failed: \(error)")
+                    logError("Sign in failed: \(error)", category: "Auth")
                 }
                 isSigningIn = false
             }

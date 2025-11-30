@@ -328,7 +328,7 @@ struct AllEmailsView: View {
                 // Update local cache
                 await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
             } catch {
-                print("Error marking email \(emailId) as read: \(error)")
+                logError("Error marking email \(emailId) as read: \(error)", category: "Email")
             }
         }
         
@@ -367,7 +367,7 @@ struct AllEmailsView: View {
                 let accountId = getAccountId(for: email.account_email)
                 await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
             } catch {
-                print("Error marking email \(emailId) as unread: \(error)")
+                logError("Error marking email \(emailId) as unread: \(error)", category: "Email")
             }
         }
         
@@ -410,15 +410,15 @@ struct AllEmailsView: View {
         
         // Remove from EmailCache unread emails (for CatchUpView and other features)
         // Remove from default unread cache
-        var defaultUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: nil)
-        defaultUnreadEmails = defaultUnreadEmails.filter { !emailIds.contains($0.id) }
-        await EmailCache.shared.saveUnreadEmails(defaultUnreadEmails, accountId: nil)
+        var defaultMetadata = await EmailCache.shared.loadEmailMetadata(accountId: nil)
+        defaultMetadata = defaultMetadata.filter { !emailIds.contains($0.id) }
+        await EmailCache.shared.saveEmailMetadata(defaultMetadata, accountId: nil)
         
         // Remove from account-specific unread caches
         for account in accounts {
-            var accountUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.id)
-            accountUnreadEmails = accountUnreadEmails.filter { !emailIds.contains($0.id) }
-            await EmailCache.shared.saveUnreadEmails(accountUnreadEmails, accountId: account.id)
+            var accountMetadata = await EmailCache.shared.loadEmailMetadata(accountId: account.id)
+            accountMetadata = accountMetadata.filter { !emailIds.contains($0.id) }
+            await EmailCache.shared.saveEmailMetadata(accountMetadata, accountId: account.id)
         }
         
         // Delete full email details from persistent cache (batch delete for efficiency)
@@ -643,7 +643,7 @@ struct EmailRow: View {
         
         let gmailService = GmailAPIService.shared
         guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            print("Account not found for email")
+            logError("Account not found for email", category: "Email")
             return
         }
         
@@ -661,7 +661,7 @@ struct EmailRow: View {
                 onStarChanged?()
             }
         } catch {
-            print("Error toggling star: \(error)")
+            logError("Error toggling star: \(error)", category: "Email")
         }
     }
 }

@@ -430,7 +430,7 @@ struct CatchUpView: View {
             showReply: true,
             onReply: {
                 // Reply functionality - placeholder for now
-                print("Reply to email")
+                logDebug("Reply to email", category: "Email")
             },
             onStar: {
                 await handleStar()
