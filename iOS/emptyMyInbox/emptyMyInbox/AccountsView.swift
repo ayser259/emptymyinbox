@@ -492,6 +492,7 @@ struct AccountDetailView: View {
     }
     
     private func refreshUnreadCountForChip() async {
+        // loadUnreadEmails already filters out starred emails
         let count = await EmailCache.shared.loadUnreadEmails(accountId: account.id).count
         await MainActor.run {
             self.unreadCountForChip = count

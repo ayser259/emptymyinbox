@@ -14,6 +14,12 @@ struct EmailDetailView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var isProcessing = false
+    @State private var hasUnsubscribeAvailable = false
+    @State private var showUnsubscribeToast = false
+    @State private var unsubscribeToastMessage = ""
+    @State private var unsubscribeToastIsSuccess = false
+    @State private var unsubscribeManualURL: URL? = nil
+    @State private var showUnsubscribeWebView = false
     @ObservedObject private var debugSettings = DebugSettings.shared
     
     var body: some View {
@@ -21,6 +27,57 @@ struct EmailDetailView: View {
             ZStack {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
+                
+                // Unsubscribe toast overlay
+                if showUnsubscribeToast {
+                    VStack {
+                        Spacer()
+                        
+                        Button {
+                            if let url = unsubscribeManualURL {
+                                showUnsubscribeWebView = true
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: unsubscribeToastIsSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                        .foregroundColor(unsubscribeToastIsSuccess ? .green : .orange)
+                                    Text(unsubscribeToastIsSuccess ? "Unsubscribed" : "Unsubscribe Failed")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+                                    
+                                    if unsubscribeManualURL != nil {
+                                        Spacer()
+                                        Image(systemName: "arrow.up.right.square")
+                                            .foregroundColor(.white.opacity(0.7))
+                                            .font(.system(size: 12))
+                                    }
+                                }
+                                
+                                Text(unsubscribeToastMessage)
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(3)
+                                
+                                if unsubscribeManualURL != nil {
+                                    Text("Tap to complete unsubscribe")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .padding(.top, 2)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(Color.black.opacity(0.9))
+                            .cornerRadius(12)
+                            .frame(maxWidth: UIScreen.main.bounds.width - 40)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .padding(.bottom, 100)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(1000)
+                }
                 
                 if isLoading {
                     ProgressView()
@@ -97,119 +154,37 @@ struct EmailDetailView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         
                         // Bottom action bar with scrollable buttons
-                        VStack(spacing: 0) {
-                            Divider()
-                                .background(AppTheme.secondaryText.opacity(0.2))
-                            
-                            ScrollViewReader { proxy in
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 12) {
-                                        // Reply button (peeking from left, scrollable)
-                                        Button {
-                                            Task {
-                                                await handleReply()
-                                            }
-                                        } label: {
-                                            VStack(spacing: 6) {
-                                                Image(systemName: "arrowshape.turn.up.left")
-                                                    .font(.system(size: 20, weight: .medium))
-                                                    .foregroundColor(AppTheme.accent)
-                                                
-                                                Text("Reply")
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundColor(AppTheme.accent)
-                                            }
-                                            .frame(width: 80, height: 51.2)
-                                            .background(Color.black)
-                                            .cornerRadius(12)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                                            )
-                                        }
-                                        .id("reply")
-                                        .disabled(isProcessing)
-                                        
-                                        // Star button
-                                        Button {
-                                            Task {
-                                                await handleStar()
-                                            }
-                                        } label: {
-                                            VStack(spacing: 6) {
-                                                Image(systemName: email.is_starred ? "star.fill" : "star")
-                                                    .font(.system(size: 20, weight: .medium))
-                                                    .foregroundColor(AppTheme.accent)
-                                                
-                                                Text("Star")
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundColor(AppTheme.accent)
-                                            }
-                                            .frame(width: 80, height: 51.2)
-                                            .background(Color.black)
-                                            .cornerRadius(12)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(
-                                                        email.is_starred ? AppTheme.accent : Color.white.opacity(0.2),
-                                                        lineWidth: email.is_starred ? 2 : 1
-                                                    )
-                                            )
-                                        }
-                                        .id("star")
-                                        .disabled(isProcessing)
-                                        
-                                        // Keep Unread button
-                                        Button {
-                                            Task {
-                                                await handleKeepUnread()
-                                            }
-                                        } label: {
-                                            Text("Keep Unread")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundColor(AppTheme.primaryText)
-                                                .frame(width: 150, height: 51.2)
-                                                .background(AppTheme.secondaryBackground)
-                                                .cornerRadius(12)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 12)
-                                                        .stroke(AppTheme.accent, lineWidth: 2)
-                                                )
-                                        }
-                                        .id("keepUnread")
-                                        .disabled(isProcessing)
-                                        
-                                        // Mark as Read button
-                                        Button {
-                                            Task {
-                                                await handleMarkAsRead()
-                                            }
-                                        } label: {
-                                            Text("Mark as Read")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundColor(.black)
-                                                .frame(width: 150, height: 51.2)
-                                                .background(AppTheme.accent)
-                                                .cornerRadius(12)
-                                        }
-                                        .id("markAsRead")
-                                        .disabled(isProcessing)
-                                    }
-                                    .padding(.leading, AppTheme.spacingLarge - 60) // Start with Reply partially visible (peeking)
-                                    .padding(.trailing, AppTheme.spacingLarge)
-                                    .padding(.vertical, 12)
-                                }
-                                .onAppear {
-                                    // Scroll to show Star button initially, with Reply peeking from left
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        withAnimation {
-                                            proxy.scrollTo("star", anchor: .leading)
-                                        }
-                                    }
-                                }
+                        ScrollableEmailActionBar(
+                            email: email,
+                            isProcessing: isProcessing,
+                            showReply: true,
+                            onReply: {
+                                await handleReply()
+                            },
+                            onStar: {
+                                await handleStar()
+                            },
+                            onKeepUnread: {
+                                await handleKeepUnread()
+                            },
+                            onMarkAsRead: {
+                                await handleMarkAsRead()
+                            },
+                            onUnsubscribe: {
+                                await handleUnsubscribe()
+                            },
+                            hasUnsubscribe: hasUnsubscribeAvailable
+                        )
+                        .onChange(of: self.email?.id) { _, _ in
+                            // Check unsubscribe availability when email changes
+                            Task {
+                                await checkUnsubscribeAvailability()
                             }
                         }
-                        .background(AppTheme.primaryBackground)
+                        .task {
+                            // Check on initial load
+                            await checkUnsubscribeAvailability()
+                        }
                     }
                     
                     // Debug copy button overlay
@@ -251,6 +226,11 @@ struct EmailDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .primaryBackground()
+        .sheet(isPresented: $showUnsubscribeWebView) {
+            if let url = unsubscribeManualURL {
+                UnsubscribeWebView(url: url)
+            }
+        }
         .task {
             await loadEmail()
         }
@@ -420,6 +400,105 @@ struct EmailDetailView: View {
             }
         } catch {
             print("Error marking email as read: \(error)")
+        }
+    }
+    
+    private func checkUnsubscribeAvailability() async {
+        guard let email = email else {
+            await MainActor.run {
+                hasUnsubscribeAvailable = false
+            }
+            return
+        }
+        
+        let unsubscribeService = UnsubscribeService.shared
+        if let _ = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
+            await MainActor.run {
+                hasUnsubscribeAvailable = true
+            }
+        } else {
+            await MainActor.run {
+                hasUnsubscribeAvailable = false
+            }
+        }
+    }
+    
+    private func handleUnsubscribe() async {
+        guard let email = email, !isProcessing else { return }
+        
+        isProcessing = true
+        defer { isProcessing = false }
+        
+        // Get unsubscribe info
+        let unsubscribeService = UnsubscribeService.shared
+        if let method = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
+            let result = await unsubscribeService.executeUnsubscribe(
+                method: method,
+                userEmail: email.account_email
+            )
+            
+            // Log detailed information
+            let logMessage = """
+            Unsubscribe Result:
+            - Success: \(result.success)
+            - Method: \(result.verificationInfo)
+            - Details: \(result.details ?? "N/A")
+            """
+            
+            if result.success {
+                logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
+                
+                // If manual action is required, open web view immediately
+                if result.requiresManualAction, let url = result.manualActionURL {
+                    await MainActor.run {
+                        unsubscribeManualURL = url
+                        showUnsubscribeWebView = true
+                    }
+                } else {
+                    // Show success toast with verification info
+                    await MainActor.run {
+                        unsubscribeToastMessage = result.verificationInfo
+                        unsubscribeToastIsSuccess = true
+                        unsubscribeManualURL = result.manualActionURL
+                        showUnsubscribeToast = true
+                    }
+                    
+                    // Hide toast after 4 seconds
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    await MainActor.run {
+                        withAnimation {
+                            showUnsubscribeToast = false
+                        }
+                    }
+                }
+            } else {
+                logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
+                
+                // If manual action URL is available, open it immediately
+                if let url = result.manualActionURL {
+                    await MainActor.run {
+                        unsubscribeManualURL = url
+                        showUnsubscribeWebView = true
+                    }
+                } else {
+                    // Show error toast
+                    await MainActor.run {
+                        unsubscribeToastMessage = result.verificationInfo
+                        unsubscribeToastIsSuccess = false
+                        showUnsubscribeToast = true
+                    }
+                    
+                    // Hide toast after 3 seconds
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    await MainActor.run {
+                        withAnimation {
+                            showUnsubscribeToast = false
+                        }
+                    }
+                }
+            }
+        } else {
+            logWarning("⚠️ No unsubscribe method found for this email", category: "Unsubscribe")
         }
     }
     
