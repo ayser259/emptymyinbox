@@ -354,12 +354,6 @@ struct DashboardView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 
-                ActionButton(
-                    title: "Drafts",
-                    count: draftsCount,
-                    icon: "doc.text"
-                )
-                
                 if !shouldPrioritizeRefreshButton {
                     refreshButton
                 }
@@ -545,11 +539,6 @@ struct DashboardView: View {
     
     private var unreadCount: Int {
         emails.filter { !$0.is_read && !$0.is_starred }.count
-    }
-    
-    private var draftsCount: Int {
-        // TODO: Implement drafts count
-        0
     }
     
     // MARK: - Sender Grouping
