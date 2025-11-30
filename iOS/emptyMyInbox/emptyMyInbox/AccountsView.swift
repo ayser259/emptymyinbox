@@ -492,10 +492,11 @@ struct AccountDetailView: View {
     }
     
     private func refreshUnreadCountForChip() async {
-        // loadUnreadEmails already filters out starred emails
-        let count = await EmailCache.shared.loadUnreadEmails(accountId: account.id).count
+        // Load metadata and filter out starred emails (catch up should only show unread, non-starred emails)
+        let metadata = await EmailCache.shared.loadEmailMetadata(accountId: account.id)
+        let unreadNonStarred = metadata.filter { !$0.is_starred }
         await MainActor.run {
-            self.unreadCountForChip = count
+            self.unreadCountForChip = unreadNonStarred.count
         }
     }
     

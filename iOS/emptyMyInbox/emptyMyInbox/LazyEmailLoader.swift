@@ -348,11 +348,11 @@ class LazyEmailLoader: ObservableObject {
     
     /// Save metadata to cache and notify dashboard to update
     private func saveToCacheAndNotify(_ metadata: [EmailMetadata]) async {
-        // Convert to EmailListItem for cache
-        let emailItems = metadata.map { $0.toEmailListItem() }
+        // Save metadata directly to cache
+        await EmailCache.shared.saveEmailMetadata(metadata, accountId: accountId)
         
-        // Save to cache
-        await EmailCache.shared.saveUnreadEmails(emailItems, accountId: accountId)
+        // Convert to EmailListItem for dashboard snapshot
+        let emailItems = metadata.map { $0.toEmailListItem() }
         
         // Also update the dashboard cache
         if let existingSnapshot = await DashboardCache.shared.loadSnapshot() {

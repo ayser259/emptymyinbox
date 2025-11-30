@@ -731,8 +731,10 @@ class GmailAPIService {
         )
         
         // Step 2: Load local cache to see what we already have
-        let cachedEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.numericId)
-        let cachedGmailIds = Set(cachedEmails.map { $0.gmail_id })
+        let cachedMetadata = await EmailCache.shared.loadEmailMetadata(accountId: account.numericId)
+        // Filter out starred emails (catch up should only show unread, non-starred emails)
+        let cachedMetadataFiltered = cachedMetadata.filter { !$0.is_starred }
+        let cachedGmailIds = Set(cachedMetadataFiltered.map { $0.gmail_id })
         
         // Step 3: Identify new emails (not in cache)
         // These are the ONLY ones we need to download
@@ -743,9 +745,9 @@ class GmailAPIService {
         // Step 4: Add cached emails that are still in the server list
         // (This effectively removes emails that were archived/read on another device)
         let serverIdSet = Set(messageRefs.map { $0.id })
-        for cachedEmail in cachedEmails {
-            if serverIdSet.contains(cachedEmail.gmail_id) {
-                emailItems.append(cachedEmail)
+        for cachedMetadataItem in cachedMetadataFiltered {
+            if serverIdSet.contains(cachedMetadataItem.gmail_id) {
+                emailItems.append(cachedMetadataItem.toEmailListItem())
             }
         }
         

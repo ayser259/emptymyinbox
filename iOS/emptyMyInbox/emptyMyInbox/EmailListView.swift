@@ -410,15 +410,15 @@ struct AllEmailsView: View {
         
         // Remove from EmailCache unread emails (for CatchUpView and other features)
         // Remove from default unread cache
-        var defaultUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: nil)
-        defaultUnreadEmails = defaultUnreadEmails.filter { !emailIds.contains($0.id) }
-        await EmailCache.shared.saveUnreadEmails(defaultUnreadEmails, accountId: nil)
+        var defaultMetadata = await EmailCache.shared.loadEmailMetadata(accountId: nil)
+        defaultMetadata = defaultMetadata.filter { !emailIds.contains($0.id) }
+        await EmailCache.shared.saveEmailMetadata(defaultMetadata, accountId: nil)
         
         // Remove from account-specific unread caches
         for account in accounts {
-            var accountUnreadEmails = await EmailCache.shared.loadUnreadEmails(accountId: account.id)
-            accountUnreadEmails = accountUnreadEmails.filter { !emailIds.contains($0.id) }
-            await EmailCache.shared.saveUnreadEmails(accountUnreadEmails, accountId: account.id)
+            var accountMetadata = await EmailCache.shared.loadEmailMetadata(accountId: account.id)
+            accountMetadata = accountMetadata.filter { !emailIds.contains($0.id) }
+            await EmailCache.shared.saveEmailMetadata(accountMetadata, accountId: account.id)
         }
         
         // Delete full email details from persistent cache (batch delete for efficiency)
