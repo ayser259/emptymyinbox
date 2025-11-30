@@ -487,7 +487,7 @@ struct DashboardView: View {
     }
     
     private func getUnreadCount(for account: EmailAccount) -> Int {
-        allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read }.count
+        allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read && !$0.is_starred }.count
     }
     
     private func getStarredCount(for account: EmailAccount) -> Int {
@@ -505,7 +505,7 @@ struct DashboardView: View {
     }
     
     private func getUnreadSenderCount(for account: EmailAccount) -> Int {
-        let unreadAccountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read }
+        let unreadAccountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read && !$0.is_starred }
         let uniqueSenders = Set(unreadAccountEmails.map { $0.sender })
         return uniqueSenders.count
     }
@@ -544,7 +544,7 @@ struct DashboardView: View {
     }
     
     private var unreadCount: Int {
-        emails.filter { !$0.is_read }.count
+        emails.filter { !$0.is_read && !$0.is_starred }.count
     }
     
     private var draftsCount: Int {
@@ -564,7 +564,7 @@ struct DashboardView: View {
     
     // Computed property for unread senders count
     private var unreadSendersCount: Int {
-        let unreadEmails = allEmails.filter { !$0.is_read }
+        let unreadEmails = allEmails.filter { !$0.is_read && !$0.is_starred }
         let grouped = Dictionary(grouping: unreadEmails) { email in
             email.sender
         }
@@ -827,19 +827,30 @@ struct CatchUpActionButton: View {
     
     var body: some View {
         VStack(spacing: AppTheme.spacingSmall) {
-            // Custom Catchup image asset
-            Image("Catchup")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 28, height: 28)
+            // Use Caughtup image when count is 0, otherwise use Catchup
+            if count == 0 {
+                Image("Caughtup")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+            } else {
+                Image("Catchup")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+            }
             
-            Text(title)
+            // Show "Inbox 0!" when count is 0, otherwise show title
+            Text(count == 0 ? "Inbox 0!" : title)
                 .font(.system(size: 14, weight: .semibold))
                 .primaryText()
             
-            Text("\(count)")
-                .font(AppTheme.caption)
-                .secondaryText()
+            // Show count only if not zero
+            if count > 0 {
+                Text("\(count)")
+                    .font(AppTheme.caption)
+                    .secondaryText()
+            }
         }
         .frame(width: 100, height: 100)
         .background(AppTheme.secondaryBackground)

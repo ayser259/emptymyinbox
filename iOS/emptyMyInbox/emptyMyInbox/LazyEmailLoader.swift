@@ -159,7 +159,7 @@ class LazyEmailLoader: ObservableObject {
                 print("📧 LazyEmailLoader: Getting message IDs for \(account.email)")
                 let (messageRefs, _) = try await gmailService.listMessages(
                     for: account,
-                    query: "is:unread in:inbox",
+                    query: "is:unread in:inbox -is:starred",
                     maxResults: 500,
                     pageToken: nil,
                     fields: "messages(id,threadId),nextPageToken"
@@ -197,6 +197,12 @@ class LazyEmailLoader: ObservableObject {
                 )
                 
                 if let firstEmail = details.first {
+                    // Skip if email is starred (safety check)
+                    guard !firstEmail.is_starred else {
+                        print("📧 LazyEmailLoader: Skipping starred first email")
+                        return
+                    }
+                    
                     await MainActor.run {
                         // Create temporary metadata for this email
                         let tempMetadata = EmailMetadata(
@@ -294,8 +300,10 @@ class LazyEmailLoader: ObservableObject {
                     let messages = try await gmailService.batchGetMessagesMetadata(for: account, messageIds: batch)
                     
                     for gmailMessage in messages {
-                        // Only include emails that actually have UNREAD label
-                        guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
+                        // Only include emails that actually have UNREAD label and are not starred
+                        guard gmailMessage.labelIds.contains("UNREAD") && 
+                              gmailMessage.labelIds.contains("INBOX") &&
+                              !gmailMessage.labelIds.contains("STARRED") else {
                             continue
                         }
                         

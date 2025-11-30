@@ -46,9 +46,17 @@ struct CatchUpView: View {
     @State private var isAnimating = false
     @State private var isProcessing = false
     
+    // Unsubscribe availability
+    @State private var hasUnsubscribeAvailable = false
+    
     // Toast state
     @State private var showLoadedToast = false
     @State private var loadedEmailCount = 0
+    @State private var showUnsubscribeToast = false
+    @State private var unsubscribeToastMessage = ""
+    @State private var unsubscribeToastIsSuccess = false
+    @State private var unsubscribeManualURL: URL? = nil
+    @State private var showUnsubscribeWebView = false
     
     // Session tracking
     @State private var sessionStartTime: Date?
@@ -86,10 +94,16 @@ struct CatchUpView: View {
             
             // Toast overlay
             toastOverlay
+            unsubscribeToastOverlay
         }
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
+        .sheet(isPresented: $showUnsubscribeWebView) {
+            if let url = unsubscribeManualURL {
+                UnsubscribeWebView(url: url)
+            }
+        }
         .task {
             await onAppear()
         }
@@ -118,6 +132,59 @@ struct CatchUpView: View {
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .zIndex(100)
+        }
+    }
+    
+    @ViewBuilder
+    private var unsubscribeToastOverlay: some View {
+        if showUnsubscribeToast {
+            VStack {
+                Spacer()
+                
+                Button {
+                    if let url = unsubscribeManualURL {
+                        showUnsubscribeWebView = true
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: unsubscribeToastIsSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundColor(unsubscribeToastIsSuccess ? .green : .orange)
+                            Text(unsubscribeToastIsSuccess ? "Unsubscribed" : "Unsubscribe Failed")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
+                            
+                            if unsubscribeManualURL != nil {
+                                Spacer()
+                                Image(systemName: "arrow.up.right.square")
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .font(.system(size: 12))
+                            }
+                        }
+                        
+                        Text(unsubscribeToastMessage)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.white.opacity(0.9))
+                            .lineLimit(3)
+                        
+                        if unsubscribeManualURL != nil {
+                            Text("Tap to complete unsubscribe")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                                .padding(.top, 2)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.9))
+                    .cornerRadius(12)
+                    .frame(maxWidth: UIScreen.main.bounds.width - 40)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.bottom, 120)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(101)
         }
     }
     
@@ -357,96 +424,62 @@ struct CatchUpView: View {
     // MARK: - Action Buttons
     
     private var actionButtonsSection: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .background(AppTheme.secondaryText.opacity(0.2))
-            
-            GeometryReader { buttonGeometry in
-                let availableWidth = buttonGeometry.size.width - (AppTheme.spacingLarge * 2)
-                let buttonHeight: CGFloat = 51.2
-                
-                HStack(spacing: 12) {
-                    starButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
-                    keepUnreadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
-                    markAsReadButton(availableWidth: availableWidth, buttonHeight: buttonHeight)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, AppTheme.spacingLarge)
-                .padding(.top, 12)
-                .padding(.bottom, 16)
+        ScrollableEmailActionBar(
+            email: emailLoader.currentEmail,
+            isProcessing: isButtonDisabled,
+            showReply: true,
+            onReply: {
+                // Reply functionality - placeholder for now
+                print("Reply to email")
+            },
+            onStar: {
+                await handleStar()
+            },
+            onKeepUnread: {
+                await handleKeepUnread()
+            },
+            onMarkAsRead: {
+                await handleMarkAsRead()
+            },
+            onUnsubscribe: {
+                await handleUnsubscribe()
+            },
+            hasUnsubscribe: hasUnsubscribeAvailable
+        )
+        .onChange(of: emailLoader.currentEmail?.id) { _, newEmailId in
+            // Check unsubscribe availability when email changes
+            Task {
+                await checkUnsubscribeAvailability()
             }
-            .frame(height: 79)
         }
-        .background(AppTheme.primaryBackground)
+        .task {
+            // Check on initial load
+            await checkUnsubscribeAvailability()
+        }
+    }
+    
+    private func checkUnsubscribeAvailability() async {
+        guard let email = emailLoader.currentEmail else {
+            await MainActor.run {
+                hasUnsubscribeAvailable = false
+            }
+            return
+        }
+        
+        let unsubscribeService = UnsubscribeService.shared
+        if let _ = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
+            await MainActor.run {
+                hasUnsubscribeAvailable = true
+            }
+        } else {
+            await MainActor.run {
+                hasUnsubscribeAvailable = false
+            }
+        }
     }
     
     private var isButtonDisabled: Bool {
         isProcessing || !emailLoader.isCurrentLoaded || isAnimating
-    }
-    
-    private func starButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
-        Button {
-            Task { await handleStar() }
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: emailLoader.currentEmail?.is_starred == true ? "star.fill" : "star")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(AppTheme.accent)
-                
-                Text("Star")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(AppTheme.accent)
-            }
-            .frame(width: availableWidth * 0.20)
-            .frame(height: buttonHeight)
-            .background(Color.black)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        emailLoader.currentEmail?.is_starred == true ? AppTheme.accent : Color.white.opacity(0.2),
-                        lineWidth: emailLoader.currentEmail?.is_starred == true ? 2 : 1
-                    )
-            )
-        }
-        .disabled(isButtonDisabled)
-        .opacity(isButtonDisabled ? 0.5 : 1.0)
-    }
-    
-    private func keepUnreadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
-        Button {
-            Task { await handleKeepUnread() }
-        } label: {
-            Text("Keep Unread")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(AppTheme.primaryText)
-                .frame(width: availableWidth * 0.40)
-                .frame(height: buttonHeight)
-                .background(AppTheme.secondaryBackground)
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(AppTheme.accent, lineWidth: 2)
-                )
-        }
-        .disabled(isButtonDisabled)
-        .opacity(isButtonDisabled ? 0.5 : 1.0)
-    }
-    
-    private func markAsReadButton(availableWidth: CGFloat, buttonHeight: CGFloat) -> some View {
-        Button {
-            Task { await handleMarkAsRead() }
-        } label: {
-            Text("Mark as Read")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.black)
-                .frame(width: availableWidth * 0.40)
-                .frame(height: buttonHeight)
-                .background(AppTheme.accent)
-                .cornerRadius(12)
-        }
-        .disabled(isButtonDisabled)
-        .opacity(isButtonDisabled ? 0.5 : 1.0)
     }
     
     // MARK: - Action Handlers
@@ -560,6 +593,138 @@ struct CatchUpView: View {
         
         // Update dashboard data manager
         await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+    }
+    
+    private func handleUnsubscribe() async {
+        guard let email = emailLoader.currentEmail, !isAnimating else { return }
+        
+        isProcessing = true
+        isAnimating = true
+        
+        // Haptic feedback
+        impactMedium.impactOccurred()
+        
+        // Get unsubscribe info
+        let unsubscribeService = UnsubscribeService.shared
+        if let method = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
+            let result = await unsubscribeService.executeUnsubscribe(
+                method: method,
+                userEmail: email.account_email
+            )
+            
+            // Log detailed information
+            let logMessage = """
+            Unsubscribe Result:
+            - Success: \(result.success)
+            - Method: \(result.verificationInfo)
+            - Details: \(result.details ?? "N/A")
+            """
+            
+            if result.success {
+                logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
+                notificationGenerator.notificationOccurred(.success)
+                
+                // Extract domain from sender email or unsubscribe URL for tracking
+                var unsubscribeDomain: String? = nil
+                if let method = result.method {
+                    switch method {
+                    case .http(let url):
+                        unsubscribeDomain = url.host
+                    case .mailto(let email):
+                        // Extract domain from email address
+                        if let atIndex = email.firstIndex(of: "@") {
+                            unsubscribeDomain = String(email[email.index(after: atIndex)...])
+                        }
+                    }
+                }
+                // Fallback to sender email domain if unsubscribe domain not available
+                if unsubscribeDomain == nil {
+                    if let atIndex = email.sender.firstIndex(of: "@") {
+                        unsubscribeDomain = String(email.sender[email.sender.index(after: atIndex)...])
+                    }
+                }
+                
+                // Track unique unsubscribe domain
+                if let domain = unsubscribeDomain {
+                    sessionStats.uniqueUnsubscribeDomains.insert(domain)
+                }
+                
+                // If manual action is required, open web view immediately
+                if result.requiresManualAction, let url = result.manualActionURL {
+                    await MainActor.run {
+                        unsubscribeManualURL = url
+                        showUnsubscribeWebView = true
+                    }
+                    
+                    // Still count as reviewed even if manual action is needed
+                    // The user has initiated the unsubscribe process
+                    sessionStats.reviewed += 1
+                    
+                    // Don't dismiss the email yet - let user complete unsubscribe first
+                    // They can dismiss manually after completing
+                } else {
+                    // Show success toast with verification info
+                    await MainActor.run {
+                        unsubscribeToastMessage = result.verificationInfo
+                        unsubscribeToastIsSuccess = true
+                        unsubscribeManualURL = result.manualActionURL
+                        showUnsubscribeToast = true
+                    }
+                    
+                    // Perform dismissal animation (card goes right, similar to mark as read)
+                    await performDismissalAnimation(cardId: email.id, direction: .right)
+                    
+                    // Update stats
+                    sessionStats.reviewed += 1
+                    
+                    // Remove from deck AFTER animation
+                    emailLoader.removeCurrentEmail()
+                    
+                    // Reset animation state
+                    resetAnimationState()
+                    
+                    // Hide toast after 4 seconds
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    await MainActor.run {
+                        withAnimation {
+                            showUnsubscribeToast = false
+                        }
+                    }
+                }
+            } else {
+                logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
+                notificationGenerator.notificationOccurred(.error)
+                
+                // If manual action URL is available, open it immediately
+                if let url = result.manualActionURL {
+                    await MainActor.run {
+                        unsubscribeManualURL = url
+                        showUnsubscribeWebView = true
+                    }
+                } else {
+                    // Show error toast
+                    await MainActor.run {
+                        unsubscribeToastMessage = result.verificationInfo
+                        unsubscribeToastIsSuccess = false
+                        showUnsubscribeToast = true
+                    }
+                    
+                    // Hide toast after 3 seconds
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    await MainActor.run {
+                        withAnimation {
+                            showUnsubscribeToast = false
+                        }
+                    }
+                }
+            }
+        } else {
+            logWarning("⚠️ No unsubscribe method found for this email", category: "Unsubscribe")
+            notificationGenerator.notificationOccurred(.warning)
+        }
+        
+        isAnimating = false
+        isProcessing = false
     }
     
     // MARK: - Animation Helpers

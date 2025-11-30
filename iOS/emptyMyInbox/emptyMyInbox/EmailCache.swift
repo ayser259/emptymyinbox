@@ -157,7 +157,10 @@ actor EmailCache {
     /// Load unread emails - legacy compatibility
     func loadUnreadEmails(accountId: Int? = nil) async -> [EmailListItem] {
         let metadata = await loadEmailMetadata(accountId: accountId)
-        return metadata.map { $0.toEmailListItem() }
+        // Filter out starred emails - catch up should only show unread, non-starred emails
+        return metadata
+            .map { $0.toEmailListItem() }
+            .filter { !$0.is_starred }
     }
     
     /// Save unread emails - legacy compatibility
