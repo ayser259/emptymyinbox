@@ -14,6 +14,7 @@ struct CatchUpSessionStats {
     var markedAsRead: Int = 0
     var keptUnread: Int = 0
     var starred: Int = 0
+    var uniqueUnsubscribeDomains: Set<String> = []
 }
 
 struct CelebrationView: View {
@@ -195,6 +196,11 @@ struct CelebrationView: View {
                                 }
                                 if stats.starred > 0 {
                                     Text("\(stats.starred) starred")
+                                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                                        .foregroundColor(AppTheme.secondaryText)
+                                }
+                                if !stats.uniqueUnsubscribeDomains.isEmpty {
+                                    Text("\(stats.uniqueUnsubscribeDomains.count) unique domain\(stats.uniqueUnsubscribeDomains.count == 1 ? "" : "s") unsubscribed")
                                         .font(.system(size: 15, weight: .medium, design: .rounded))
                                         .foregroundColor(AppTheme.secondaryText)
                                 }
