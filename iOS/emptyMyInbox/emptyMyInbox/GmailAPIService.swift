@@ -227,7 +227,7 @@ class GmailAPIService {
     
     // MARK: - Token Management
     
-    private func getValidAccessToken(for account: GmailAccount) async throws -> String {
+    func getValidAccessToken(for account: GmailAccount) async throws -> String {
         // Check if token needs refresh
         if let expiry = account.tokenExpiry, expiry > Date() {
             // Token is still valid
