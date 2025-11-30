@@ -11,7 +11,6 @@ import GoogleSignIn
 @main
 struct emptyMyInboxApp: App {
     @StateObject private var authManager = AuthManager()
-    @State private var handleURL: URL?
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
@@ -49,7 +48,6 @@ struct emptyMyInboxApp: App {
                 }
             }
             .onOpenURL { url in
-                handleURL = url
                 handleIncomingURL(url)
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in

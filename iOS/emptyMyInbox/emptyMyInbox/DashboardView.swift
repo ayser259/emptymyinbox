@@ -20,11 +20,9 @@ struct DashboardView: View {
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
     @State private var labels: [Label] = []
-    @State private var isLoadingInitialCache = true
     @State private var isLoading = false
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
-    @State private var selectedLabel: Label?
     @StateObject private var progressTracker = RefreshProgressTracker()
     @State private var showProgressModal = false
     @State private var accountHealthStatuses: [String: AccountHealthStatus] = [:] // email -> status
