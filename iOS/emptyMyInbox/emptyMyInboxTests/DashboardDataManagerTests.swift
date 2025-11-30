@@ -397,4 +397,190 @@ struct DashboardDataManagerTests {
         #expect(snapshot?.starredEmails.count == 1) // Should still have one
         #expect(snapshot?.starredEmails.first?.is_starred == true)
     }
+    
+    // MARK: - Error Handling Tests
+    
+    @Test("Mark email as read handles missing snapshot gracefully")
+    func testMarkEmailAsReadHandlesMissingSnapshot() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        // Clear cache to ensure no snapshot
+        await cache.clear()
+        
+        // Try to mark non-existent email - should not crash
+        await manager.markEmailAsRead(emailId: 999)
+        
+        // Verify snapshot is still nil
+        let snapshot = await manager.loadCachedSnapshot()
+        #expect(snapshot == nil)
+    }
+    
+    @Test("Mark email as unread handles missing snapshot gracefully")
+    func testMarkEmailAsUnreadHandlesMissingSnapshot() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        // Clear cache
+        await cache.clear()
+        
+        // Try to mark non-existent email - should not crash
+        await manager.markEmailAsUnread(emailId: 999, accountId: nil)
+        
+        // Verify snapshot is still nil
+        let snapshot = await manager.loadCachedSnapshot()
+        #expect(snapshot == nil)
+    }
+    
+    @Test("Update starred status handles missing snapshot gracefully")
+    func testUpdateStarredStatusHandlesMissingSnapshot() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        // Clear cache
+        await cache.clear()
+        
+        // Try to update non-existent email - should not crash
+        await manager.updateEmailStarred(emailId: 999, isStarred: true)
+        
+        // Verify snapshot is still nil
+        let snapshot = await manager.loadCachedSnapshot()
+        #expect(snapshot == nil)
+    }
+    
+    @Test("Mark email as read handles email not in snapshot")
+    func testMarkEmailAsReadHandlesEmailNotInSnapshot() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        // Clear and create snapshot with one email
+        await cache.clear()
+        
+        let email1 = createTestEmailListItem(id: 1)
+        await cache.saveSnapshot(
+            accounts: [createTestEmailAccount(id: 1)],
+            emails: [email1],
+            allEmails: [email1],
+            starredEmails: [],
+            labels: []
+        )
+        
+        // Try to mark different email as read
+        await manager.markEmailAsRead(emailId: 999)
+        
+        // Verify original email is still there
+        let snapshot = await manager.loadCachedSnapshot()
+        #expect(snapshot != nil)
+        #expect(snapshot?.emails.count == 1)
+        #expect(snapshot?.emails.first?.id == 1)
+    }
+    
+    @Test("Update starred status handles email not in allEmails")
+    func testUpdateStarredStatusHandlesEmailNotInAllEmails() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        // Clear and create snapshot
+        await cache.clear()
+        
+        let email1 = createTestEmailListItem(id: 1)
+        await cache.saveSnapshot(
+            accounts: [createTestEmailAccount(id: 1)],
+            emails: [email1],
+            allEmails: [email1],
+            starredEmails: [],
+            labels: []
+        )
+        
+        // Try to star non-existent email
+        await manager.updateEmailStarred(emailId: 999, isStarred: true)
+        
+        // Verify original state unchanged
+        let snapshot = await manager.loadCachedSnapshot()
+        #expect(snapshot != nil)
+        #expect(snapshot?.starredEmails.isEmpty)
+    }
+    
+    @Test("Snapshot handles empty accounts array")
+    func testSnapshotHandlesEmptyAccounts() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        await cache.clear()
+        
+        let email = createTestEmailListItem(id: 1)
+        await cache.saveSnapshot(
+            accounts: [], // Empty accounts
+            emails: [email],
+            allEmails: [email],
+            starredEmails: [],
+            labels: []
+        )
+        
+        let snapshot = await manager.loadCachedSnapshot()
+        
+        #expect(snapshot != nil)
+        #expect(snapshot?.accounts.isEmpty)
+        #expect(snapshot?.emails.count == 1)
+    }
+    
+    @Test("Snapshot handles empty emails array")
+    func testSnapshotHandlesEmptyEmails() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        await cache.clear()
+        
+        await cache.saveSnapshot(
+            accounts: [createTestEmailAccount(id: 1)],
+            emails: [], // Empty emails
+            allEmails: [],
+            starredEmails: [],
+            labels: []
+        )
+        
+        let snapshot = await manager.loadCachedSnapshot()
+        
+        #expect(snapshot != nil)
+        #expect(snapshot?.emails.isEmpty)
+        #expect(snapshot?.allEmails.isEmpty)
+    }
+    
+    @Test("Multiple status updates maintain consistency")
+    func testMultipleStatusUpdatesMaintainConsistency() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        await cache.clear()
+        
+        let email = createTestEmailListItem(id: 1, isRead: false, isStarred: false)
+        await cache.saveSnapshot(
+            accounts: [createTestEmailAccount(id: 1)],
+            emails: [email],
+            allEmails: [email],
+            starredEmails: [],
+            labels: []
+        )
+        
+        // Mark as read
+        await manager.markEmailAsRead(emailId: 1)
+        
+        // Star it
+        await manager.updateEmailStarred(emailId: 1, isStarred: true)
+        
+        // Unstar it
+        await manager.updateEmailStarred(emailId: 1, isStarred: false)
+        
+        // Mark as unread
+        await manager.markEmailAsUnread(emailId: 1, accountId: nil)
+        
+        // Verify final state
+        let snapshot = await manager.loadCachedSnapshot()
+        
+        #expect(snapshot != nil)
+        #expect(snapshot?.emails.count == 1) // Should be back in unread list
+        #expect(snapshot?.emails.first?.is_read == false)
+        #expect(snapshot?.emails.first?.is_starred == false)
+        #expect(snapshot?.starredEmails.isEmpty)
+    }
 }
