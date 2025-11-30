@@ -86,7 +86,7 @@ struct GmailStyleEmailRow: View {
         
         let gmailService = GmailAPIService.shared
         guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            print("Account not found for email")
+            logError("Account not found for email", category: "Email")
             return
         }
         
@@ -103,7 +103,7 @@ struct GmailStyleEmailRow: View {
                 self.isStarred = !self.isStarred
             }
         } catch {
-            print("Error toggling star: \(error)")
+            logError("Error toggling star: \(error)", category: "Email")
         }
     }
     

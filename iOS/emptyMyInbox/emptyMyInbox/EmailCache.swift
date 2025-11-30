@@ -58,7 +58,7 @@ actor EmailCache {
             return
         }
         cachedEmailIndex = Set(ids)
-        print("📧 EmailCache: Loaded index with \(cachedEmailIndex.count) cached emails")
+        logInfo("EmailCache: Loaded index with \(cachedEmailIndex.count) cached emails", category: "Cache")
     }
     
     private func saveEmailIndex() {
@@ -66,7 +66,7 @@ actor EmailCache {
             let data = try JSONEncoder().encode(Array(cachedEmailIndex))
             try data.write(to: emailIndexURL, options: .atomic)
         } catch {
-            print("EmailCache saveEmailIndex error: \(error)")
+            logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
         }
     }
     
@@ -133,7 +133,7 @@ actor EmailCache {
                 let data = try Data(contentsOf: url)
                 return try JSONDecoder().decode([EmailMetadata].self, from: data)
             } catch {
-                print("EmailCache loadEmailMetadata error: \(error)")
+                logError("EmailCache loadEmailMetadata error: \(error)", category: "Cache")
                 return []
             }
         }.value
@@ -147,7 +147,7 @@ actor EmailCache {
                 let data = try JSONEncoder().encode(metadata)
                 try data.write(to: url, options: .atomic)
             } catch {
-                print("EmailCache saveEmailMetadata error: \(error)")
+                logError("EmailCache saveEmailMetadata error: \(error)", category: "Cache")
             }
         }.value
     }
@@ -250,7 +250,7 @@ actor EmailCache {
                 let data = try Data(contentsOf: fileURL)
                 return try decoder.decode(EmailDetail.self, from: data)
             } catch {
-                print("EmailCache loadEmailDetail error for \(emailId): \(error)")
+                logError("EmailCache loadEmailDetail error for \(emailId): \(error)", category: "Cache")
                 return nil
             }
         }.value
@@ -302,7 +302,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailDetail error for \(detail.id): \(error)")
+                logError("EmailCache saveEmailDetail error for \(detail.id): \(error)", category: "Cache")
             }
         }.value
     }
@@ -325,7 +325,7 @@ actor EmailCache {
                     let data = try encoder.encode(detail)
                     try data.write(to: fileURL, options: .atomic)
                 } catch {
-                    print("EmailCache saveEmailDetail batch error for \(detail.id): \(error)")
+                    logError("EmailCache saveEmailDetail batch error for \(detail.id): \(error)", category: "Cache")
                 }
             }
             
@@ -334,11 +334,11 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
         
-        print("📧 EmailCache: Saved \(details.count) emails to disk. Total cached: \(cachedEmailIndex.count)")
+        logInfo("EmailCache: Saved \(details.count) emails to disk. Total cached: \(cachedEmailIndex.count)", category: "Cache")
     }
     
     /// Delete email detail from persistent storage
@@ -360,7 +360,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
     }
@@ -387,7 +387,7 @@ actor EmailCache {
                 let indexData = try encoder.encode(Array(cachedEmailIndex))
                 try indexData.write(to: emailIndexURL, options: .atomic)
             } catch {
-                print("EmailCache saveEmailIndex error: \(error)")
+                logError("EmailCache saveEmailIndex error: \(error)", category: "Cache")
             }
         }.value
     }
@@ -488,7 +488,7 @@ actor EmailCache {
         
         if !emailsToDelete.isEmpty {
             await deleteEmailDetails(emailIds: emailsToDelete)
-            print("📧 EmailCache: Cleaned up \(emailsToDelete.count) old emails")
+            logInfo("EmailCache: Cleaned up \(emailsToDelete.count) old emails", category: "Cache")
         }
     }
     

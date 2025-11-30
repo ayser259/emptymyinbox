@@ -328,7 +328,7 @@ struct AllEmailsView: View {
                 // Update local cache
                 await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
             } catch {
-                print("Error marking email \(emailId) as read: \(error)")
+                logError("Error marking email \(emailId) as read: \(error)", category: "Email")
             }
         }
         
@@ -367,7 +367,7 @@ struct AllEmailsView: View {
                 let accountId = getAccountId(for: email.account_email)
                 await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
             } catch {
-                print("Error marking email \(emailId) as unread: \(error)")
+                logError("Error marking email \(emailId) as unread: \(error)", category: "Email")
             }
         }
         
@@ -643,7 +643,7 @@ struct EmailRow: View {
         
         let gmailService = GmailAPIService.shared
         guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            print("Account not found for email")
+            logError("Account not found for email", category: "Email")
             return
         }
         
@@ -661,7 +661,7 @@ struct EmailRow: View {
                 onStarChanged?()
             }
         } catch {
-            print("Error toggling star: \(error)")
+            logError("Error toggling star: \(error)", category: "Email")
         }
     }
 }

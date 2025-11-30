@@ -104,7 +104,7 @@ actor EmailActionSynchronizer {
                 pendingActions.removeFirst()
                 persistQueue()
             } catch {
-                print("EmailActionSynchronizer failed to process action \(action.id): \(error)")
+                logError("EmailActionSynchronizer failed to process action \(action.id): \(error)", category: "Email")
                 persistQueue()
                 try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
             }
@@ -135,7 +135,7 @@ actor EmailActionSynchronizer {
             let data = try encoder.encode(pendingActions)
             try data.write(to: queueFileURL, options: .atomic)
         } catch {
-            print("EmailActionSynchronizer persistQueue error: \(error)")
+            logError("EmailActionSynchronizer persistQueue error: \(error)", category: "Email")
         }
     }
     
@@ -148,7 +148,7 @@ actor EmailActionSynchronizer {
             let decoder = JSONDecoder()
             return try decoder.decode([PendingAction].self, from: data)
         } catch {
-            print("EmailActionSynchronizer loadQueueFromDisk error: \(error)")
+            logError("EmailActionSynchronizer loadQueueFromDisk error: \(error)", category: "Email")
             return []
         }
     }

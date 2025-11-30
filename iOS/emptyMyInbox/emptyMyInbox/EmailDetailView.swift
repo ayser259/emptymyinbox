@@ -242,7 +242,7 @@ struct EmailDetailView: View {
         
         // First try to load from persistent cache
         if let cachedEmail = await EmailCache.shared.loadEmailDetail(emailId: emailId) {
-            print("📧 EmailDetailView: Loaded email \(emailId) from persistent cache")
+            logInfo("EmailDetailView: Loaded email \(emailId) from persistent cache", category: "Email")
             await MainActor.run {
                 self.email = cachedEmail
                 self.isLoading = false
@@ -255,14 +255,14 @@ struct EmailDetailView: View {
             // Find email in allEmails by ID
             if let foundEmail = snapshot.allEmails.first(where: { $0.id == emailId }) {
                 // We have the list item, but need the detail - fetch it
-                print("📧 EmailDetailView: Email \(emailId) not in cache, fetching from Gmail")
+                logInfo("EmailDetailView: Email \(emailId) not in cache, fetching from Gmail", category: "Email")
                 await fetchEmailDetail(gmailId: foundEmail.gmail_id, accountEmail: foundEmail.account_email)
                 return
             }
             
             // Also check starred emails
             if let foundEmail = snapshot.starredEmails.first(where: { $0.id == emailId }) {
-                print("📧 EmailDetailView: Email \(emailId) found in starred, fetching from Gmail")
+                logInfo("EmailDetailView: Email \(emailId) found in starred, fetching from Gmail", category: "Email")
                 await fetchEmailDetail(gmailId: foundEmail.gmail_id, accountEmail: foundEmail.account_email)
                 return
             }
@@ -276,7 +276,7 @@ struct EmailDetailView: View {
     private func fetchEmailDetail(gmailId: String, accountEmail: String) async {
         // First check if already cached by Gmail ID
         if let cachedEmail = await EmailCache.shared.loadEmailDetail(gmailId: gmailId) {
-            print("📧 EmailDetailView: Found email by gmailId \(gmailId) in cache")
+            logInfo("EmailDetailView: Found email by gmailId \(gmailId) in cache", category: "Email")
             await MainActor.run {
                 self.email = cachedEmail
             }
@@ -295,7 +295,7 @@ struct EmailDetailView: View {
             let fetchedEmail = try await gmailService.getEmailDetail(for: account, gmailId: gmailId)
             // Save to persistent cache
             await EmailCache.shared.saveEmailDetail(fetchedEmail)
-            print("📧 EmailDetailView: Fetched and cached email \(fetchedEmail.id) from Gmail")
+            logInfo("EmailDetailView: Fetched and cached email \(fetchedEmail.id) from Gmail", category: "Email")
             await MainActor.run {
                 self.email = fetchedEmail
             }
@@ -308,7 +308,7 @@ struct EmailDetailView: View {
     
     private func handleReply() async {
         // TODO: Implement reply functionality
-        print("Reply to email \(emailId)")
+        logDebug("Reply to email \(emailId)", category: "Email")
     }
     
     private func handleStar() async {
@@ -319,7 +319,7 @@ struct EmailDetailView: View {
         
         let gmailService = GmailAPIService.shared
         guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            print("Account not found for email")
+            logError("Account not found for email", category: "Email")
             return
         }
         
@@ -347,7 +347,7 @@ struct EmailDetailView: View {
             // Update dashboard cache with starred status change
             await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
         } catch {
-            print("Error toggling star: \(error)")
+            logError("Error toggling star: \(error)", category: "Email")
         }
     }
     
@@ -380,7 +380,7 @@ struct EmailDetailView: View {
         
         let gmailService = GmailAPIService.shared
         guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            print("Account not found for email")
+            logError("Account not found for email", category: "Email")
             return
         }
         
@@ -399,7 +399,7 @@ struct EmailDetailView: View {
                 await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
             }
         } catch {
-            print("Error marking email as read: \(error)")
+            logError("Error marking email as read: \(error)", category: "Email")
         }
     }
     

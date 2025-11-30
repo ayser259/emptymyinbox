@@ -532,7 +532,7 @@ struct FilterRulesBottomSheet: View {
                     }
                 }
             } catch {
-                print("Error loading filters for \(gmailAccount.email): \(error)")
+                logError("Error loading filters for \(gmailAccount.email): \(error)", category: "Gmail")
             }
         }
         
@@ -540,7 +540,7 @@ struct FilterRulesBottomSheet: View {
             self.filters = allFilters
             self.accounts = emailAccounts
             if allFilters.isEmpty {
-                print("No filters found for label \(label.id)")
+                logInfo("No filters found for label \(label.id)", category: "Gmail")
             }
         }
     }

@@ -38,10 +38,10 @@ class AuthManager: ObservableObject {
                     self.accounts = gmailAccounts
                     self.isAuthenticated = true
                     self.sessionState = .authenticated
-                    print("✅ Auth: Found \(gmailAccounts.count) authenticated account(s)")
+                    logSuccess("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
                 } else {
                     // No accounts in keychain - clear all caches and require login
-                    print("⚠️ Auth: No accounts in keychain - clearing caches and requiring login")
+                    logWarning("Auth: No accounts in keychain - clearing caches and requiring login", category: "Auth")
                     self.clearAllCaches()
                     self.accounts = []
                     self.isAuthenticated = false
@@ -56,7 +56,7 @@ class AuthManager: ObservableObject {
         Task {
             await DashboardCache.shared.clear()
             await EmailCache.shared.clearAll()
-            print("🗑️ Auth: Cleared all local caches")
+            logInfo("Auth: Cleared all local caches", category: "Auth")
         }
     }
     
@@ -72,7 +72,7 @@ class AuthManager: ObservableObject {
         }
         
         let account = try await gmailService.signIn(presentingViewController: rootViewController)
-        print("✅ Auth: Signed in as \(account.email)")
+        logSuccess("Auth: Signed in as \(account.email)", category: "Auth")
         
         // Reload accounts
         self.accounts = gmailService.getAllAccounts()
@@ -96,7 +96,7 @@ class AuthManager: ObservableObject {
             clearAllCaches()
             self.isAuthenticated = false
             self.sessionState = .needsLogin
-            print("✅ Auth: Logged out, cleared all data")
+            logSuccess("Auth: Logged out, cleared all data", category: "Auth")
         }
     }
 }

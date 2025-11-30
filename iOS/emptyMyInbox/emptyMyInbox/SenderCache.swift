@@ -58,7 +58,7 @@ actor SenderCache {
             // Filter by account email and return senders
             return snapshot.senders.filter { $0.accountEmail == accountEmail }
         } catch {
-            print("SenderCache load error: \(error)")
+            logError("SenderCache load error: \(error)", category: "Cache")
             return []
         }
     }
@@ -87,9 +87,9 @@ actor SenderCache {
         do {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: .atomic)
-            print("✅ SenderCache: Saved \(senders.count) senders for account \(accountEmail)")
+            logSuccess("SenderCache: Saved \(senders.count) senders for account \(accountEmail)", category: "Cache")
         } catch {
-            print("❌ SenderCache save error: \(error)")
+            logError("SenderCache save error: \(error)", category: "Cache")
         }
     }
     
@@ -135,7 +135,7 @@ actor SenderCache {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            print("❌ SenderCache update error: \(error)")
+            logError("SenderCache update error: \(error)", category: "Cache")
         }
     }
     
@@ -161,7 +161,7 @@ actor SenderCache {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            print("❌ SenderCache clear error: \(error)")
+            logError("SenderCache clear error: \(error)", category: "Cache")
         }
     }
     
@@ -172,7 +172,7 @@ actor SenderCache {
                 try FileManager.default.removeItem(at: fileURL)
             }
         } catch {
-            print("❌ SenderCache clearAll error: \(error)")
+            logError("SenderCache clearAll error: \(error)", category: "Cache")
         }
     }
 }

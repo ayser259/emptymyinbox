@@ -26,9 +26,9 @@ struct emptyMyInboxApp: App {
         
         if let clientID = clientID, !clientID.isEmpty {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
-            print("✅ Google Sign-In configured with Client ID: \(clientID)")
+            logSuccess("Google Sign-In configured with Client ID: \(clientID)", category: "Auth")
         } else {
-            print("❌ Warning: GIDClientID or GOOGLE_CLIENT_ID not found in Info.plist")
+            logWarning("GIDClientID or GOOGLE_CLIENT_ID not found in Info.plist", category: "Auth")
         }
     }
     

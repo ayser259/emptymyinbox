@@ -134,7 +134,7 @@ class LazyEmailLoader: ObservableObject {
     func loadMetadata() async {
         isLoadingMetadata = true
         
-        print("📧 LazyEmailLoader: Starting optimized load (priority first email)")
+        logInfo("LazyEmailLoader: Starting optimized load (priority first email)", category: "Email")
         
         let accounts = gmailService.getAllAccounts()
         let targetAccounts: [GmailAccount]
@@ -156,7 +156,7 @@ class LazyEmailLoader: ObservableObject {
         
         for account in targetAccounts {
             do {
-                print("📧 LazyEmailLoader: Getting message IDs for \(account.email)")
+                logInfo("LazyEmailLoader: Getting message IDs for \(account.email)", category: "Email")
                 let (messageRefs, _) = try await gmailService.listMessages(
                     for: account,
                     query: "is:unread in:inbox -is:starred",
@@ -168,14 +168,14 @@ class LazyEmailLoader: ObservableObject {
                 for ref in messageRefs {
                     allMessageRefs.append((account: account, id: ref.id, threadId: ref.threadId))
                 }
-                print("📧 LazyEmailLoader: Got \(messageRefs.count) message IDs for \(account.email)")
+                logInfo("LazyEmailLoader: Got \(messageRefs.count) message IDs for \(account.email)", category: "Email")
             } catch {
-                print("❌ LazyEmailLoader: Error getting message IDs for \(account.email): \(error)")
+                logError("LazyEmailLoader: Error getting message IDs for \(account.email): \(error)", category: "Email")
             }
         }
         
         guard !allMessageRefs.isEmpty else {
-            print("📧 LazyEmailLoader: No unread emails found")
+            logInfo("LazyEmailLoader: No unread emails found", category: "Email")
             isLoadingMetadata = false
             isReadyToShow = true
             return
@@ -183,7 +183,7 @@ class LazyEmailLoader: ObservableObject {
         
         // PHASE 2: Load first email's FULL content immediately (priority)
         // Don't wait for metadata - load full email right away for fastest display
-        print("📧 LazyEmailLoader: Priority loading first email")
+        logInfo("LazyEmailLoader: Priority loading first email", category: "Email")
         
         let firstRef = allMessageRefs[0]
         var firstEmailLoaded = false
@@ -199,7 +199,7 @@ class LazyEmailLoader: ObservableObject {
                 if let firstEmail = details.first {
                     // Skip if email is starred (safety check)
                     guard !firstEmail.is_starred else {
-                        print("📧 LazyEmailLoader: Skipping starred first email")
+                        logInfo("LazyEmailLoader: Skipping starred first email", category: "Email")
                         return
                     }
                     
@@ -231,11 +231,11 @@ class LazyEmailLoader: ObservableObject {
                         self.loadStates[firstEmail.id] = .loaded
                         firstEmailLoaded = true
                         
-                        print("📧 LazyEmailLoader: ✅ First email loaded and ready!")
+                        logSuccess("LazyEmailLoader: First email loaded and ready!", category: "Email")
                     }
                 }
             } catch {
-                print("❌ LazyEmailLoader: Error loading first email: \(error)")
+                logError("LazyEmailLoader: Error loading first email: \(error)", category: "Email")
             }
         }
         
@@ -251,7 +251,7 @@ class LazyEmailLoader: ObservableObject {
         if firstEmailLoaded {
             isLoadingMetadata = false
             isReadyToShow = true
-            print("📧 LazyEmailLoader: Ready to show! (first email loaded)")
+            logInfo("LazyEmailLoader: Ready to show! (first email loaded)", category: "Email")
         }
         
         // Wait for metadata to finish loading
@@ -266,7 +266,7 @@ class LazyEmailLoader: ObservableObject {
         // Load next few emails in background
         await loadNextBatchInBackground()
         
-        print("📧 LazyEmailLoader: Full initialization complete. \(emailMetadata.count) emails available")
+        logInfo("LazyEmailLoader: Full initialization complete. \(emailMetadata.count) emails available", category: "Email")
     }
     
     /// Load metadata for remaining emails (runs in background)
@@ -317,7 +317,7 @@ class LazyEmailLoader: ObservableObject {
                         }
                     }
                 } catch {
-                    print("❌ LazyEmailLoader: Error loading metadata batch: \(error)")
+                    logError("LazyEmailLoader: Error loading metadata batch: \(error)", category: "Email")
                 }
             }
         }
@@ -328,7 +328,7 @@ class LazyEmailLoader: ObservableObject {
         // Save to cache and notify dashboard
         await saveToCacheAndNotify(emailMetadata)
         
-        print("📧 LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails")
+        logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails", category: "Email")
     }
     
     /// Load next batch of full emails in background
@@ -451,7 +451,7 @@ class LazyEmailLoader: ObservableObject {
                     loadStates[metadata.id] = .failed
                 }
             } catch {
-                print("Error loading batch for \(accountEmail): \(error)")
+                logError("Error loading batch for \(accountEmail): \(error)", category: "Email")
                 for metadata in metadataList {
                     loadStates[metadata.id] = .failed
                 }

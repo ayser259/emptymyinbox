@@ -182,7 +182,7 @@ struct AccountsView: View {
             // Sign in directly with Google using GmailAPIService
             let gmailAccount = try await GmailAPIService.shared.signIn(presentingViewController: rootViewController)
             
-            print("✅ Successfully authenticated Gmail account: \(gmailAccount.email)")
+            logSuccess("Successfully authenticated Gmail account: \(gmailAccount.email)", category: "Auth")
             
             // Immediately add account to snapshot optimistically (so it shows up right away)
             await addAccountOptimistically(gmailAccount: gmailAccount)
@@ -194,7 +194,7 @@ struct AccountsView: View {
             await MainActor.run {
                 self.errorMessage = "Failed to add account: \(error.localizedDescription)"
             }
-            print("❌ Gmail authentication failed: \(error)")
+            logError("Gmail authentication failed: \(error)", category: "Auth")
         }
     }
     
