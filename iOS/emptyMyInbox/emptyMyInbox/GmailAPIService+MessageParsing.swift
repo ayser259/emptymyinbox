@@ -123,6 +123,7 @@ extension GmailAPIService {
     
     // MARK: - Helper Methods
     
+    /// Extract headers from GmailPayload (public access for unsubscribe functionality)
     func extractHeaders(from payload: GmailPayload?) -> [String: String] {
         guard let payload = payload else { return [:] }
         
