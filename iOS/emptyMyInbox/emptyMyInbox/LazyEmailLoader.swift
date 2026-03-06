@@ -96,6 +96,12 @@ class LazyEmailLoader: ObservableObject {
         let metadata = emailMetadata[currentIndex]
         return loadedEmails[metadata.id] != nil
     }
+
+    var currentLoadState: EmailLoadState {
+        guard currentIndex < emailMetadata.count else { return .failed }
+        let metadata = emailMetadata[currentIndex]
+        return loadStates[metadata.id] ?? .pending
+    }
     
     /// Whether there are more emails to show
     var hasMoreEmails: Bool {
@@ -223,7 +229,7 @@ class LazyEmailLoader: ObservableObject {
                         // Add to our state
                         if self.emailMetadata.isEmpty {
                             self.emailMetadata = [tempMetadata]
-                        } else if !self.emailMetadata.contains(where: { $0.id == tempMetadata.id }) {
+                        } else if !self.emailMetadata.contains(where: { $0.gmail_id == tempMetadata.gmail_id }) {
                             self.emailMetadata.insert(tempMetadata, at: 0)
                         }
                         
@@ -239,9 +245,10 @@ class LazyEmailLoader: ObservableObject {
             }
         }
         
-        // PHASE 3: In parallel, start loading metadata for remaining emails
+        // PHASE 3: In parallel, load metadata for all unread emails.
+        // Dedupe by Gmail ID to avoid duplicates with the priority-loaded first email.
         let metadataTask = Task {
-            await self.loadRemainingMetadata(messageRefs: allMessageRefs, skipFirst: true)
+            await self.loadRemainingMetadata(messageRefs: allMessageRefs)
         }
         
         // Wait for first email to load (fast path - just 1 API call)
@@ -270,18 +277,13 @@ class LazyEmailLoader: ObservableObject {
     }
     
     /// Load metadata for remaining emails (runs in background)
-    private func loadRemainingMetadata(messageRefs: [(account: GmailAccount, id: String, threadId: String)], skipFirst: Bool) async {
+    private func loadRemainingMetadata(messageRefs: [(account: GmailAccount, id: String, threadId: String)]) async {
         // Group by account
         let groupedByAccount = Dictionary(grouping: messageRefs) { $0.account.email }
         
-        for (accountEmail, refs) in groupedByAccount {
+        for (_, refs) in groupedByAccount {
             guard let account = refs.first?.account else { continue }
-            
-            // Skip first if already loaded
-            let refsToLoad = skipFirst ? Array(refs.dropFirst()) : refs
-            guard !refsToLoad.isEmpty else { continue }
-            
-            let messageIds = refsToLoad.map { $0.id }
+            let messageIds = refs.map { $0.id }
             
             // Load metadata in smaller batches with rate limiting
             let batchSize = 10 // Smaller batches to avoid 429
@@ -311,7 +313,7 @@ class LazyEmailLoader: ObservableObject {
                         let metadata = gmailService.parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
                         
                         // Add to metadata if not already present
-                        if !emailMetadata.contains(where: { $0.id == metadata.id }) {
+                        if !emailMetadata.contains(where: { $0.gmail_id == metadata.gmail_id }) {
                             emailMetadata.append(metadata)
                             loadStates[metadata.id] = .pending
                         }
@@ -353,29 +355,7 @@ class LazyEmailLoader: ObservableObject {
         
         // Convert to EmailListItem for dashboard snapshot
         let emailItems = metadata.map { $0.toEmailListItem() }
-        
-        // Also update the dashboard cache
-        if let existingSnapshot = await DashboardCache.shared.loadSnapshot() {
-            // Update just the unread emails for this account
-            var updatedEmails = existingSnapshot.emails.filter { email in
-                if let accEmail = accountEmail {
-                    return email.account_email != accEmail
-                }
-                return false
-            }
-            updatedEmails.append(contentsOf: emailItems)
-            updatedEmails.sort { $0.received_at > $1.received_at }
-            
-            let updatedSnapshot = DashboardDataSnapshot(
-                timestamp: Date(),
-                accounts: existingSnapshot.accounts,
-                emails: updatedEmails,
-                allEmails: updatedEmails,
-                starredEmails: existingSnapshot.starredEmails,
-                labels: existingSnapshot.labels
-            )
-            await DashboardCache.shared.saveSnapshot(updatedSnapshot)
-        }
+        await DashboardDataManager.shared.replaceUnreadEmails(emailItems, forAccountEmail: accountEmail)
         
         // Post notification so Dashboard can refresh its UI
         await MainActor.run {
@@ -524,6 +504,15 @@ class LazyEmailLoader: ObservableObject {
         guard state == .pending || state == .failed else { return }
         
         await loadBatch([metadata])
+    }
+
+    func retryCurrentEmail() async {
+        await loadEmail(at: currentIndex)
+    }
+
+    func skipCurrentFailedEmail() {
+        guard currentLoadState == .failed else { return }
+        moveToNext()
     }
 }
 

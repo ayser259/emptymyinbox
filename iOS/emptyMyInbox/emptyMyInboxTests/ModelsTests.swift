@@ -153,8 +153,6 @@ struct ModelsTests {
             from: "sender@example.com",
             to: "recipient@example.com",
             subject: "Test Subject",
-            query: "test query",
-            negatedQuery: "not this",
             hasAttachment: true,
             excludeChats: true,
             size: 1024,
@@ -170,8 +168,6 @@ struct ModelsTests {
         #expect(decoded.from == "sender@example.com")
         #expect(decoded.to == "recipient@example.com")
         #expect(decoded.subject == "Test Subject")
-        #expect(decoded.query == "test query")
-        #expect(decoded.negatedQuery == "not this")
         #expect(decoded.hasAttachment == true)
         #expect(decoded.excludeChats == true)
         #expect(decoded.size == 1024)
@@ -184,8 +180,6 @@ struct ModelsTests {
             from: nil,
             to: nil,
             subject: nil,
-            query: nil,
-            negatedQuery: nil,
             hasAttachment: nil,
             excludeChats: nil,
             size: nil,
@@ -201,8 +195,6 @@ struct ModelsTests {
         #expect(decoded.from == nil)
         #expect(decoded.to == nil)
         #expect(decoded.subject == nil)
-        #expect(decoded.query == nil)
-        #expect(decoded.negatedQuery == nil)
         #expect(decoded.hasAttachment == nil)
         #expect(decoded.excludeChats == nil)
         #expect(decoded.size == nil)
@@ -215,8 +207,6 @@ struct ModelsTests {
             from: "sender@example.com",
             to: nil,
             subject: "Test",
-            query: nil,
-            negatedQuery: nil,
             hasAttachment: true,
             excludeChats: nil,
             size: nil,
@@ -384,3 +374,4 @@ struct ModelsTests {
         #expect(email.snippet.count == 10000)
     }
 }
+

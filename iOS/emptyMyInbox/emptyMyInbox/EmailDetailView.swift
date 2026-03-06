@@ -34,7 +34,7 @@ struct EmailDetailView: View {
                         Spacer()
                         
                         Button {
-                            if let url = unsubscribeManualURL {
+                            if unsubscribeManualURL != nil {
                                 showUnsubscribeWebView = true
                             }
                         } label: {
@@ -317,38 +317,25 @@ struct EmailDetailView: View {
         isProcessing = true
         defer { isProcessing = false }
         
-        let gmailService = GmailAPIService.shared
-        guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            logError("Account not found for email", category: "Email")
-            return
-        }
-        
         let newStarState = !email.is_starred
         
-        do {
-            if email.is_starred {
-                try await gmailService.unstarMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: false)
-            } else {
-                try await gmailService.starMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: true)
-            }
-            
-            // Update local state
-            await MainActor.run {
-                self.email = email.updating(isStarred: newStarState)
-            }
-            
-            // Update email detail cache
-            if let updatedEmail = self.email {
-                await EmailCache.shared.saveEmailDetail(updatedEmail)
-            }
-            
-            // Update dashboard cache with starred status change
-            await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
-        } catch {
-            logError("Error toggling star: \(error)", category: "Email")
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email,
+            shouldStar: newStarState
+        )
+        
+        // Update local state immediately.
+        await MainActor.run {
+            self.email = email.updating(isStarred: newStarState)
         }
+        
+        if let updatedEmail = self.email {
+            await EmailCache.shared.saveEmailDetail(updatedEmail)
+        }
+        
+        await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
     }
     
     private func handleKeepUnread() async {
@@ -362,9 +349,20 @@ struct EmailDetailView: View {
         isProcessing = true
         defer { isProcessing = false }
         
-        // TODO: Implement "keep unread" - this might require marking as unread
-        // For now, we'll just reload the email to ensure state is current
-        await loadEmail()
+        await EmailActionSynchronizer.shared.enqueueMarkUnread(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        
+        await MainActor.run {
+            self.email = email.updating(isRead: false)
+        }
+        
+        if let updatedEmail = self.email {
+            await EmailCache.shared.saveEmailDetail(updatedEmail)
+            await DashboardDataManager.shared.markEmailAsUnread(emailId: email.id, accountId: nil)
+        }
     }
     
     private func handleMarkAsRead() async {
@@ -378,28 +376,20 @@ struct EmailDetailView: View {
         isProcessing = true
         defer { isProcessing = false }
         
-        let gmailService = GmailAPIService.shared
-        guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            logError("Account not found for email", category: "Email")
-            return
+        await EmailActionSynchronizer.shared.enqueueMarkRead(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        
+        // Update local state immediately.
+        await MainActor.run {
+            self.email = email.updating(isRead: true)
         }
         
-        do {
-            try await gmailService.markAsRead(for: account, messageId: email.gmail_id)
-            await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email)
-            
-            // Update local state
-            await MainActor.run {
-                self.email = email.updating(isRead: true)
-            }
-            
-            // Update cache and dashboard
-            if let updatedEmail = self.email {
-                await EmailCache.shared.saveEmailDetail(updatedEmail)
-                await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-            }
-        } catch {
-            logError("Error marking email as read: \(error)", category: "Email")
+        if let updatedEmail = self.email {
+            await EmailCache.shared.saveEmailDetail(updatedEmail)
+            await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
         }
     }
     

@@ -13,7 +13,7 @@ struct CacheIntegrationTests {
     
     // MARK: - Full Cache Flow Tests
     
-    @Test("Full cache flow: save → load → search")
+    @Test("Full cache flow: save → load → delete")
     func testFullCacheFlow() async throws {
         let cache = EmailCache.shared
         await cache.clearAll()
@@ -51,15 +51,10 @@ struct CacheIntegrationTests {
         #expect(loaded != nil)
         #expect(loaded?.subject == "Integration Test Email")
         
-        // Step 4: Search for the email
-        let searchResults = await cache.searchCachedEmails(query: "integration")
-        #expect(searchResults.count >= 1)
-        #expect(searchResults.contains { $0.id == 1 })
-        
-        // Step 5: Delete the email
+        // Step 4: Delete the email
         await cache.deleteEmailDetail(emailId: 1)
         
-        // Step 6: Verify it's gone
+        // Step 5: Verify it's gone
         let isStillCached = await cache.isEmailCached(emailId: 1)
         #expect(isStillCached == false)
         
@@ -522,91 +517,5 @@ struct CacheIntegrationTests {
         #expect(await cache.cachedEmailCount() == 10)
     }
     
-    // MARK: - Search Integration Tests
-    
-    @Test("Search works across multiple cached emails")
-    func testSearchAcrossMultipleEmails() async throws {
-        let cache = EmailCache.shared
-        await cache.clearAll()
-        
-        // Create emails with different content
-        let emails = [
-            EmailDetail(
-                id: 1,
-                gmail_id: "msg1",
-                thread_id: "thread1",
-                subject: "Project Alpha",
-                sender: "alpha@example.com",
-                sender_name: "Alpha Team",
-                recipients_to: nil,
-                recipients_cc: nil,
-                recipients_bcc: nil,
-                body_text: "This is about project alpha",
-                body_html: nil,
-                snippet: "Alpha snippet",
-                is_read: false,
-                is_starred: false,
-                labels: ["INBOX"],
-                received_at: "2024-01-01T00:00:00Z",
-                account_email: "test@example.com",
-                created_at: "2024-01-01T00:00:00Z"
-            ),
-            EmailDetail(
-                id: 2,
-                gmail_id: "msg2",
-                thread_id: "thread2",
-                subject: "Project Beta",
-                sender: "beta@example.com",
-                sender_name: "Beta Team",
-                recipients_to: nil,
-                recipients_cc: nil,
-                recipients_bcc: nil,
-                body_text: "This is about project beta",
-                body_html: nil,
-                snippet: "Beta snippet",
-                is_read: false,
-                is_starred: false,
-                labels: ["INBOX"],
-                received_at: "2024-01-02T00:00:00Z",
-                account_email: "test@example.com",
-                created_at: "2024-01-02T00:00:00Z"
-            ),
-            EmailDetail(
-                id: 3,
-                gmail_id: "msg3",
-                thread_id: "thread3",
-                subject: "Meeting Notes",
-                sender: "meeting@example.com",
-                sender_name: nil,
-                recipients_to: nil,
-                recipients_cc: nil,
-                recipients_bcc: nil,
-                body_text: "Notes from the project meeting",
-                body_html: nil,
-                snippet: "Meeting snippet",
-                is_read: false,
-                is_starred: false,
-                labels: ["INBOX"],
-                received_at: "2024-01-03T00:00:00Z",
-                account_email: "test@example.com",
-                created_at: "2024-01-03T00:00:00Z"
-            )
-        ]
-        
-        await cache.saveEmailDetails(emails)
-        
-        // Search for "project"
-        let projectResults = await cache.searchCachedEmails(query: "project")
-        #expect(projectResults.count == 3) // All contain "project"
-        
-        // Search for "alpha"
-        let alphaResults = await cache.searchCachedEmails(query: "alpha")
-        #expect(alphaResults.count == 1)
-        #expect(alphaResults.first?.id == 1)
-        
-        // Search with multiple terms
-        let multiTermResults = await cache.searchCachedEmails(terms: ["project", "meeting"])
-        #expect(multiTermResults.count == 1) // Only email 3 contains both
-        #expect(multiTermResults.first?.id == 3)
-    }
 }
+

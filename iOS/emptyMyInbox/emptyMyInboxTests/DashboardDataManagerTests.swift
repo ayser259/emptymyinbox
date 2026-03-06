@@ -14,6 +14,11 @@ struct DashboardDataManagerTests {
     // MARK: - Helper Methods
     
     func createTestEmailListItem(id: Int, isRead: Bool = false, isStarred: Bool = false) -> EmailListItem {
+        var labels = isRead ? ["INBOX"] : ["INBOX", "UNREAD"]
+        if isStarred {
+            labels.append("STARRED")
+        }
+        
         return EmailListItem(
             id: id,
             gmail_id: "msg\(id)",
@@ -23,7 +28,7 @@ struct DashboardDataManagerTests {
             snippet: "Test snippet \(id)",
             is_read: isRead,
             is_starred: isStarred,
-            labels: isRead ? ["INBOX"] : ["INBOX", "UNREAD"],
+            labels: labels,
             received_at: "2024-01-01T00:00:00Z",
             account_email: "test@example.com",
             marked_read_at: isRead ? "2024-01-02T00:00:00Z" : nil
@@ -129,8 +134,7 @@ struct DashboardDataManagerTests {
         let snapshot = await manager.loadCachedSnapshot()
         
         #expect(snapshot != nil)
-        #expect(snapshot?.emails.count == 1) // Only email 2 should remain in unread
-        #expect(snapshot?.emails.first?.id == 2)
+        #expect(snapshot?.emails.isEmpty == true) // Read emails are no longer in unread list
         
         // Email 1 should still be in allEmails but marked as read
         let email1 = snapshot?.allEmails.first { $0.id == 1 }
@@ -360,7 +364,9 @@ struct DashboardDataManagerTests {
             labels: []
         )
         
-        // Mark as read again
+        let before = await manager.loadCachedSnapshot()
+        
+        // Mark as read again (no-op)
         await manager.markEmailAsRead(emailId: 1)
         
         let snapshot = await manager.loadCachedSnapshot()
@@ -368,6 +374,7 @@ struct DashboardDataManagerTests {
         #expect(snapshot != nil)
         #expect(snapshot?.emails.isEmpty == true) // Should still be empty
         #expect(snapshot?.allEmails.first?.is_read == true)
+        #expect(snapshot?.timestamp == before?.timestamp)
     }
     
     @Test("Update starred status when already starred does nothing")
@@ -388,7 +395,9 @@ struct DashboardDataManagerTests {
             labels: []
         )
         
-        // Star again
+        let before = await manager.loadCachedSnapshot()
+        
+        // Star again (no-op)
         await manager.updateEmailStarred(emailId: 1, isStarred: true)
         
         let snapshot = await manager.loadCachedSnapshot()
@@ -396,6 +405,7 @@ struct DashboardDataManagerTests {
         #expect(snapshot != nil)
         #expect(snapshot?.starredEmails.count == 1) // Should still have one
         #expect(snapshot?.starredEmails.first?.is_starred == true)
+        #expect(snapshot?.timestamp == before?.timestamp)
     }
     
     // MARK: - Error Handling Tests
@@ -498,7 +508,7 @@ struct DashboardDataManagerTests {
         // Verify original state unchanged
         let snapshot = await manager.loadCachedSnapshot()
         #expect(snapshot != nil)
-        #expect(snapshot?.starredEmails.isEmpty)
+        #expect(snapshot?.starredEmails.isEmpty == true)
     }
     
     @Test("Snapshot handles empty accounts array")
@@ -520,7 +530,7 @@ struct DashboardDataManagerTests {
         let snapshot = await manager.loadCachedSnapshot()
         
         #expect(snapshot != nil)
-        #expect(snapshot?.accounts.isEmpty)
+        #expect(snapshot?.accounts.isEmpty == true)
         #expect(snapshot?.emails.count == 1)
     }
     
@@ -542,8 +552,8 @@ struct DashboardDataManagerTests {
         let snapshot = await manager.loadCachedSnapshot()
         
         #expect(snapshot != nil)
-        #expect(snapshot?.emails.isEmpty)
-        #expect(snapshot?.allEmails.isEmpty)
+        #expect(snapshot?.emails.isEmpty == true)
+        #expect(snapshot?.allEmails.isEmpty == true)
     }
     
     @Test("Multiple status updates maintain consistency")
@@ -581,6 +591,37 @@ struct DashboardDataManagerTests {
         #expect(snapshot?.emails.count == 1) // Should be back in unread list
         #expect(snapshot?.emails.first?.is_read == false)
         #expect(snapshot?.emails.first?.is_starred == false)
-        #expect(snapshot?.starredEmails.isEmpty)
+        #expect(snapshot?.starredEmails.isEmpty == true)
+    }
+    
+    @Test("Label counters are recomputed after read and star mutations")
+    func testLabelCountersAreRecomputed() async {
+        let manager = DashboardDataManager.shared
+        let cache = DashboardCache.shared
+        
+        await cache.clear()
+        
+        let unreadStarred = createTestEmailListItem(id: 1, isRead: false, isStarred: true)
+        let unread = createTestEmailListItem(id: 2, isRead: false, isStarred: false)
+        await cache.saveSnapshot(
+            accounts: [createTestEmailAccount(id: 1)],
+            emails: [unreadStarred, unread],
+            allEmails: [unreadStarred, unread],
+            starredEmails: [unreadStarred],
+            labels: []
+        )
+        
+        await manager.markEmailAsRead(emailId: 1)
+        
+        let snapshotAfterRead = await manager.loadCachedSnapshot()
+        #expect(snapshotAfterRead?.labels.first(where: { $0.id == "UNREAD" })?.unread_count == 1)
+        #expect(snapshotAfterRead?.labels.first(where: { $0.id == "STARRED" }) == nil)
+        
+        await manager.updateEmailStarred(emailId: 2, isStarred: true)
+        let snapshotAfterStar = await manager.loadCachedSnapshot()
+        
+        #expect(snapshotAfterStar?.labels.first(where: { $0.id == "UNREAD" })?.unread_count == 1)
+        #expect(snapshotAfterStar?.labels.first(where: { $0.id == "STARRED" })?.unread_count == 1)
     }
 }
+

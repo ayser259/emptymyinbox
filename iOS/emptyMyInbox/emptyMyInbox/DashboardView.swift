@@ -9,12 +9,14 @@ import SwiftUI
 import UIKit
 
 struct DashboardView: View {
+    private enum BriefingTrigger {
+        case manual
+        case automatic
+    }
+
     @EnvironmentObject var authManager: AuthManager
+    @State private var navigationPath = NavigationPath()
     @State private var showMenu = false
-    @State private var searchText = ""
-    @State private var searchResults: [EmailListItem] = []
-    @State private var isSearching = false
-    @State private var searchTask: Task<Void, Never>?
     @State private var accounts: [EmailAccount] = []
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
@@ -26,14 +28,16 @@ struct DashboardView: View {
     @StateObject private var progressTracker = RefreshProgressTracker()
     @State private var showProgressModal = false
     @State private var accountHealthStatuses: [String: AccountHealthStatus] = [:] // email -> status
-    
-    var isSearchActive: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-    
+    @State private var showDailyBriefing = false
+    @State private var dailyBriefingPayload: DailyBriefingPayload?
+    @State private var pendingAutoBriefing = false
+    @State private var showSummaryUpsell = false
+    @State private var storiesCount = 0
+    @State private var isGeneratingBrief = false
+    private let persistedBriefingKey = "persistedDailyBriefingPayload"
     
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ZStack {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
@@ -75,6 +79,18 @@ struct DashboardView: View {
                     }
                 case "senders":
                     SendersView()
+                case "insights":
+                    NewsletterInsightDeckView(
+                        emails: allEmails,
+                        onDiveDeeper: { emailId in
+                            navigationPath.append(emailId)
+                        },
+                        onOpenLLMSettings: {
+                            navigationPath.append("llm_management")
+                        }
+                    )
+                case "llm_management":
+                    LLMManagementView()
                 default:
                     EmptyView()
                 }
@@ -88,7 +104,7 @@ struct DashboardView: View {
         .task {
             await loadInitialData()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CacheCleared"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .cacheCleared)) { _ in
             Task { @MainActor in
                 // Clear in-memory state so UI reflects empty cache immediately
                 self.accounts = []
@@ -106,10 +122,29 @@ struct DashboardView: View {
                 await refreshDashboard(shouldSync: true)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccountAdded"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .appShouldShowDailyBriefing)) { _ in
+            Task { @MainActor in
+                pendingAutoBriefing = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
             // New account was added, refresh to show it immediately
             Task {
+                await AccountInclusionStore.shared.refreshFromConnectedAccounts()
                 await refreshDashboard(shouldSync: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
+            Task {
+                let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+                await MainActor.run {
+                    if hasKey {
+                        showSummaryUpsell = false
+                    }
+                }
+                if hasKey, pendingAutoBriefing {
+                    await presentDailyBriefingIfPending()
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .emailMetadataLoaded)) { notification in
@@ -154,6 +189,37 @@ struct DashboardView: View {
         .sheet(isPresented: $showProgressModal) {
             RefreshProgressModal(progressTracker: progressTracker)
         }
+        .sheet(isPresented: $showDailyBriefing) {
+            if let payload = dailyBriefingPayload {
+                DailyBriefingSheet(
+                    payload: payload,
+                    onItemTap: { item in
+                        showDailyBriefing = false
+                        navigationPath.append(item.emailId)
+                        saveLastBriefingCheckDate()
+                    },
+                    onDismiss: {
+                        showDailyBriefing = false
+                        saveLastBriefingCheckDate()
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+        .sheet(isPresented: $showSummaryUpsell) {
+            LLMUpsellView(
+                title: "Unlock AI Summary",
+                subtitle: "Add your OpenAI API key to enable the Daily Executive Summary.",
+                actionTitle: "Add API Key",
+                onAction: {
+                    showSummaryUpsell = false
+                    navigationPath.append("llm_management")
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     @ViewBuilder
@@ -161,11 +227,6 @@ struct DashboardView: View {
         ScrollView {
             VStack(spacing: 0) {
                 topBarSection
-                searchBarSection
-                
-                if isSearchActive {
-                    searchResultsSection
-                }
                 
                 actionButtonsSection
                     .padding(.bottom, AppTheme.spacingMedium)
@@ -216,99 +277,6 @@ struct DashboardView: View {
         .padding(.vertical, AppTheme.spacingMedium)
     }
 
-    private var searchBarSection: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(AppTheme.secondaryText)
-            
-            TextField("Jump, search, or chat", text: $searchText)
-                .primaryText()
-                .autocapitalization(.none)
-                .autocorrectionDisabled()
-                .onChange(of: searchText) { _, newValue in
-                    performSearch(query: newValue)
-                }
-            
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    searchResults = []
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(AppTheme.secondaryText)
-                }
-            }
-        }
-        .padding(AppTheme.spacingMedium)
-        .background(AppTheme.secondaryBackground)
-        .cornerRadius(AppTheme.cornerRadiusMedium)
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusMedium)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-        .padding(.horizontal, AppTheme.spacingMedium)
-        .padding(.bottom, AppTheme.spacingMedium)
-    }
-
-    @ViewBuilder
-    private var searchResultsSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-            HStack {
-                Text("Search Results")
-                    .font(AppTheme.title3)
-                    .primaryText()
-                
-                Spacer()
-                
-                if isSearching {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else {
-                    Text("\(searchResults.count) found")
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                }
-            }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.top, AppTheme.spacingMedium)
-            
-            if isSearching && searchResults.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding()
-            } else if searchResults.isEmpty && !isSearching {
-                VStack(spacing: AppTheme.spacingMedium) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 48))
-                        .foregroundColor(AppTheme.secondaryText)
-                    
-                    Text("No results found")
-                        .font(AppTheme.title3)
-                        .primaryText()
-                    
-                    Text("Try searching with different keywords")
-                        .font(AppTheme.body)
-                        .secondaryText()
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, AppTheme.spacingLarge)
-            } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(searchResults, id: \.id) { email in
-                        NavigationLink(value: email.id) {
-                            GmailStyleEmailRow(email: email)
-                                .padding(.horizontal, AppTheme.spacingMedium)
-                                .padding(.vertical, 4)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-                .padding(.vertical, AppTheme.spacingSmall)
-            }
-        }
-        .padding(.bottom, AppTheme.spacingMedium)
-    }
-
     private var actionButtonsSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: AppTheme.spacingMedium) {
@@ -316,7 +284,7 @@ struct DashboardView: View {
                     refreshButton
                         .padding(.leading, AppTheme.spacingMedium)
                 }
-                
+
                 NavigationLink(value: "catch_up") {
                     CatchUpActionButton(
                         title: "Catch up",
@@ -324,6 +292,28 @@ struct DashboardView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+
+                NavigationLink(value: "insights") {
+                    ActionButton(
+                        title: "Stories",
+                        count: storiesCount,
+                        icon: "rectangle.stack.fill"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button {
+                    Task { await presentDailyBriefing(trigger: .manual) }
+                } label: {
+                    ActionButton(
+                        title: "Brief",
+                        count: dailyBriefingPayload?.items.count ?? 0,
+                        icon: "sparkles",
+                        badgeText: isGeneratingBrief ? "..." : nil
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isGeneratingBrief)
                 
                 NavigationLink(value: "all_emails") {
                     ActionButton(
@@ -342,7 +332,7 @@ struct DashboardView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                
+
                 NavigationLink(value: "starred") {
                     ActionButton(
                         title: "Saved",
@@ -467,8 +457,8 @@ struct DashboardView: View {
                             onRefresh: {
                                 await refreshAccount(accountEmail: account.email)
                             },
-                            onDisconnect: {
-                                disconnectAccount(email: account.email)
+                            onReconnect: {
+                                await reconnectAccount(accountEmail: account.email)
                             }
                         )
                     }
@@ -585,74 +575,11 @@ struct DashboardView: View {
         return dateFormatter.string(from: date)
     }
     
-    private func performSearch(query: String) {
-        // Cancel previous search task
-        searchTask?.cancel()
-        
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        if trimmedQuery.isEmpty {
-            searchResults = []
-            isSearching = false
-            return
-        }
-        
-        isSearching = true
-        
-        // Debounce search - wait 0.5 seconds after user stops typing
-        searchTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
-            // Check if task was cancelled
-            guard !Task.isCancelled else { return }
-            
-            // Search in both list items AND full cached email bodies
-            var matchingEmailIds = Set<Int>()
-            var resultEmails: [EmailListItem] = []
-            
-            // First: Search in cached email details (includes body text)
-            // This searches the full body content that's been downloaded
-            let fullBodyMatches = await EmailCache.shared.searchCachedEmails(query: trimmedQuery)
-            for match in fullBodyMatches {
-                matchingEmailIds.insert(match.id)
-            }
-            
-            // Check if task was cancelled
-            guard !Task.isCancelled else { return }
-            
-            // Second: Search in list items (for emails not yet fully cached)
-            if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
-                for email in snapshot.allEmails {
-                    // Skip if already matched via full body search
-                    if matchingEmailIds.contains(email.id) {
-                        resultEmails.append(email)
-                        continue
-                    }
-                    
-                    // Search in list item fields
-                    if email.subject.localizedCaseInsensitiveContains(trimmedQuery) ||
-                       email.sender.localizedCaseInsensitiveContains(trimmedQuery) ||
-                       email.sender_name?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
-                       email.snippet.localizedCaseInsensitiveContains(trimmedQuery) {
-                        resultEmails.append(email)
-                    }
-                }
-            }
-            
-            // Sort by received_at descending
-            resultEmails.sort { $0.received_at > $1.received_at }
-            
-            // Check again if task was cancelled
-            guard !Task.isCancelled else { return }
-            
-            await MainActor.run {
-                self.searchResults = resultEmails
-                self.isSearching = false
-            }
-        }
-    }
-    
     private func loadInitialData() async {
+        await AccountInclusionStore.shared.refreshFromConnectedAccounts()
+        await refreshStoriesCount()
+        await loadPersistedDailyBriefing()
+
         // First, quickly show any cached data
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
             await MainActor.run {
@@ -727,6 +654,9 @@ struct DashboardView: View {
                     
                     logSuccess("Dashboard updated: \(accounts.count) accounts, \(emails.count) emails", category: "Dashboard")
                 }
+
+                await refreshStoriesCount()
+                await presentDailyBriefingIfPending()
             } else {
                 logWarning("refreshData returned nil", category: "Dashboard")
             }
@@ -753,15 +683,125 @@ struct DashboardView: View {
         self.labels = snapshot.labels
         self.lastRefreshTime = snapshot.timestamp
     }
+
+    private func presentDailyBriefingIfPending() async {
+        let currentlyGenerating = await MainActor.run { isGeneratingBrief }
+        if currentlyGenerating { return }
+        let shouldPresent = await MainActor.run { pendingAutoBriefing }
+        guard shouldPresent else { return }
+        await presentDailyBriefing(trigger: .automatic)
+    }
+
+    private func presentDailyBriefing(trigger: BriefingTrigger) async {
+        let startedAt = Date()
+        let triggerLabel: String
+        switch trigger {
+        case .manual:
+            triggerLabel = "manual"
+        case .automatic:
+            triggerLabel = "automatic"
+        }
+        Telemetry.event("daily_briefing.generate.started", metadata: ["trigger": triggerLabel])
+        await MainActor.run { isGeneratingBrief = true }
+
+        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        guard hasKey else {
+            await MainActor.run {
+                showSummaryUpsell = true
+                isGeneratingBrief = false
+            }
+            Telemetry.event("daily_briefing.generate.blocked_no_key", metadata: ["trigger": triggerLabel])
+            return
+        }
+
+        let shouldReusePersisted: Bool = await MainActor.run {
+            if case .manual = trigger {
+                return !pendingAutoBriefing && dailyBriefingPayload != nil
+            }
+            return false
+        }
+        if shouldReusePersisted {
+            await MainActor.run {
+                showDailyBriefing = true
+                isGeneratingBrief = false
+            }
+            Telemetry.event("daily_briefing.generate.reused_cached", metadata: ["trigger": triggerLabel])
+            return
+        }
+
+        let sinceDate = lastBriefingCheckDate()
+        let payload = await DailyBriefingEngine.shared.buildPayload(from: allEmails, sinceDate: sinceDate)
+        await persistDailyBriefing(payload)
+        await MainActor.run {
+            dailyBriefingPayload = payload
+            showDailyBriefing = true
+            if case .automatic = trigger {
+                pendingAutoBriefing = false
+                markAutoBriefingShownToday()
+            }
+            isGeneratingBrief = false
+        }
+        Telemetry.event("daily_briefing.generate.presented", metadata: [
+            "trigger": triggerLabel,
+            "item_count": "\(payload.items.count)",
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
+        ])
+    }
+
+    private func saveLastBriefingCheckDate() {
+        UserDefaults.standard.set(Date(), forKey: "lastDailyBriefingCheckDate")
+    }
+
+    private func lastBriefingCheckDate() -> Date? {
+        UserDefaults.standard.object(forKey: "lastDailyBriefingCheckDate") as? Date
+    }
+
+    private func markAutoBriefingShownToday() {
+        let today = Calendar.current.startOfDay(for: Date())
+        UserDefaults.standard.set(today, forKey: "lastBriefingShownDate")
+    }
+
+    private func refreshStoriesCount() async {
+        let count = await StoriesFeedStore.shared.stories().count
+        await MainActor.run {
+            storiesCount = count
+        }
+    }
+
+    private func loadPersistedDailyBriefing() async {
+        guard let data = UserDefaults.standard.data(forKey: persistedBriefingKey),
+              let payload = try? JSONDecoder().decode(DailyBriefingPayload.self, from: data) else {
+            return
+        }
+        await MainActor.run {
+            dailyBriefingPayload = payload
+        }
+    }
+
+    private func persistDailyBriefing(_ payload: DailyBriefingPayload) async {
+        if let data = try? JSONEncoder().encode(payload) {
+            UserDefaults.standard.set(data, forKey: persistedBriefingKey)
+        }
+    }
     
     private func refreshAccount(accountEmail: String) async {
-        // Use full dashboard refresh with sync for this account
-        // This now uses fast metadata-only sync
-        if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: true) {
+        if let snapshot = await DashboardDataManager.shared.refreshData(forAccountEmail: accountEmail, shouldSync: true) {
             await MainActor.run {
                 applySnapshot(snapshot)
                 lastRefreshTime = snapshot.timestamp
             }
+        }
+    }
+    
+    @MainActor
+    private func reconnectAccount(accountEmail: String) async {
+        do {
+            try await authManager.signInWithGoogle()
+            await refreshDashboard(shouldSync: true)
+        } catch {
+            let message = error.localizedDescription
+            accountHealthStatuses[accountEmail] = .error("Reconnect failed: \(message)")
+            logError("Reconnect failed for \(accountEmail): \(message)", category: "Auth")
         }
     }
     

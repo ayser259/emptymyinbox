@@ -231,7 +231,7 @@ class MockGmailAPIService {
         var metadata: [EmailMetadata] = []
         for ref in refs {
             if let message = messages[ref.id] {
-                let emailId = abs(message.id.hashValue) + 1000
+                let emailId = StableID.emailId(gmailId: message.id)
                 let metadataItem = parseEmailMetadata(from: message, accountEmail: account.email, emailId: emailId)
                 metadata.append(metadataItem)
             }
@@ -375,3 +375,4 @@ class MockGmailAPIService {
         return nil
     }
 }
+

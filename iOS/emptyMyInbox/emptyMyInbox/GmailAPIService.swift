@@ -26,8 +26,7 @@ struct GmailAccount: Codable, Identifiable {
     
     // Generate a stable numeric ID for compatibility with existing code
     var numericId: Int {
-        // Use hash of email for consistent ID
-        abs(email.hashValue)
+        StableID.accountId(email: email)
     }
 }
 
@@ -81,10 +80,18 @@ struct GmailProfile: Codable {
 // MARK: - Service
 
 class GmailAPIService {
+    enum AccountLoadStatus: Equatable {
+        case loaded
+        case notFound
+        case transientFailure(OSStatus)
+        case corruptedData
+    }
+    
     static let shared = GmailAPIService()
     
     private let baseURL = "https://gmail.googleapis.com/gmail/v1"
     private var accounts: [GmailAccount] = []
+    private var accountsLoadStatus: AccountLoadStatus = .notFound
     private var nextEmailId: Int = 1000 // Starting ID for generated email IDs
     
     // URLSession with timeout configuration to prevent hanging requests
@@ -120,6 +127,10 @@ class GmailAPIService {
     
     func getCurrentAccountEmail() -> String? {
         return accounts.first?.email
+    }
+    
+    func getAccountsLoadStatus() -> AccountLoadStatus {
+        return accountsLoadStatus
     }
     
     // MARK: - Google Sign-In
@@ -218,11 +229,13 @@ class GmailAPIService {
             // Sign out specific account
             accounts.removeAll { $0.email == email }
             saveAccounts()
+            accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
         } else {
             // Sign out all accounts
             GIDSignIn.sharedInstance.signOut()
             accounts.removeAll()
             clearSavedAccounts()
+            accountsLoadStatus = .notFound
         }
     }
     
@@ -302,6 +315,7 @@ class GmailAPIService {
     
     func listMessages(for account: GmailAccount, query: String = "is:unread in:inbox", maxResults: Int = 50, pageToken: String? = nil, fields: String? = nil) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
         let token = try await getValidAccessToken(for: account)
+        let start = Date()
         
         var urlComponents = URLComponents(string: "\(baseURL)/users/me/messages")!
         urlComponents.queryItems = [
@@ -335,11 +349,25 @@ class GmailAPIService {
         case 200:
             // Normal response with messages
             let responseObj = try JSONDecoder().decode(GmailMessagesResponse.self, from: data)
+            Telemetry.event("gmail.list_messages", metadata: [
+                "status": "200",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(start) * 1000))",
+                "count": "\(responseObj.messages?.count ?? 0)"
+            ])
             return (messages: responseObj.messages ?? [], nextPageToken: responseObj.nextPageToken)
         case 204:
             // No Content - means no messages match the query (this is success, not error)
+            Telemetry.event("gmail.list_messages", metadata: [
+                "status": "204",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(start) * 1000))",
+                "count": "0"
+            ])
             return (messages: [], nextPageToken: nil)
         default:
+            Telemetry.event("gmail.list_messages_error", metadata: [
+                "status": "\(httpResponse.statusCode)",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(start) * 1000))"
+            ])
             throw GmailAPIError.apiError("Failed to list messages: status \(httpResponse.statusCode)")
         }
     }
@@ -614,8 +642,10 @@ class GmailAPIService {
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status != errSecSuccess {
             logWarning("Keychain save failed with status: \(status)", category: "Auth")
+            accountsLoadStatus = .transientFailure(status)
         } else {
             logSuccess("Saved \(accounts.count) accounts to keychain", category: "Auth")
+            accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
         }
     }
     
@@ -634,17 +664,23 @@ class GmailAPIService {
         if status == errSecItemNotFound {
             logInfo("No accounts found in keychain (first launch or cleared)", category: "Auth")
             // Try to migrate from old keychain format
-            migrateOldKeychainData()
+            if migrateOldKeychainData() {
+                accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
+            } else {
+                accountsLoadStatus = .notFound
+            }
             return
         }
         
         guard status == errSecSuccess else {
             logWarning("Keychain load failed with status: \(status)", category: "Auth")
+            accountsLoadStatus = .transientFailure(status)
             return
         }
         
         guard let data = result as? Data else {
             logWarning("Keychain returned non-data result", category: "Auth")
+            accountsLoadStatus = .corruptedData
             return
         }
         
@@ -652,13 +688,15 @@ class GmailAPIService {
             let loadedAccounts = try JSONDecoder().decode([GmailAccount].self, from: data)
             accounts = loadedAccounts
             logSuccess("Loaded \(accounts.count) accounts from keychain", category: "Auth")
+            accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
         } catch {
             logError("Failed to decode accounts from keychain: \(error)", category: "Auth")
+            accountsLoadStatus = .corruptedData
         }
     }
     
     /// Migrate from old keychain format (without service identifier)
-    private func migrateOldKeychainData() {
+    private func migrateOldKeychainData() -> Bool {
         let oldQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: "gmail_accounts",
@@ -672,7 +710,7 @@ class GmailAPIService {
         guard status == errSecSuccess,
               let data = result as? Data,
               let loadedAccounts = try? JSONDecoder().decode([GmailAccount].self, from: data) else {
-            return
+            return false
         }
         
         logInfo("Migrating \(loadedAccounts.count) accounts from old keychain format", category: "Auth")
@@ -687,6 +725,7 @@ class GmailAPIService {
             kSecAttrAccount as String: "gmail_accounts"
         ]
         SecItemDelete(deleteOldQuery as CFDictionary)
+        return true
     }
     
     private func clearSavedAccounts() {
@@ -704,6 +743,7 @@ class GmailAPIService {
             kSecAttrAccount as String: "gmail_accounts"
         ]
         SecItemDelete(oldQuery as CFDictionary)
+        accountsLoadStatus = .notFound
     }
     
     // MARK: - High-Level Email Operations
@@ -1229,6 +1269,7 @@ class GmailAPIService {
         )
         
         var emailItems: [EmailListItem] = []
+        var detailsToCache: [EmailDetail] = []
         
         // Process messages in batches (in parallel for speed)
         let batchSize = 20 // Increased batch size for better parallelism
@@ -1236,12 +1277,13 @@ class GmailAPIService {
             let end = min(start + batchSize, messageRefs.count)
             return Array(messageRefs[start..<end])
         }
-        
+
         // Process all batches concurrently
-        await withTaskGroup(of: [EmailListItem].self) { batchGroup in
+        await withTaskGroup(of: (items: [EmailListItem], details: [EmailDetail]).self) { batchGroup in
             for batch in batches {
                 batchGroup.addTask {
                     var batchItems: [EmailListItem] = []
+                    var batchDetails: [EmailDetail] = []
                     
                     await withTaskGroup(of: (EmailListItem?, EmailDetail?).self) { group in
                         for messageRef in batch {
@@ -1304,23 +1346,25 @@ class GmailAPIService {
                             if let item = item {
                                 batchItems.append(item)
                             }
-                            // Cache detail in background
                             if let detail = detail {
-                                Task {
-                                    await EmailCache.shared.saveEmailDetail(detail)
-                                }
+                                batchDetails.append(detail)
                             }
                         }
                     }
                     
-                    return batchItems
+                    return (items: batchItems, details: batchDetails)
                 }
             }
             
             // Collect all results from all batches
-            for await batchItems in batchGroup {
-                emailItems.append(contentsOf: batchItems)
+            for await batchResult in batchGroup {
+                emailItems.append(contentsOf: batchResult.items)
+                detailsToCache.append(contentsOf: batchResult.details)
             }
+        }
+        
+        if !detailsToCache.isEmpty {
+            await EmailCache.shared.saveEmailDetails(detailsToCache)
         }
         
         return emailItems

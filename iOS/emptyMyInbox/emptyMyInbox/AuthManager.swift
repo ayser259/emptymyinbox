@@ -20,15 +20,25 @@ class AuthManager: ObservableObject {
     @Published var sessionState: SessionState = .checking
     @Published var accounts: [GmailAccount] = []
     
-    private let gmailService = GmailAPIService.shared
+    private let gmailService: GmailServiceProtocol
+    private let emailCache: EmailCacheProtocol
+    private let dashboardCache: DashboardCacheProtocol
     
-    init() {
+    init(
+        gmailService: GmailServiceProtocol = GmailAPIService.shared,
+        emailCache: EmailCacheProtocol = EmailCache.shared,
+        dashboardCache: DashboardCacheProtocol = DashboardCache.shared
+    ) {
+        self.gmailService = gmailService
+        self.emailCache = emailCache
+        self.dashboardCache = dashboardCache
         // Check if user is already authenticated
         checkAuthStatus()
     }
     
     func checkAuthStatus() {
         sessionState = .checking
+        Telemetry.event("auth.check_status.started")
         Task {
             await MainActor.run {
                 let gmailAccounts = self.gmailService.getAllAccounts()
@@ -39,13 +49,23 @@ class AuthManager: ObservableObject {
                     self.isAuthenticated = true
                     self.sessionState = .authenticated
                     logSuccess("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
+                    Telemetry.counter("auth.accounts_loaded", delta: gmailAccounts.count)
                 } else {
-                    // No accounts in keychain - clear all caches and require login
-                    logWarning("Auth: No accounts in keychain - clearing caches and requiring login", category: "Auth")
-                    self.clearAllCaches()
+                    // Do not clear caches here. Empty accounts can be intentional sign-out OR transient keychain issue.
+                    switch self.gmailService.getAccountsLoadStatus() {
+                    case .notFound:
+                        logInfo("Auth: No accounts found in keychain", category: "Auth")
+                    case .transientFailure(let status):
+                        logWarning("Auth: Keychain transient failure (\(status)); preserving caches", category: "Auth")
+                    case .corruptedData:
+                        logWarning("Auth: Keychain data corrupted/unreadable; preserving caches", category: "Auth")
+                    case .loaded:
+                        logWarning("Auth: Account load status is loaded but no accounts available", category: "Auth")
+                    }
                     self.accounts = []
                     self.isAuthenticated = false
                     self.sessionState = .needsLogin
+                    Telemetry.event("auth.check_status.needs_login")
                 }
             }
         }
@@ -54,8 +74,9 @@ class AuthManager: ObservableObject {
     /// Clear all local caches when accounts are disconnected
     private func clearAllCaches() {
         Task {
-            await DashboardCache.shared.clear()
-            await EmailCache.shared.clearAll()
+            await dashboardCache.clear()
+            await emailCache.clearAll()
+            Telemetry.event("auth.cache_cleared")
             logInfo("Auth: Cleared all local caches", category: "Auth")
         }
     }
@@ -71,8 +92,12 @@ class AuthManager: ObservableObject {
             throw GmailAPIError.configurationError
         }
         
-        let account = try await gmailService.signIn(presentingViewController: rootViewController)
+        guard let authService = gmailService as? GmailAuthServiceProtocol else {
+            throw GmailAPIError.configurationError
+        }
+        let account = try await authService.signIn(presentingViewController: rootViewController)
         logSuccess("Auth: Signed in as \(account.email)", category: "Auth")
+        Telemetry.event("auth.sign_in.success", metadata: ["account_hash": Telemetry.hashForDiagnostics(account.email)])
         
         // Reload accounts
         self.accounts = gmailService.getAllAccounts()
@@ -80,7 +105,7 @@ class AuthManager: ObservableObject {
         self.sessionState = .authenticated
         
         // Post notification so dashboard refreshes
-        NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
+        NotificationCenter.default.post(name: .accountAdded, object: nil)
         #else
         throw GmailAPIError.configurationError
         #endif

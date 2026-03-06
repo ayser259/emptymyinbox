@@ -76,7 +76,7 @@ struct DebugCopyButton: View {
 extension EmailDetail {
     /// Formats the email content for debug copying
     var debugCopyContent: String {
-        var content = """
+        let content = """
         === DEBUG EMAIL CONTENT ===
         
         ID: \(id)
@@ -108,6 +108,7 @@ extension EmailDetail {
         return content
     }
 }
+
 
 
 

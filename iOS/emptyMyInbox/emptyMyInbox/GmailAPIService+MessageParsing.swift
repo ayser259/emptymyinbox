@@ -244,9 +244,7 @@ extension GmailAPIService {
     // MARK: - Email ID Generation
     
     private func generateEmailId(for gmailId: String) -> Int {
-        // Generate a stable numeric ID from Gmail ID
-        // Use hash and ensure it's positive
-        return abs(gmailId.hashValue) + 1000
+        StableID.emailId(gmailId: gmailId)
     }
     
     func getEmailId(for gmailId: String) -> Int {

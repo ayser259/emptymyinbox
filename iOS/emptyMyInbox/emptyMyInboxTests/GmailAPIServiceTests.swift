@@ -687,3 +687,4 @@ struct GmailAPIServiceTests {
         #expect(!emailItem.received_at.isEmpty)
     }
 }
+

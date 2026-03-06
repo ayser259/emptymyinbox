@@ -131,8 +131,6 @@ struct FilterCriteria: Codable {
     let from: String?
     let to: String?
     let subject: String?
-    let query: String?
-    let negatedQuery: String?
     let hasAttachment: Bool?
     let excludeChats: Bool?
     let size: Int?  // Size in bytes
@@ -142,8 +140,6 @@ struct FilterCriteria: Codable {
         case from
         case to
         case subject
-        case query
-        case negatedQuery
         case hasAttachment
         case excludeChats
         case size
@@ -155,8 +151,6 @@ struct FilterCriteria: Codable {
         from = try container.decodeIfPresent(String.self, forKey: .from)
         to = try container.decodeIfPresent(String.self, forKey: .to)
         subject = try container.decodeIfPresent(String.self, forKey: .subject)
-        query = try container.decodeIfPresent(String.self, forKey: .query)
-        negatedQuery = try container.decodeIfPresent(String.self, forKey: .negatedQuery)
         hasAttachment = try container.decodeIfPresent(Bool.self, forKey: .hasAttachment)
         excludeChats = try container.decodeIfPresent(Bool.self, forKey: .excludeChats)
         size = try container.decodeIfPresent(Int.self, forKey: .size)
@@ -168,8 +162,6 @@ struct FilterCriteria: Codable {
         try container.encodeIfPresent(from, forKey: .from)
         try container.encodeIfPresent(to, forKey: .to)
         try container.encodeIfPresent(subject, forKey: .subject)
-        try container.encodeIfPresent(query, forKey: .query)
-        try container.encodeIfPresent(negatedQuery, forKey: .negatedQuery)
         try container.encodeIfPresent(hasAttachment, forKey: .hasAttachment)
         try container.encodeIfPresent(excludeChats, forKey: .excludeChats)
         try container.encodeIfPresent(size, forKey: .size)
@@ -181,8 +173,6 @@ struct FilterCriteria: Codable {
         from: String? = nil,
         to: String? = nil,
         subject: String? = nil,
-        query: String? = nil,
-        negatedQuery: String? = nil,
         hasAttachment: Bool? = nil,
         excludeChats: Bool? = nil,
         size: Int? = nil,
@@ -191,8 +181,6 @@ struct FilterCriteria: Codable {
         self.from = from
         self.to = to
         self.subject = subject
-        self.query = query
-        self.negatedQuery = negatedQuery
         self.hasAttachment = hasAttachment
         self.excludeChats = excludeChats
         self.size = size
@@ -312,6 +300,115 @@ struct EmailMetadata: Codable, Identifiable {
             received_at: received_at,
             account_email: account_email,
             marked_read_at: nil
+        )
+    }
+}
+
+// MARK: - Daily Briefing
+
+enum BriefingItemType: String, Codable, CaseIterable {
+    case directCommunication
+    case calendarInvite
+    case urgentNotification
+}
+
+struct DailyBriefingItem: Codable, Identifiable, Hashable {
+    let id: Int
+    let emailId: Int
+    let gmailId: String
+    let threadId: String?
+    let accountEmail: String
+    let sender: String
+    let senderName: String?
+    let subject: String
+    let snippet: String
+    let receivedAt: String
+    let type: BriefingItemType
+}
+
+struct DailyBriefingPayload: Codable {
+    let generatedAt: Date
+    let sinceDate: Date?
+    let introText: String
+    let items: [DailyBriefingItem]
+}
+
+// MARK: - Newsletter Insights
+
+struct NewsletterTheme: Codable, Hashable {
+    let tag: String
+    let confidence: Double
+}
+
+struct InsightCard: Codable, Identifiable, Hashable {
+    let id: Int
+    let emailId: Int
+    let gmailId: String
+    let accountEmail: String
+    let sender: String
+    let senderName: String?
+    let subject: String
+    let summary: String
+    let keyPoints: [String]
+    let theme: NewsletterTheme
+}
+
+enum InterestSignalType: String, Codable {
+    case more
+    case less
+}
+
+struct InterestSignal: Codable {
+    let timestamp: Date
+    let signalType: InterestSignalType
+    let themeTag: String
+    let sender: String
+}
+
+struct InterestProfile: Codable {
+    var themeScores: [String: Double]
+    var senderScores: [String: Double]
+    var recentSignals: [InterestSignal]
+    var updatedAt: Date
+
+    static var empty: InterestProfile {
+        InterestProfile(
+            themeScores: [:],
+            senderScores: [:],
+            recentSignals: [],
+            updatedAt: Date()
+        )
+    }
+}
+
+// MARK: - Account Feature Inclusion
+
+struct FeatureAccountInclusion: Codable, Identifiable, Hashable {
+    var id: String { accountEmail.lowercased() }
+    let accountEmail: String
+    var includeInDailyBriefing: Bool
+    var includeInNewsletterInsights: Bool
+    var isPrimaryNewsletterAddress: Bool
+}
+
+// MARK: - LLM Settings
+
+struct LLMSettings: Codable {
+    var defaultModel: String
+    var initialPassModel: String
+    var proModel: String
+    var useProModelForDeepAnalysis: Bool
+    var requestTimeoutSeconds: Double
+    var maxRetries: Int
+
+    static var `default`: LLMSettings {
+        LLMSettings(
+            defaultModel: "gpt-4o-mini",
+            initialPassModel: "gpt-4o-mini",
+            proModel: "gpt-4.1",
+            useProModelForDeepAnalysis: false,
+            requestTimeoutSeconds: 30,
+            maxRetries: 2
         )
     }
 }

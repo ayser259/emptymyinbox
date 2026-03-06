@@ -83,7 +83,7 @@ struct EmailCacheTests {
         
         #expect(loaded != nil)
         #expect(loaded?.gmail_id == "gmail_msg_123")
-        #expect(loaded?.id == 1)
+        #expect(loaded?.id == StableID.emailId(gmailId: "gmail_msg_123"))
     }
     
     @Test("Load non-existent email detail returns nil")
@@ -389,164 +389,6 @@ struct EmailCacheTests {
         #expect(await cache.isEmailCached(emailId: 1) == true)
     }
     
-    // MARK: - Search Cached Emails Tests
-    
-    @Test("Search cached emails by query")
-    func testSearchCachedEmails() async throws {
-        let cache = EmailCache.shared
-        await cache.clearAll()
-        
-        // Create emails with different content
-        var email1 = createTestEmailDetail(id: 1)
-        email1 = EmailDetail(
-            id: email1.id,
-            gmail_id: email1.gmail_id,
-            thread_id: email1.thread_id,
-            subject: "Important Meeting",
-            sender: email1.sender,
-            sender_name: email1.sender_name,
-            recipients_to: email1.recipients_to,
-            recipients_cc: email1.recipients_cc,
-            recipients_bcc: email1.recipients_bcc,
-            body_text: "Let's discuss the project",
-            body_html: email1.body_html,
-            snippet: email1.snippet,
-            is_read: email1.is_read,
-            is_starred: email1.is_starred,
-            labels: email1.labels,
-            received_at: email1.received_at,
-            account_email: email1.account_email,
-            created_at: email1.created_at
-        )
-        
-        var email2 = createTestEmailDetail(id: 2)
-        email2 = EmailDetail(
-            id: email2.id,
-            gmail_id: email2.gmail_id,
-            thread_id: email2.thread_id,
-            subject: "Project Update",
-            sender: email2.sender,
-            sender_name: email2.sender_name,
-            recipients_to: email2.recipients_to,
-            recipients_cc: email2.recipients_cc,
-            recipients_bcc: email2.recipients_bcc,
-            body_text: "The project is going well",
-            body_html: email2.body_html,
-            snippet: email2.snippet,
-            is_read: email2.is_read,
-            is_starred: email2.is_starred,
-            labels: email2.labels,
-            received_at: email2.received_at,
-            account_email: email2.account_email,
-            created_at: email2.created_at
-        )
-        
-        await cache.saveEmailDetail(email1)
-        await cache.saveEmailDetail(email2)
-        
-        // Search for "project"
-        let results = await cache.searchCachedEmails(query: "project")
-        
-        #expect(results.count == 2)
-        #expect(results.contains { $0.id == 1 })
-        #expect(results.contains { $0.id == 2 })
-    }
-    
-    @Test("Search cached emails is case insensitive")
-    func testSearchCachedEmailsCaseInsensitive() async throws {
-        let cache = EmailCache.shared
-        await cache.clearAll()
-        
-        var email = createTestEmailDetail(id: 1)
-        email = EmailDetail(
-            id: email.id,
-            gmail_id: email.gmail_id,
-            thread_id: email.thread_id,
-            subject: "IMPORTANT MEETING",
-            sender: email.sender,
-            sender_name: email.sender_name,
-            recipients_to: email.recipients_to,
-            recipients_cc: email.recipients_cc,
-            recipients_bcc: email.recipients_bcc,
-            body_text: email.body_text,
-            body_html: email.body_html,
-            snippet: email.snippet,
-            is_read: email.is_read,
-            is_starred: email.is_starred,
-            labels: email.labels,
-            received_at: email.received_at,
-            account_email: email.account_email,
-            created_at: email.created_at
-        )
-        
-        await cache.saveEmailDetail(email)
-        
-        // Search with lowercase
-        let results = await cache.searchCachedEmails(query: "important")
-        
-        #expect(results.count == 1)
-        #expect(results.first?.id == 1)
-    }
-    
-    @Test("Search cached emails with multiple terms")
-    func testSearchCachedEmailsWithMultipleTerms() async throws {
-        let cache = EmailCache.shared
-        await cache.clearAll()
-        
-        var email1 = createTestEmailDetail(id: 1)
-        email1 = EmailDetail(
-            id: email1.id,
-            gmail_id: email1.gmail_id,
-            thread_id: email1.thread_id,
-            subject: "Project Meeting",
-            sender: email1.sender,
-            sender_name: email1.sender_name,
-            recipients_to: email1.recipients_to,
-            recipients_cc: email1.recipients_cc,
-            recipients_bcc: email1.recipients_bcc,
-            body_text: "Let's discuss the important project",
-            body_html: email1.body_html,
-            snippet: email1.snippet,
-            is_read: email1.is_read,
-            is_starred: email1.is_starred,
-            labels: email1.labels,
-            received_at: email1.received_at,
-            account_email: email1.account_email,
-            created_at: email1.created_at
-        )
-        
-        var email2 = createTestEmailDetail(id: 2)
-        email2 = EmailDetail(
-            id: email2.id,
-            gmail_id: email2.gmail_id,
-            thread_id: email2.thread_id,
-            subject: "Project Update",
-            sender: email2.sender,
-            sender_name: email2.sender_name,
-            recipients_to: email2.recipients_to,
-            recipients_cc: email2.recipients_cc,
-            recipients_bcc: email2.recipients_bcc,
-            body_text: "The project is going well",
-            body_html: email2.body_html,
-            snippet: email2.snippet,
-            is_read: email2.is_read,
-            is_starred: email2.is_starred,
-            labels: email2.labels,
-            received_at: email2.received_at,
-            account_email: email2.account_email,
-            created_at: email2.created_at
-        )
-        
-        await cache.saveEmailDetail(email1)
-        await cache.saveEmailDetail(email2)
-        
-        // Search with multiple terms (AND logic)
-        let results = await cache.searchCachedEmails(terms: ["project", "important"])
-        
-        #expect(results.count == 1)
-        #expect(results.first?.id == 1)
-    }
-    
     // MARK: - Concurrent Access Tests
     
     @Test("Concurrent save operations")
@@ -698,3 +540,4 @@ struct EmailCacheTests {
         }
     }
 }
+

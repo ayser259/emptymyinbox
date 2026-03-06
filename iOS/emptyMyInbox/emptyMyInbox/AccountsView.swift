@@ -266,7 +266,7 @@ struct AccountsView: View {
         await MainActor.run {
             applySnapshot(updatedSnapshot)
             // Notify DashboardView to refresh (so new account shows immediately)
-            NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
+            NotificationCenter.default.post(name: .accountAdded, object: nil)
         }
     }
     

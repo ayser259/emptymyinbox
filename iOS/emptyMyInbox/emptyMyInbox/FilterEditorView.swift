@@ -25,8 +25,6 @@ struct FilterEditorView: View {
     @State private var fromText = ""
     @State private var toText = ""
     @State private var subjectText = ""
-    @State private var queryText = ""
-    @State private var negatedQueryText = ""
     @State private var hasAttachment = false
     @State private var excludeChats = false
     @State private var sizeText = ""
@@ -95,22 +93,6 @@ struct FilterEditorView: View {
                                     placeholder: "Contains text...",
                                     text: $subjectText,
                                     icon: "text.bubble"
-                                )
-                                
-                                // Query (Gmail search syntax)
-                                FilterTextField(
-                                    title: "Search Query",
-                                    placeholder: "Use Gmail search syntax",
-                                    text: $queryText,
-                                    icon: "magnifyingglass"
-                                )
-                                
-                                // Negated Query
-                                FilterTextField(
-                                    title: "Does Not Match",
-                                    placeholder: "Exclude emails matching...",
-                                    text: $negatedQueryText,
-                                    icon: "magnifyingglass.circle"
                                 )
                                 
                                 // Has Attachment
@@ -353,8 +335,6 @@ struct FilterEditorView: View {
                     fromText = filter.criteria.from ?? ""
                     toText = filter.criteria.to ?? ""
                     subjectText = filter.criteria.subject ?? ""
-                    queryText = filter.criteria.query ?? ""
-                    negatedQueryText = filter.criteria.negatedQuery ?? ""
                     hasAttachment = filter.criteria.hasAttachment ?? false
                     excludeChats = filter.criteria.excludeChats ?? false
                     if let size = filter.criteria.size {
@@ -402,8 +382,6 @@ struct FilterEditorView: View {
                 if !fromText.isEmpty { criteriaDict["from"] = fromText }
                 if !toText.isEmpty { criteriaDict["to"] = toText }
                 if !subjectText.isEmpty { criteriaDict["subject"] = subjectText }
-                if !queryText.isEmpty { criteriaDict["query"] = queryText }
-                if !negatedQueryText.isEmpty { criteriaDict["-query"] = negatedQueryText }
                 if hasAttachment { criteriaDict["hasAttachment"] = true }
                 if excludeChats { criteriaDict["excludeChats"] = true }
                 if let sizeInBytes = sizeText.isEmpty ? nil : Int((Double(sizeText) ?? 0) * 1024 * 1024) {

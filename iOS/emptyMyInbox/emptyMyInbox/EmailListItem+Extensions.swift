@@ -12,6 +12,26 @@ extension EmailListItem {
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         
+        var updatedLabels = labels
+        
+        if let isRead {
+            if isRead {
+                updatedLabels.removeAll { $0 == "UNREAD" }
+            } else if !updatedLabels.contains("UNREAD") {
+                updatedLabels.append("UNREAD")
+            }
+        }
+        
+        if let isStarred {
+            if isStarred {
+                if !updatedLabels.contains("STARRED") {
+                    updatedLabels.append("STARRED")
+                }
+            } else {
+                updatedLabels.removeAll { $0 == "STARRED" }
+            }
+        }
+        
         // If marking as read and not already marked, set the timestamp
         let newMarkedReadAt: String?
         if let isRead = isRead, isRead && !self.is_read {
@@ -32,7 +52,7 @@ extension EmailListItem {
             snippet: snippet,
             is_read: isRead ?? self.is_read,
             is_starred: isStarred ?? self.is_starred,
-            labels: labels,
+            labels: updatedLabels,
             received_at: received_at,
             account_email: account_email,
             marked_read_at: newMarkedReadAt

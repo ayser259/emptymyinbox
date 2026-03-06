@@ -89,13 +89,13 @@ struct FilteredEmailsView: View {
             return name.formattedAsName
         case .category(let label):
             return label.name
-        case .accountAll(let email):
+        case .accountAll:
             return "All Emails"
-        case .accountUnread(let email):
+        case .accountUnread:
             return "Unread"
-        case .accountStarred(let email):
+        case .accountStarred:
             return "Starred"
-        case .accountSenders(let email):
+        case .accountSenders:
             return "Senders"
         }
     }
@@ -340,7 +340,7 @@ struct FilteredEmailsView: View {
             return emails.filter { $0.account_email.lowercased() == accountEmail.lowercased() }
         case .accountUnread(let accountEmail):
             return emails.filter { $0.account_email.lowercased() == accountEmail.lowercased() && !$0.is_read }
-        case .accountStarred(let accountEmail):
+        case .accountStarred:
             // Starred filter should already have filtered emails from getSourceEmails
             return emails
         case .accountSenders:
@@ -498,8 +498,6 @@ struct FilterRulesBottomSheet: View {
                             from: criteria["from"] as? String,
                             to: criteria["to"] as? String,
                             subject: criteria["subject"] as? String,
-                            query: criteria["query"] as? String,
-                            negatedQuery: criteria["-query"] as? String,
                             hasAttachment: criteria["hasAttachment"] as? Bool,
                             excludeChats: criteria["excludeChats"] as? Bool,
                             size: criteria["size"] as? Int,
@@ -580,17 +578,6 @@ struct FilterRuleDisplayRow: View {
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.secondaryText.opacity(0.7))
                     Text("Has attachment")
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                }
-            }
-            
-            if let query = filter.criteria.query {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12))
-                        .foregroundColor(AppTheme.secondaryText.opacity(0.7))
-                    Text("Query: \(query)")
                         .font(AppTheme.caption)
                         .secondaryText()
                 }
@@ -681,24 +668,6 @@ struct FilterDetailView: View {
                                 )
                             }
                             
-                            if let query = filter.criteria.query {
-                                FilterDetailRow(
-                                    icon: "magnifyingglass",
-                                    title: "Search Query",
-                                    value: query,
-                                    description: "Matches Gmail search"
-                                )
-                            }
-                            
-                            if let negatedQuery = filter.criteria.negatedQuery {
-                                FilterDetailRow(
-                                    icon: "magnifyingglass.circle",
-                                    title: "Does Not Match",
-                                    value: negatedQuery,
-                                    description: "Excludes emails matching"
-                                )
-                            }
-                            
                             if filter.criteria.hasAttachment == true {
                                 FilterDetailRow(
                                     icon: "paperclip",
@@ -731,8 +700,6 @@ struct FilterDetailView: View {
                             if filter.criteria.from == nil &&
                                filter.criteria.to == nil &&
                                filter.criteria.subject == nil &&
-                               filter.criteria.query == nil &&
-                               filter.criteria.negatedQuery == nil &&
                                filter.criteria.hasAttachment != true &&
                                filter.criteria.excludeChats != true &&
                                filter.criteria.size == nil {

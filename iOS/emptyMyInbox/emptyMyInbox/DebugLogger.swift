@@ -85,8 +85,9 @@ class DebugLogger: ObservableObject {
     
     func log(_ message: String, level: LogLevel = .info, category: String? = nil) {
         guard isEnabled else { return }
-        
-        let entry = LogEntry(level: level, message: message, category: category)
+
+        let sanitizedMessage = Telemetry.redactPII(in: message)
+        let entry = LogEntry(level: level, message: sanitizedMessage, category: category)
         entries.append(entry)
         
         // Trim old entries if needed
@@ -96,7 +97,7 @@ class DebugLogger: ObservableObject {
         
         // Also print to console for Xcode debugging
         let prefix = category.map { "[\($0)] " } ?? ""
-        print("\(level.emoji) \(prefix)\(message)")
+        print("\(level.emoji) \(prefix)\(sanitizedMessage)")
         
         // Persist asynchronously
         persistLogs()
@@ -241,6 +242,7 @@ func logSuccess(_ message: String, category: String? = nil) {
         DebugLogger.shared.success(message, category: category)
     }
 }
+
 
 
 

@@ -63,3 +63,4 @@ final class DashboardUITests: XCTestCase {
     //     // Verify refresh behavior
     // }
 }
+
