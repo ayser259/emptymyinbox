@@ -11,6 +11,7 @@ struct ActionButton: View {
     let title: String
     let count: Int
     let icon: String
+    var badgeText: String? = nil
     
     var body: some View {
         VStack(spacing: AppTheme.spacingSmall) {
@@ -22,7 +23,7 @@ struct ActionButton: View {
                 .font(AppTheme.subheadline)
                 .primaryText()
             
-            Text("\(count)")
+            Text(badgeText ?? "\(count)")
                 .font(AppTheme.caption)
                 .secondaryText()
         }
@@ -79,3 +80,4 @@ struct CatchUpActionButton: View {
         .shadow(color: AppTheme.accent.opacity(0.2), radius: 6, x: 0, y: 2)
     }
 }
+

@@ -8,12 +8,32 @@
 import SwiftUI
 import GoogleSignIn
 
+struct AppEnvironment {
+    let gmailService: GmailServiceProtocol
+    let emailCache: EmailCacheProtocol
+    let dashboardCache: DashboardCacheProtocol
+    
+    static let live = AppEnvironment(
+        gmailService: GmailAPIService.shared,
+        emailCache: EmailCache.shared,
+        dashboardCache: DashboardCache.shared
+    )
+}
+
 @main
 struct emptyMyInboxApp: App {
-    @StateObject private var authManager = AuthManager()
+    @StateObject private var authManager: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
+        let environment = AppEnvironment.live
+        _authManager = StateObject(
+            wrappedValue: AuthManager(
+                gmailService: environment.gmailService,
+                emailCache: environment.emailCache,
+                dashboardCache: environment.dashboardCache
+            )
+        )
         // Suppress WebKit console noise by setting environment variable
         // This reduces the RBS assertion errors and process termination messages
         setenv("OS_ACTIVITY_MODE", "disable", 1)
@@ -38,9 +58,6 @@ struct emptyMyInboxApp: App {
             .preferredColorScheme(.dark) // Force dark mode
             .background(AppTheme.primaryBackground)
             .task {
-                // Check auth status on app launch
-                authManager.checkAuthStatus()
-                
                 // Clean up old cached emails in background
                 // Removes emails marked as read that are older than 10 days
                 Task.detached(priority: .background) {
@@ -72,6 +89,7 @@ struct emptyMyInboxApp: App {
         // Only refresh once per day (first time app is opened that day)
         let userDefaults = UserDefaults.standard
         let lastAutoRefreshKey = "lastAutoRefreshDate"
+        let lastBriefingShownKey = "lastBriefingShownDate"
         
         // Get today's date (just the date, not time)
         let calendar = Calendar.current
@@ -94,6 +112,17 @@ struct emptyMyInboxApp: App {
         // Post notification to refresh (only if authenticated)
         if case .authenticated = authManager.sessionState {
             NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
+
+            let shouldShowBriefing: Bool
+            if let lastBriefingDate = userDefaults.object(forKey: lastBriefingShownKey) as? Date {
+                shouldShowBriefing = !calendar.isDate(today, inSameDayAs: calendar.startOfDay(for: lastBriefingDate))
+            } else {
+                shouldShowBriefing = true
+            }
+
+            if shouldShowBriefing {
+                NotificationCenter.default.post(name: .appShouldShowDailyBriefing, object: nil)
+            }
         }
     }
     
@@ -118,6 +147,9 @@ struct emptyMyInboxApp: App {
 
 extension Notification.Name {
     static let appShouldRefreshData = Notification.Name("AppShouldRefreshData")
+    static let appShouldShowDailyBriefing = Notification.Name("AppShouldShowDailyBriefing")
+    static let accountAdded = Notification.Name("AccountAdded")
+    static let cacheCleared = Notification.Name("CacheCleared")
 }
 
 struct SplashView: View {

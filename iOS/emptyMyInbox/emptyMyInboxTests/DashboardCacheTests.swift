@@ -74,7 +74,7 @@ struct DashboardCacheTests {
         #expect(loaded?.emails.count == 1)
         #expect(loaded?.emails.first?.id == 1)
         #expect(loaded?.allEmails.count == 1)
-        #expect(loaded?.starredEmails.isEmpty)
+        #expect(loaded?.starredEmails.isEmpty == true)
         #expect(loaded?.labels.count == 1)
         #expect(loaded?.labels.first?.id == "INBOX")
     }
@@ -143,11 +143,11 @@ struct DashboardCacheTests {
         let loaded = await cache.loadSnapshot()
         
         #expect(loaded != nil)
-        #expect(loaded?.accounts.isEmpty)
-        #expect(loaded?.emails.isEmpty)
-        #expect(loaded?.allEmails.isEmpty)
-        #expect(loaded?.starredEmails.isEmpty)
-        #expect(loaded?.labels.isEmpty)
+        #expect(loaded?.accounts.isEmpty == true)
+        #expect(loaded?.emails.isEmpty == true)
+        #expect(loaded?.allEmails.isEmpty == true)
+        #expect(loaded?.starredEmails.isEmpty == true)
+        #expect(loaded?.labels.isEmpty == true)
     }
     
     // MARK: - Clear Tests
@@ -213,8 +213,12 @@ struct DashboardCacheTests {
         let loaded = await cache.loadSnapshot()
         
         #expect(loaded != nil)
-        #expect(loaded?.timestamp >= beforeSave)
-        #expect(loaded?.timestamp <= afterSave)
+        if let timestamp = loaded?.timestamp {
+            #expect(timestamp >= beforeSave)
+            #expect(timestamp <= afterSave)
+        } else {
+            #expect(Bool(false))
+        }
     }
     
     // MARK: - Multiple Save Tests
@@ -338,3 +342,4 @@ struct DashboardCacheTests {
         #expect(loadedAccount?.email_count == 42)
     }
 }
+

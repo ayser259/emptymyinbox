@@ -43,7 +43,8 @@ struct AccountHealth: Identifiable, Codable {
 actor DashboardDataManager {
     static let shared = DashboardDataManager()
     
-    private let gmailService = GmailAPIService.shared
+    private let gmailService: GmailServiceProtocol
+    private let dashboardCache: DashboardCacheProtocol
     
     // Account health tracking
     private var accountHealthMap: [String: AccountHealth] = [:]
@@ -51,8 +52,16 @@ actor DashboardDataManager {
     // Progress callback type
     typealias ProgressCallback = (RefreshStage, ProgressStatus, String?, String?, Int?, Int?) async -> Void
     
+    init(
+        gmailService: GmailServiceProtocol = GmailAPIService.shared,
+        dashboardCache: DashboardCacheProtocol = DashboardCache.shared
+    ) {
+        self.gmailService = gmailService
+        self.dashboardCache = dashboardCache
+    }
+    
     func loadCachedSnapshot() async -> DashboardDataSnapshot? {
-        await DashboardCache.shared.loadSnapshot()
+        await dashboardCache.loadSnapshot()
     }
     
     /// Get health status for all accounts
@@ -67,6 +76,7 @@ actor DashboardDataManager {
     
     @discardableResult
     func refreshData(shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
+        let refreshStart = Date()
         logInfo("refreshData called - shouldSync: \(shouldSync), hasCallback: \(progressCallback != nil)", category: "Refresh")
         
         // Stage 1: Initializing
@@ -89,7 +99,7 @@ actor DashboardDataManager {
         
         // Stage 2: Loading cache
         await progressCallback?(.loadingCache, .inProgress, "Loading existing data...", nil, nil, nil)
-        let existingSnapshot = await DashboardCache.shared.loadSnapshot()
+        let existingSnapshot = await dashboardCache.loadSnapshot()
         await progressCallback?(.loadingCache, .completed, "Cache loaded", nil, nil, nil)
         
         // Re-fetch accounts
@@ -316,7 +326,11 @@ actor DashboardDataManager {
             starredEmails: sortedStarred,
             labels: labels
         )
-        await DashboardCache.shared.saveSnapshot(snapshot)
+        await dashboardCache.saveSnapshot(snapshot)
+        Telemetry.event("dashboard.refresh.snapshot_saved", metadata: [
+            "unread_count": "\(sortedUnread.count)",
+            "starred_count": "\(sortedStarred.count)"
+        ])
         
         await progressCallback?(.savingSnapshot, .completed, "Snapshot saved", nil, nil, nil)
         
@@ -325,8 +339,129 @@ actor DashboardDataManager {
         
         logSuccess("Refresh complete: \(sortedUnread.count) unread, \(sortedStarred.count) starred", category: "Refresh")
         logDebug("Health statuses: \(accountHealthMap.mapValues { String(describing: $0.status) })", category: "Health")
+        Telemetry.event("dashboard.refresh.complete", metadata: [
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(refreshStart) * 1000))",
+            "unread_count": "\(sortedUnread.count)",
+            "starred_count": "\(sortedStarred.count)"
+        ])
         
         return snapshot
+    }
+
+    @discardableResult
+    func refreshData(forAccountEmail accountEmail: String, shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
+        guard shouldSync else {
+            return await refreshData(shouldSync: shouldSync, progressCallback: progressCallback)
+        }
+
+        let normalizedTarget = accountEmail.lowercased()
+        guard let gmailAccount = gmailService.getAllAccounts().first(where: { $0.email.lowercased() == normalizedTarget }) else {
+            logWarning("Scoped refresh skipped: account not found for \(accountEmail)", category: "Refresh")
+            return await dashboardCache.loadSnapshot()
+        }
+
+        let existingSnapshot = await dashboardCache.loadSnapshot()
+        let refreshStart = Date()
+        await progressCallback?(.initializing, .inProgress, "Refreshing \(gmailAccount.email)...", gmailAccount.email, nil, nil)
+
+        do {
+            let unreadMetadata = try await gmailService.syncUnreadEmailMetadata(
+                for: gmailAccount,
+                maxResults: 1000,
+                progressCallback: { current, total in
+                    await progressCallback?(.fetchingUnread, .inProgress, "Fetching unread: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                }
+            )
+            await progressCallback?(.fetchingUnread, .completed, "Fetched unread", gmailAccount.email, unreadMetadata.count, nil)
+
+            let starredMetadata = try await gmailService.syncStarredEmailMetadata(
+                for: gmailAccount,
+                maxResults: 500,
+                progressCallback: { current, total in
+                    await progressCallback?(.fetchingStarred, .inProgress, "Fetching starred: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                }
+            )
+            await progressCallback?(.fetchingStarred, .completed, "Fetched starred", gmailAccount.email, starredMetadata.count, nil)
+
+            var health = accountHealthMap[gmailAccount.email] ?? AccountHealth(email: gmailAccount.email)
+            health.status = .healthy
+            health.lastSuccessfulSync = Date()
+            health.lastError = nil
+            health.lastChecked = Date()
+            accountHealthMap[gmailAccount.email] = health
+
+            let updatedUnreadForAccount = unreadMetadata.map { $0.toEmailListItem() }
+            let updatedStarredForAccount = starredMetadata.map { $0.toEmailListItem() }
+
+            let baseSnapshot = existingSnapshot ?? DashboardDataSnapshot(
+                timestamp: Date(),
+                accounts: [],
+                emails: [],
+                allEmails: [],
+                starredEmails: [],
+                labels: []
+            )
+
+            let mergedUnread = (baseSnapshot.allEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedUnreadForAccount)
+                .sorted { $0.received_at > $1.received_at }
+            let mergedStarred = (baseSnapshot.starredEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedStarredForAccount)
+                .sorted { $0.received_at > $1.received_at }
+
+            let dateFormatter = ISO8601DateFormatter()
+            dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let nowString = dateFormatter.string(from: Date())
+            var mergedAccounts = baseSnapshot.accounts
+            if let index = mergedAccounts.firstIndex(where: { $0.email.lowercased() == normalizedTarget }) {
+                let current = mergedAccounts[index]
+                mergedAccounts[index] = EmailAccount(
+                    id: current.id,
+                    email: current.email,
+                    is_active: current.is_active,
+                    last_sync: nowString,
+                    created_at: current.created_at,
+                    email_count: mergedUnread.filter { $0.account_email.lowercased() == normalizedTarget }.count
+                )
+            } else {
+                mergedAccounts.append(
+                    EmailAccount(
+                        id: gmailAccount.numericId,
+                        email: gmailAccount.email,
+                        is_active: true,
+                        last_sync: nowString,
+                        created_at: nowString,
+                        email_count: mergedUnread.filter { $0.account_email.lowercased() == normalizedTarget }.count
+                    )
+                )
+            }
+
+            let labels = labelsForUnreadEmails(mergedUnread)
+            let updatedSnapshot = DashboardDataSnapshot(
+                timestamp: Date(),
+                accounts: mergedAccounts,
+                emails: mergedUnread,
+                allEmails: mergedUnread,
+                starredEmails: mergedStarred,
+                labels: labels
+            )
+            await dashboardCache.saveSnapshot(updatedSnapshot)
+            Telemetry.event("dashboard.refresh.account.complete", metadata: [
+                "account_scope": "single_account",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(refreshStart) * 1000))",
+                "unread_count": "\(updatedUnreadForAccount.count)",
+                "starred_count": "\(updatedStarredForAccount.count)"
+            ])
+            await progressCallback?(.complete, .completed, "Account refresh completed", gmailAccount.email, nil, nil)
+            return updatedSnapshot
+        } catch {
+            var health = accountHealthMap[gmailAccount.email] ?? AccountHealth(email: gmailAccount.email)
+            health.status = .error(error.localizedDescription)
+            health.lastError = error.localizedDescription
+            health.lastChecked = Date()
+            accountHealthMap[gmailAccount.email] = health
+            await progressCallback?(.complete, .failed(error.localizedDescription), "Account refresh failed", gmailAccount.email, nil, nil)
+            logError("Scoped refresh failed for \(gmailAccount.email): \(error)", category: "Refresh")
+            return existingSnapshot
+        }
     }
     
     /// Check health of all accounts (quick connectivity test)
@@ -367,29 +502,21 @@ actor DashboardDataManager {
     }
     
     func markEmailAsRead(emailId: Int) async {
-        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+        guard let snapshot = await dashboardCache.loadSnapshot() else {
+            return
+        }
+        guard let current = snapshot.allEmails.first(where: { $0.id == emailId }) else {
+            return
+        }
+        guard !current.is_read else {
             return
         }
         
-        // Remove from unread list
-        let updatedUnreadEmails = snapshot.emails.filter { $0.id != emailId }
         let updatedAllEmails = snapshot.allEmails.map { item in
-            if item.id == emailId {
-                return item.updating(isRead: true)
-            }
-            return item
+            item.id == emailId ? item.updating(isRead: true) : item
         }
-        
-        let updatedSnapshot = DashboardDataSnapshot(
-            timestamp: Date(),
-            accounts: snapshot.accounts,
-            emails: updatedUnreadEmails,
-            allEmails: updatedAllEmails,
-            starredEmails: snapshot.starredEmails,
-            labels: snapshot.labels
-        )
-        
-        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        let updatedSnapshot = rebuiltSnapshot(from: snapshot, allEmails: updatedAllEmails)
+        await dashboardCache.saveSnapshot(updatedSnapshot)
         
         // Notify dashboard to update
         await MainActor.run {
@@ -398,39 +525,21 @@ actor DashboardDataManager {
     }
     
     func markEmailAsUnread(emailId: Int, accountId: Int?) async {
-        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+        guard let snapshot = await dashboardCache.loadSnapshot() else {
+            return
+        }
+        guard let current = snapshot.allEmails.first(where: { $0.id == emailId }) else {
+            return
+        }
+        guard current.is_read else {
             return
         }
         
-        // Find the email to mark as unread
-        guard let emailToMark = snapshot.allEmails.first(where: { $0.id == emailId }) else {
-            return
-        }
-        
-        let updatedEmail = emailToMark.updating(isRead: false)
-        
-        // Update allEmails
         let updatedAllEmails = snapshot.allEmails.map { item in
-            item.id == emailId ? updatedEmail : item
+            item.id == emailId ? item.updating(isRead: false) : item
         }
-        
-        // Add back to unread list if not already there
-        var updatedUnreadEmails = snapshot.emails
-        if !updatedUnreadEmails.contains(where: { $0.id == emailId }) {
-            updatedUnreadEmails.append(updatedEmail)
-            updatedUnreadEmails.sort { $0.received_at > $1.received_at }
-        }
-        
-        let updatedSnapshot = DashboardDataSnapshot(
-            timestamp: Date(),
-            accounts: snapshot.accounts,
-            emails: updatedUnreadEmails,
-            allEmails: updatedAllEmails,
-            starredEmails: snapshot.starredEmails,
-            labels: snapshot.labels
-        )
-        
-        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
+        let updatedSnapshot = rebuiltSnapshot(from: snapshot, allEmails: updatedAllEmails)
+        await dashboardCache.saveSnapshot(updatedSnapshot)
         
         // Notify dashboard to update
         await MainActor.run {
@@ -440,56 +549,86 @@ actor DashboardDataManager {
     
     /// Update starred status for an email
     func updateEmailStarred(emailId: Int, isStarred: Bool) async {
-        guard let snapshot = await DashboardCache.shared.loadSnapshot() else {
+        guard let snapshot = await dashboardCache.loadSnapshot() else {
+            return
+        }
+        guard let current = snapshot.allEmails.first(where: { $0.id == emailId }) else {
+            return
+        }
+        guard current.is_starred != isStarred else {
             return
         }
         
-        // Update in allEmails
         let updatedAllEmails = snapshot.allEmails.map { item in
-            if item.id == emailId {
-                return item.updating(isStarred: isStarred)
-            }
-            return item
+            item.id == emailId ? item.updating(isStarred: isStarred) : item
         }
-        
-        // Update in emails (unread list)
-        let updatedUnreadEmails = snapshot.emails.map { item in
-            if item.id == emailId {
-                return item.updating(isStarred: isStarred)
-            }
-            return item
-        }
-        
-        // Update starredEmails list
-        var updatedStarredEmails = snapshot.starredEmails
-        if isStarred {
-            // Add to starred if not already there
-            if let email = snapshot.allEmails.first(where: { $0.id == emailId }),
-               !updatedStarredEmails.contains(where: { $0.id == emailId }) {
-                let starredEmail = email.updating(isStarred: true)
-                updatedStarredEmails.append(starredEmail)
-                updatedStarredEmails.sort { $0.received_at > $1.received_at }
-            }
-        } else {
-            // Remove from starred
-            updatedStarredEmails = updatedStarredEmails.filter { $0.id != emailId }
-        }
-        
-        let updatedSnapshot = DashboardDataSnapshot(
-            timestamp: Date(),
-            accounts: snapshot.accounts,
-            emails: updatedUnreadEmails,
-            allEmails: updatedAllEmails,
-            starredEmails: updatedStarredEmails,
-            labels: snapshot.labels
+        let updatedSnapshot = rebuiltSnapshot(from: snapshot, allEmails: updatedAllEmails)
+        await dashboardCache.saveSnapshot(updatedSnapshot)
+        logInfo(
+            "Updated starred status for email \(emailId): \(isStarred), starred count now: \(updatedSnapshot.starredEmails.count)",
+            category: "Starred"
         )
-        
-        await DashboardCache.shared.saveSnapshot(updatedSnapshot)
-        logInfo("Updated starred status for email \(emailId): \(isStarred), starred count now: \(updatedStarredEmails.count)", category: "Starred")
         
         // Notify dashboard to update
         await MainActor.run {
             NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
         }
+    }
+    
+    /// Replace unread email set (optionally for one account) and rebuild snapshot canonically.
+    func replaceUnreadEmails(_ unreadItems: [EmailListItem], forAccountEmail accountEmail: String?) async {
+        guard let snapshot = await dashboardCache.loadSnapshot() else { return }
+        
+        let baseAllEmails: [EmailListItem]
+        if let accountEmail {
+            baseAllEmails = snapshot.allEmails.filter { $0.account_email != accountEmail }
+        } else {
+            baseAllEmails = []
+        }
+        
+        var mergedByGmailId: [String: EmailListItem] = [:]
+        for item in baseAllEmails {
+            mergedByGmailId[item.gmail_id] = item
+        }
+        for item in unreadItems {
+            mergedByGmailId[item.gmail_id] = item
+        }
+        
+        let merged = Array(mergedByGmailId.values)
+        let updatedSnapshot = rebuiltSnapshot(from: snapshot, allEmails: merged)
+        await dashboardCache.saveSnapshot(updatedSnapshot)
+        
+        await MainActor.run {
+            NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
+        }
+    }
+    
+    private func rebuiltSnapshot(from snapshot: DashboardDataSnapshot, allEmails: [EmailListItem]) -> DashboardDataSnapshot {
+        let sortedAll = allEmails.sorted { $0.received_at > $1.received_at }
+        let unread = sortedAll.filter { !$0.is_read }
+        let starred = sortedAll.filter { $0.is_starred }
+        let labels = labelsForUnreadEmails(unread)
+        
+        return DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: snapshot.accounts,
+            emails: unread,
+            allEmails: sortedAll,
+            starredEmails: starred,
+            labels: labels
+        )
+    }
+
+    private func labelsForUnreadEmails(_ unread: [EmailListItem]) -> [Label] {
+        let unreadCount = unread.filter { $0.labels.contains("UNREAD") }.count
+        let starredUnreadCount = unread.filter { $0.labels.contains("STARRED") }.count
+        var labels: [Label] = []
+        if unreadCount > 0 {
+            labels.append(Label(id: "UNREAD", name: "Unread", unread_count: unreadCount))
+        }
+        if starredUnreadCount > 0 {
+            labels.append(Label(id: "STARRED", name: "Starred", unread_count: starredUnreadCount))
+        }
+        return labels
     }
 }

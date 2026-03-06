@@ -17,11 +17,11 @@ struct AccountSummaryCard: View {
     let lastRefreshTime: Date?
     let healthStatus: AccountHealthStatus?
     let onRefresh: () async -> Void
-    var onDisconnect: (() -> Void)? = nil
+    var onReconnect: (() async -> Void)? = nil
     
     @State private var isRefreshing = false
+    @State private var isReconnecting = false
     @State private var catchUpPressed = false
-    @State private var showDisconnectConfirmation = false
     
     // Gradient colors for card
     private let cardGradient = LinearGradient(
@@ -122,16 +122,26 @@ struct AccountSummaryCard: View {
                 
                 Spacer()
                 
-                // Disconnect button when not healthy
-                if !isHealthy, let onDisconnect = onDisconnect {
+                // Reconnect button when not healthy
+                if !isHealthy, onReconnect != nil {
                     Button {
-                        showDisconnectConfirmation = true
+                        Task {
+                            await MainActor.run { isReconnecting = true }
+                            await onReconnect?()
+                            await MainActor.run { isReconnecting = false }
+                        }
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reconnect")
-                                .font(.system(size: 10, weight: .semibold))
+                            if isReconnecting {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .tint(healthColor)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("Reconnect")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
                         }
                         .foregroundColor(healthColor)
                         .padding(.horizontal, 8)
@@ -146,6 +156,7 @@ struct AccountSummaryCard: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .disabled(isReconnecting)
                 } else {
                     // Animated health indicator
                     Circle()
@@ -315,14 +326,6 @@ struct AccountSummaryCard: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .alert("Disconnect Account?", isPresented: $showDisconnectConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Disconnect", role: .destructive) {
-                onDisconnect?()
-            }
-        } message: {
-            Text("This will disconnect \(account.email) from the app. You can reconnect it later from the menu.")
-        }
     }
     
     // MARK: - Health Properties
@@ -460,3 +463,4 @@ struct PremiumStatBadge: View {
         .contentShape(Rectangle())
     }
 }
+

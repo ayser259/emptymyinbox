@@ -15,15 +15,11 @@ struct HTMLWebView: UIViewRepresentable {
     var contentWidth: CGFloat? = nil
     var onLoadComplete: (() -> Void)? = nil
     
-    // Shared process pool to reduce memory usage and overhead
-    private static let sharedProcessPool = WKProcessPool()
-    
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.dataDetectorTypes = [.link, .phoneNumber]
         
         // Optimize WebView configuration to reduce process overhead
-        configuration.processPool = HTMLWebView.sharedProcessPool // Use shared process pool
         configuration.allowsInlineMediaPlayback = false // Reduce resource usage
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         
@@ -189,12 +185,10 @@ struct HTMLWebView: UIViewRepresentable {
         if let bodyStartRange = html.range(of: "<body", options: .caseInsensitive) {
             // Find the closing > of the <body> tag (could have attributes)
             var searchStart = bodyStartRange.upperBound
-            var foundBodyStart = false
             
             // Look for the closing > after <body
             while searchStart < html.endIndex {
                 if html[searchStart] == ">" {
-                    foundBodyStart = true
                     let bodyContentStart = html.index(after: searchStart)
                     
                     // Now find </body>

@@ -80,3 +80,4 @@ final class CatchUpUITests: XCTestCase {
     //     // Verify email is starred
     // }
 }
+

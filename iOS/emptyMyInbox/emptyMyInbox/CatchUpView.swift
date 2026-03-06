@@ -57,6 +57,7 @@ struct CatchUpView: View {
     @State private var unsubscribeToastIsSuccess = false
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
+    @State private var currentLoadRetryCount = 0
     
     // Session tracking
     @State private var sessionStartTime: Date?
@@ -107,6 +108,9 @@ struct CatchUpView: View {
         .task {
             await onAppear()
         }
+        .onChange(of: emailLoader.currentIndex) { _, _ in
+            currentLoadRetryCount = 0
+        }
     }
     
     // MARK: - Toast Overlay
@@ -142,7 +146,7 @@ struct CatchUpView: View {
                 Spacer()
                 
                 Button {
-                    if let url = unsubscribeManualURL {
+                    if unsubscribeManualURL != nil {
                         showUnsubscribeWebView = true
                     }
                 } label: {
@@ -257,6 +261,11 @@ struct CatchUpView: View {
                 VStack(spacing: 0) {
                     topBarSection
                     cardStackSection(geometry: geometry)
+                }
+                if emailLoader.currentLoadState == .failed {
+                    failedCurrentCardBanner
+                        .padding(.bottom, 100)
+                        .padding(.horizontal, AppTheme.spacingMedium)
                 }
                 actionButtonsSection
                 
@@ -481,11 +490,39 @@ struct CatchUpView: View {
     private var isButtonDisabled: Bool {
         isProcessing || !emailLoader.isCurrentLoaded || isAnimating
     }
+
+    private var failedCurrentCardBanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Could not load this email")
+                .font(AppTheme.subheadline)
+                .primaryText()
+            Text("You can retry loading or skip to the next email.")
+                .font(AppTheme.caption)
+                .secondaryText()
+            HStack(spacing: 10) {
+                Button("Retry") {
+                    Task { await retryCurrentFailedCard() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.accent)
+
+                Button("Skip") {
+                    skipCurrentFailedCard()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(AppTheme.spacingMedium)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.secondaryBackground)
+        .cornerRadius(AppTheme.cornerRadiusMedium)
+    }
     
     // MARK: - Action Handlers
     
     private func handleStar() async {
         guard let email = emailLoader.currentEmail, !isAnimating else { return }
+        let actionStart = Date()
         
         isProcessing = true
         isAnimating = true
@@ -505,6 +542,15 @@ struct CatchUpView: View {
         // Remove from deck AFTER animation completes
         emailLoader.removeCurrentEmail()
         
+        // Persist user intent before UI flow completes.
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email,
+            shouldStar: newStarState
+        )
+        await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
+        
         // Reset animation state
         resetAnimationState()
         
@@ -513,25 +559,48 @@ struct CatchUpView: View {
         
         isProcessing = false
         isAnimating = false
+        Telemetry.event("catchup.action.star", metadata: [
+            "remaining_count": "\(emailLoader.remainingCount)",
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(actionStart) * 1000))"
+        ])
         
-        // Enqueue star action to Gmail
-        Task {
-            await EmailActionSynchronizer.shared.enqueueStar(
-                emailId: email.id,
-                gmailId: email.gmail_id,
-                accountEmail: email.account_email,
-                shouldStar: newStarState
-            )
+    }
+
+    private func retryCurrentFailedCard() async {
+        guard emailLoader.currentLoadState == .failed else { return }
+        let startedAt = Date()
+        await emailLoader.retryCurrentEmail()
+        if emailLoader.currentLoadState == .failed {
+            currentLoadRetryCount += 1
+            Telemetry.event("catchup.card.retry_failed", metadata: [
+                "retry_count": "\(currentLoadRetryCount)",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
+            ])
+            if currentLoadRetryCount >= 2 {
+                skipCurrentFailedCard()
+            }
+        } else {
+            currentLoadRetryCount = 0
+            Telemetry.event("catchup.card.retry_succeeded", metadata: [
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
+            ])
         }
-        
-        // Update dashboard cache with starred status change
-        Task {
-            await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
-        }
+    }
+
+    private func skipCurrentFailedCard() {
+        guard emailLoader.currentLoadState == .failed else { return }
+        sessionStats.reviewed += 1
+        sessionStats.keptUnread += 1
+        emailLoader.skipCurrentFailedEmail()
+        currentLoadRetryCount = 0
+        Telemetry.event("catchup.card.skipped_failed", metadata: [
+            "remaining_count": "\(emailLoader.remainingCount)"
+        ])
     }
     
     private func handleKeepUnread() async {
         guard let email = emailLoader.currentEmail, !isAnimating else { return }
+        let actionStart = Date()
         
         isAnimating = true
         
@@ -552,10 +621,15 @@ struct CatchUpView: View {
         resetAnimationState()
         
         isAnimating = false
+        Telemetry.event("catchup.action.keep_unread", metadata: [
+            "remaining_count": "\(emailLoader.remainingCount)",
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(actionStart) * 1000))"
+        ])
     }
     
     private func handleMarkAsRead() async {
         guard let email = emailLoader.currentEmail, !isAnimating else { return }
+        let actionStart = Date()
         
         isProcessing = true
         isAnimating = true
@@ -573,6 +647,14 @@ struct CatchUpView: View {
         // Remove from deck AFTER animation
         emailLoader.removeCurrentEmail()
         
+        // Persist user intent before completing UI transition.
+        await EmailActionSynchronizer.shared.enqueueMarkRead(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        
         // Reset animation state
         resetAnimationState()
         
@@ -581,22 +663,16 @@ struct CatchUpView: View {
         
         isAnimating = false
         isProcessing = false
+        Telemetry.event("catchup.action.mark_read", metadata: [
+            "remaining_count": "\(emailLoader.remainingCount)",
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(actionStart) * 1000))"
+        ])
         
-        // Enqueue mark as read action to Gmail
-        Task {
-            await EmailActionSynchronizer.shared.enqueueMarkRead(
-                emailId: email.id,
-                gmailId: email.gmail_id,
-                accountEmail: email.account_email
-            )
-        }
-        
-        // Update dashboard data manager
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
     }
     
     private func handleUnsubscribe() async {
         guard let email = emailLoader.currentEmail, !isAnimating else { return }
+        let actionStart = Date()
         
         isProcessing = true
         isAnimating = true
@@ -621,6 +697,9 @@ struct CatchUpView: View {
             """
             
             if result.success {
+                Telemetry.event("catchup.action.unsubscribe_succeeded", metadata: [
+                    "manual_required": "\(result.requiresManualAction)"
+                ])
                 logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
                 notificationGenerator.notificationOccurred(.success)
                 
@@ -692,6 +771,7 @@ struct CatchUpView: View {
                     }
                 }
             } else {
+                Telemetry.event("catchup.action.unsubscribe_failed")
                 logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
                 notificationGenerator.notificationOccurred(.error)
                 
@@ -725,6 +805,10 @@ struct CatchUpView: View {
         
         isAnimating = false
         isProcessing = false
+        Telemetry.event("catchup.action.unsubscribe_completed", metadata: [
+            "remaining_count": "\(emailLoader.remainingCount)",
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(actionStart) * 1000))"
+        ])
     }
     
     // MARK: - Animation Helpers

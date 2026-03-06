@@ -318,7 +318,7 @@ struct SendersView: View {
     // MARK: - Unsubscribe Handler
     
     private func handleUnsubscribe(sender: RichSenderInfo) async {
-        await MainActor.run {
+        _ = await MainActor.run {
             unsubscribingSenders.insert(sender.email)
         }
         
@@ -345,7 +345,7 @@ struct SendersView: View {
             logWarning("No unsubscribe method found for \(sender.email)", category: "Unsubscribe")
         }
         
-        await MainActor.run {
+        _ = await MainActor.run {
             unsubscribingSenders.remove(sender.email)
         }
     }

@@ -311,25 +311,18 @@ struct AllEmailsView: View {
         }
         
         let emailIds = Array(selectedEmailIds)
-        let gmailService = GmailAPIService.shared
         
-        // Mark each email as read both locally and via API
+        // Queue-first write model: enqueue intent and update local snapshot.
         for emailId in emailIds {
-            do {
-                guard let email = emails.first(where: { $0.id == emailId }),
-                      let account = gmailService.getAccount(byEmail: email.account_email) else {
-                    continue
-                }
-                
-                // Mark as read via Gmail API
-                try await gmailService.markAsRead(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueMarkRead(emailId: emailId, gmailId: email.gmail_id, accountEmail: email.account_email)
-                
-                // Update local cache
-                await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
-            } catch {
-                logError("Error marking email \(emailId) as read: \(error)", category: "Email")
+            guard let email = emails.first(where: { $0.id == emailId }) else {
+                continue
             }
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: emailId,
+                gmailId: email.gmail_id,
+                accountEmail: email.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: emailId)
         }
         
         // Refresh the email list
@@ -349,26 +342,19 @@ struct AllEmailsView: View {
         }
         
         let emailIds = Array(selectedEmailIds)
-        let gmailService = GmailAPIService.shared
         
-        // Mark each email as unread both locally and via API
+        // Queue-first write model: enqueue intent and update local snapshot.
         for emailId in emailIds {
-            do {
-                guard let email = emails.first(where: { $0.id == emailId }),
-                      let account = gmailService.getAccount(byEmail: email.account_email) else {
-                    continue
-                }
-                
-                // Mark as unread via Gmail API
-                try await gmailService.markAsUnread(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueMarkUnread(emailId: emailId, gmailId: email.gmail_id, accountEmail: email.account_email)
-                
-                // Update local cache
-                let accountId = getAccountId(for: email.account_email)
-                await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
-            } catch {
-                logError("Error marking email \(emailId) as unread: \(error)", category: "Email")
+            guard let email = emails.first(where: { $0.id == emailId }) else {
+                continue
             }
+            await EmailActionSynchronizer.shared.enqueueMarkUnread(
+                emailId: emailId,
+                gmailId: email.gmail_id,
+                accountEmail: email.account_email
+            )
+            let accountId = getAccountId(for: email.account_email)
+            await DashboardDataManager.shared.markEmailAsUnread(emailId: emailId, accountId: accountId)
         }
         
         // Refresh the email list
@@ -640,28 +626,18 @@ struct EmailRow: View {
     private func toggleStar() async {
         isUpdating = true
         defer { isUpdating = false }
+        let newStarState = !isStarred
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email,
+            shouldStar: newStarState
+        )
+        await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
         
-        let gmailService = GmailAPIService.shared
-        guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            logError("Account not found for email", category: "Email")
-            return
-        }
-        
-        do {
-            if isStarred {
-                try await gmailService.unstarMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: false)
-            } else {
-                try await gmailService.starMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: true)
-            }
-            
-            await MainActor.run {
-                self.isStarred = !self.isStarred
-                onStarChanged?()
-            }
-        } catch {
-            logError("Error toggling star: \(error)", category: "Email")
+        await MainActor.run {
+            self.isStarred = newStarState
+            onStarChanged?()
         }
     }
 }

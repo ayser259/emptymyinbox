@@ -44,6 +44,7 @@ struct EmailListItemExtensionsTests {
         #expect(updated.is_read == true)
         #expect(updated.marked_read_at != nil)
         #expect(updated.marked_read_at?.isEmpty == false)
+        #expect(updated.labels.contains("UNREAD") == false)
     }
     
     @Test("Updating isRead from true to false clears marked_read_at")
@@ -54,6 +55,7 @@ struct EmailListItemExtensionsTests {
         
         #expect(updated.is_read == false)
         #expect(updated.marked_read_at == nil)
+        #expect(updated.labels.contains("UNREAD"))
     }
     
     @Test("Updating isRead from true to true keeps existing marked_read_at")
@@ -98,6 +100,7 @@ struct EmailListItemExtensionsTests {
         
         #expect(updated.is_starred == true)
         #expect(updated.is_read == email.is_read) // Unchanged
+        #expect(updated.labels.contains("STARRED"))
     }
     
     @Test("Updating isStarred from true to false")
@@ -107,6 +110,7 @@ struct EmailListItemExtensionsTests {
         let updated = email.updating(isStarred: false)
         
         #expect(updated.is_starred == false)
+        #expect(updated.labels.contains("STARRED") == false)
     }
     
     @Test("Updating isStarred to nil does not change is_starred")
@@ -174,16 +178,14 @@ struct EmailListItemExtensionsTests {
         #expect(updated.marked_read_at == "2024-01-03T00:00:00Z")
     }
     
-    @Test("Updating markedReadAt when unread does not set timestamp")
+    @Test("Updating markedReadAt directly preserves provided value")
     func testUpdatingMarkedReadAtWhenUnread() {
         let email = createTestEmailListItem(isRead: false)
         
         let updated = email.updating(markedReadAt: "2024-01-02T00:00:00Z")
         
         #expect(updated.is_read == false)
-        // When unread, markedReadAt should remain nil even if provided
-        // (only gets set when marking as read)
-        #expect(updated.marked_read_at == nil)
+        #expect(updated.marked_read_at == "2024-01-02T00:00:00Z")
     }
     
     @Test("Updating from read to unread then back to read creates new timestamp")
@@ -203,3 +205,4 @@ struct EmailListItemExtensionsTests {
         #expect(readAgain.marked_read_at != "2024-01-02T00:00:00Z")
     }
 }
+

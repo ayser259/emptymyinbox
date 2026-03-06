@@ -86,7 +86,7 @@ struct MenuView: View {
                             await EmailCache.shared.clearAll()
                             await MainActor.run {
                                 cachedEmailCount = 0
-                                NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                                NotificationCenter.default.post(name: .cacheCleared, object: nil)
                                 showClearedAlert = true
                             }
                         }
@@ -97,7 +97,7 @@ struct MenuView: View {
                 } header: {
                     Text("Local Storage")
                 } footer: {
-                    Text("Email content is stored locally for fast access and offline search.")
+                    Text("Email content is stored locally for fast access and offline viewing.")
                 }
                 
                 // Account actions section
@@ -115,6 +115,32 @@ struct MenuView: View {
                     Text("Account")
                 } footer: {
                     Text("This will disconnect all accounts and clear local data.")
+                }
+
+                Section {
+                    NavigationLink {
+                        LLMManagementView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "brain.head.profile")
+                                .foregroundColor(AppTheme.accent)
+                            Text("LLM Management")
+                        }
+                    }
+
+                    NavigationLink {
+                        FeatureInclusionSettingsView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .foregroundColor(AppTheme.accent)
+                            Text("Feature Inclusions")
+                        }
+                    }
+                } header: {
+                    Text("AI")
+                } footer: {
+                    Text("Configure API key, model tiering, and runtime settings.")
                 }
                 
                 // Debug section
@@ -172,7 +198,7 @@ struct MenuView: View {
                 Button("Disconnect", role: .destructive) {
                     if let account = accountToDisconnect {
                         authManager.logout(accountEmail: account.email)
-                        NotificationCenter.default.post(name: NSNotification.Name("CacheCleared"), object: nil)
+                        NotificationCenter.default.post(name: .cacheCleared, object: nil)
                     }
                     accountToDisconnect = nil
                 }
@@ -214,7 +240,7 @@ struct MenuView: View {
                     // Refresh accounts
                     authManager.accounts = GmailAPIService.shared.getAllAccounts()
                     // Notify dashboard
-                    NotificationCenter.default.post(name: NSNotification.Name("AccountAdded"), object: nil)
+                    NotificationCenter.default.post(name: .accountAdded, object: nil)
                     isAddingAccount = false
                 }
                 #endif
@@ -283,3 +309,4 @@ struct ConnectedAccountRow: View {
         .padding(.vertical, 4)
     }
 }
+

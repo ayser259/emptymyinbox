@@ -84,26 +84,19 @@ struct GmailStyleEmailRow: View {
         isUpdating = true
         defer { isUpdating = false }
         
-        let gmailService = GmailAPIService.shared
-        guard let account = gmailService.getAccount(byEmail: email.account_email) else {
-            logError("Account not found for email", category: "Email")
-            return
-        }
+        let newStarState = !isStarred
         
-        do {
-            if isStarred {
-                try await gmailService.unstarMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: false)
-            } else {
-                try await gmailService.starMessage(for: account, messageId: email.gmail_id)
-                await EmailActionSynchronizer.shared.enqueueStar(emailId: email.id, gmailId: email.gmail_id, accountEmail: email.account_email, shouldStar: true)
-            }
-            
-            await MainActor.run {
-                self.isStarred = !self.isStarred
-            }
-        } catch {
-            logError("Error toggling star: \(error)", category: "Email")
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email,
+            shouldStar: newStarState
+        )
+        
+        await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
+        
+        await MainActor.run {
+            self.isStarred = newStarState
         }
     }
     
