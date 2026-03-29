@@ -1,4 +1,5 @@
 import SwiftUI
+import EmptyMyInboxShared
 
 struct LLMManagementView: View {
     @State private var settings: LLMSettings = .default

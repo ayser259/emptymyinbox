@@ -1,7 +1,7 @@
 import Foundation
 import Security
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 @Suite(.serialized)
 struct LLMSettingsStoreTests {

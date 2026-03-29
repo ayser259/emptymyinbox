@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct DebugLogView: View {
     @StateObject private var logger = DebugLogger.shared

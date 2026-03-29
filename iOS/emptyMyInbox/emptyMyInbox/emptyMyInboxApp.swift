@@ -7,6 +7,7 @@
 
 import SwiftUI
 import GoogleSignIn
+import EmptyMyInboxShared
 
 struct AppEnvironment {
     let gmailService: GmailServiceProtocol
@@ -58,8 +59,8 @@ struct emptyMyInboxApp: App {
             .preferredColorScheme(.dark) // Force dark mode
             .background(AppTheme.primaryBackground)
             .task {
+                await AppLifecycleCloudSync.performStartupSync()
                 // Clean up old cached emails in background
-                // Removes emails marked as read that are older than 10 days
                 Task.detached(priority: .background) {
                     await EmailCache.shared.cleanupOldEmails(olderThanDays: 10)
                 }
@@ -68,6 +69,9 @@ struct emptyMyInboxApp: App {
                 handleIncomingURL(url)
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
+                if newPhase == .background {
+                    Task { await AppLifecycleCloudSync.pushLocalStateOnly() }
+                }
                 // Only refresh once per day when app comes to foreground
                 if oldPhase != .active && newPhase == .active {
                     checkAndRefreshIfNeeded()
@@ -77,6 +81,9 @@ struct emptyMyInboxApp: App {
     }
     
     private func handleIncomingURL(_ url: URL) {
+        if GIDSignIn.sharedInstance.handle(url) {
+            return
+        }
         // Handle OAuth callback
         if url.scheme == "emptymyinbox" {
             if url.host == "account_connected" || url.query?.contains("account_connected=true") == true {
@@ -148,7 +155,6 @@ struct emptyMyInboxApp: App {
 extension Notification.Name {
     static let appShouldRefreshData = Notification.Name("AppShouldRefreshData")
     static let appShouldShowDailyBriefing = Notification.Name("AppShouldShowDailyBriefing")
-    static let accountAdded = Notification.Name("AccountAdded")
     static let cacheCleared = Notification.Name("CacheCleared")
 }
 

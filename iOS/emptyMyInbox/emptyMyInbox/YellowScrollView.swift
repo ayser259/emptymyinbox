@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct YellowScrollView<Content: View>: UIViewRepresentable {
     let content: Content

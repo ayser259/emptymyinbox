@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct StarredEmailsView: View {
     @State private var emails: [EmailListItem] = []

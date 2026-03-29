@@ -121,6 +121,7 @@
 			packageProductDependencies = (
 				AE09CE462ED911F6007A720C /* GoogleSignIn */,
 				AE09CE482ED911F6007A720C /* GoogleSignInSwift */,
+				AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */,
 			);
 			productName = emptyMyInbox;
 			productReference = AECED5762EBEF8FA001ACEAA /* emptyMyInbox.app */;
@@ -144,6 +145,7 @@
 			);
 			name = emptyMyInboxTests;
 			packageProductDependencies = (
+				AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */,
 			);
 			productName = emptyMyInboxTests;
 			productReference = AECED5832EBEF8FC001ACEAA /* emptyMyInboxTests.xctest */;
@@ -206,6 +208,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AECED5772EBEF8FA001ACEAA /* Products */;
@@ -407,6 +410,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = emptyMyInbox/emptyMyInbox.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XFXK72ST27;
@@ -436,6 +440,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = emptyMyInbox/emptyMyInbox.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XFXK72ST27;
@@ -573,6 +578,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Packages/EmptyMyInboxShared;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -594,6 +606,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignInSwift;
+		};
+		AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */;
+			productName = EmptyMyInboxShared;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

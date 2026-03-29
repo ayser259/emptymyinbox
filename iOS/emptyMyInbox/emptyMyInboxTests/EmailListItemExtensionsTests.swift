@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct EmailListItemExtensionsTests {
     

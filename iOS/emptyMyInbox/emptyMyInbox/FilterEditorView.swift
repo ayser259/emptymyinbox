@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct FilterEditorView: View {
     @Environment(\.dismiss) var dismiss
@@ -14,7 +15,7 @@ struct FilterEditorView: View {
     
     @State private var criteria: FilterCriteria
     @State private var actions: FilterActions
-    @State private var labels: [Label] = []
+    @State private var labels: [GmailLabel] = []
     @State private var accounts: [EmailAccount] = []
     @State private var isLoading = false
     @State private var isSaving = false
@@ -309,7 +310,7 @@ struct FilterEditorView: View {
             // Get labels
             let labelsDict = try await gmailService.getAllLabels(for: gmailAccount)
             let fetchedLabels = labelsDict.map { (id, name) in
-                Label(id: id, name: name, unread_count: 0)
+                GmailLabel(id: id, name: name, unread_count: 0)
             }.sorted { $0.name < $1.name }
             
             // Convert GmailAccounts to EmailAccounts
@@ -514,7 +515,7 @@ struct FilterLabelPicker: View {
     let title: String
     let icon: String
     @Binding var selectedLabels: Set<String>
-    let allLabels: [Label]
+    let allLabels: [GmailLabel]
     
     @State private var showPicker = false
     
@@ -568,7 +569,7 @@ struct LabelMultiPickerView: View {
     @Environment(\.dismiss) var dismiss
     let title: String
     @Binding var selectedLabels: Set<String>
-    let allLabels: [Label]
+    let allLabels: [GmailLabel]
     
     var body: some View {
         NavigationView {

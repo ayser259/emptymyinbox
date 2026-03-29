@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct InterestProfileStoreTests {
     @Test("Interest profile learns less-preference signals")

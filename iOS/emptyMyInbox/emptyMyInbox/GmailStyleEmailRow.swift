@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct GmailStyleEmailRow: View {
     let email: EmailListItem

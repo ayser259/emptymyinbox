@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 class MockGmailAPIService {
     // Test data storage

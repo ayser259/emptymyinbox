@@ -7,6 +7,7 @@
 
 import SwiftUI
 import WebKit
+import EmptyMyInboxShared
 
 struct UnsubscribeWebView: View {
     let url: URL

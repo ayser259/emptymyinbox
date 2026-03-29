@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import EmptyMyInboxShared
 
 /// Singleton manager for debug settings
 /// Persists state using UserDefaults and provides observable properties

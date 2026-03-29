@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 /// Session stats for detailed celebration
 struct CatchUpSessionStats {

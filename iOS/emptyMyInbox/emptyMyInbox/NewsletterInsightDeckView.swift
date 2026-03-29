@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct NewsletterInsightDeckView: View {
     let emails: [EmailListItem]

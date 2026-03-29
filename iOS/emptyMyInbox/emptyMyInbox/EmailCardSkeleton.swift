@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct EmailCardSkeleton: View {
     let geometry: GeometryProxy

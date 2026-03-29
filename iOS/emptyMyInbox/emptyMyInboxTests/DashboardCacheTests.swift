@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct DashboardCacheTests {
     
@@ -39,8 +39,8 @@ struct DashboardCacheTests {
         )
     }
     
-    func createTestLabel(id: String = "INBOX") -> Label {
-        return Label(
+    func createTestLabel(id: String = "INBOX") -> GmailLabel {
+        return GmailLabel(
             id: id,
             name: id.capitalized,
             unread_count: 5

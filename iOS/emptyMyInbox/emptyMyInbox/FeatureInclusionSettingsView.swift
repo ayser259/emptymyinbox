@@ -1,4 +1,5 @@
 import SwiftUI
+import EmptyMyInboxShared
 
 struct FeatureInclusionSettingsView: View {
     @State private var inclusions: [FeatureAccountInclusion] = []

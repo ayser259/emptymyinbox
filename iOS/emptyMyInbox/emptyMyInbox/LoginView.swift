@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager

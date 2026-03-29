@@ -15,6 +15,7 @@
 import SwiftUI
 import WebKit
 import UIKit
+import EmptyMyInboxShared
 
 struct CatchUpView: View {
     let accountId: Int?

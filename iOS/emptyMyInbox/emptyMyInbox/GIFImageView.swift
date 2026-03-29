@@ -7,6 +7,7 @@
 
 import SwiftUI
 import WebKit
+import EmptyMyInboxShared
 
 struct GIFImageView: UIViewRepresentable {
     let resourceName: String

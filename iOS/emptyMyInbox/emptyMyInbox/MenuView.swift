@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 #if canImport(UIKit)
 import UIKit
+import EmptyMyInboxShared
 #endif
 
 struct MenuView: View {

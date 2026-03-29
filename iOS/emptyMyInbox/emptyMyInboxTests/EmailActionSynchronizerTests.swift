@@ -4,7 +4,7 @@
 //
 
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct EmailActionSynchronizerTests {
     @Test("Star actions coalesce to latest intent")

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct DashboardView: View {
     private enum BriefingTrigger {
@@ -21,7 +22,7 @@ struct DashboardView: View {
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
-    @State private var labels: [Label] = []
+    @State private var labels: [GmailLabel] = []
     @State private var isLoading = false
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
@@ -52,7 +53,7 @@ struct DashboardView: View {
                     FilteredEmailsView(filter: filter)
                 }
             }
-            .navigationDestination(for: Label.self) { label in
+            .navigationDestination(for: GmailLabel.self) { label in
                 FilteredEmailsView(filter: .category(label: label))
             }
             .navigationDestination(for: Int.self) { emailId in

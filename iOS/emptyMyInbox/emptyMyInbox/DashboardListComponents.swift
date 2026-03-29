@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct CollapsibleSection<Content: View>: View {
     let title: String
@@ -120,7 +121,7 @@ struct SlackStyleSenderRow: View {
 // MARK: - Legacy Components (for compatibility)
 
 struct LabelRow: View {
-    let label: Label
+    let label: GmailLabel
     
     var body: some View {
         HStack {
@@ -155,7 +156,7 @@ struct LabelRow: View {
 }
 
 struct SlackStyleLabelRow: View {
-    let label: Label
+    let label: GmailLabel
     @State private var isPressed = false
     
     var body: some View {
