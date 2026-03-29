@@ -29,9 +29,26 @@ private enum MacMainSection: String, CaseIterable, Identifiable {
     }
 }
 
+private enum MacRootTab: Int, CaseIterable, Identifiable, Hashable {
+    case mail
+    case calendar
+    case actionItems
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .mail: return "Mail"
+        case .calendar: return "Calendar"
+        case .actionItems: return "Action Items"
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
+    @State private var rootTab: MacRootTab = .mail
     @State private var selection: MacMainSection? = .dashboard
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
@@ -59,32 +76,79 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainChrome: some View {
+        VStack(spacing: 0) {
+            macRootTabBar
+
+            Group {
+                switch rootTab {
+                case .mail:
+                    mailSplitView
+                case .calendar:
+                    MacFeatureSkeletonView(
+                        systemImage: "calendar",
+                        message: "Calendar is coming soon.",
+                        detail: "Events and email-linked dates will live here."
+                    )
+                case .actionItems:
+                    MacFeatureSkeletonView(
+                        systemImage: "checklist",
+                        message: "Action items are coming soon.",
+                        detail: "Todos and follow-ups from your mail will appear here."
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(MacAppTheme.primaryBackground)
+    }
+
+    private var macRootTabBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                LogoView(size: 26)
+                Text("Empty My Inbox")
+                    .font(.headline)
+                    .foregroundStyle(MacAppTheme.primaryText)
+            }
+            .frame(minWidth: 160, idealWidth: 200, maxWidth: 240, alignment: .leading)
+
+            Picker("Main section", selection: $rootTab) {
+                ForEach(MacRootTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 440)
+            .layoutPriority(1)
+
+            Group {
+                if rootTab == .mail {
+                    Button {
+                        Task { await refreshMailbox() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(isRefreshing)
+                    .help("Refresh mailbox (⌘R)")
+                    .keyboardShortcut("r", modifiers: .command)
+                }
+            }
+            .frame(minWidth: 160, idealWidth: 200, maxWidth: 240, alignment: .trailing)
+        }
+        .padding(.horizontal, MacAppTheme.spacingMedium)
+        .padding(.vertical, 10)
+        .background(MacAppTheme.secondaryBackground.opacity(0.65))
+    }
+
+    @ViewBuilder
+    private var mailSplitView: some View {
         NavigationSplitView {
             List(MacMainSection.allCases, selection: $selection) { section in
                 Label(section.title, systemImage: section.systemImage)
                     .tag(section)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        LogoView(size: 28)
-                        Text("Empty My Inbox")
-                            .font(.headline)
-                            .foregroundStyle(MacAppTheme.primaryText)
-                    }
-                }
-                ToolbarItem(placement: .automatic) {
-                    Button {
-                        Task { await refreshMailbox() }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(isRefreshing)
-                    .help("Refresh mailbox (⌘R)")
-                    .keyboardShortcut("r", modifiers: .command)
-                }
-            }
         } detail: {
             switch selection ?? .dashboard {
             case .dashboard:
@@ -297,6 +361,35 @@ private struct MacAccountsListView: View {
         .navigationTitle("Accounts")
         .scrollContentBackground(.hidden)
         .background(MacAppTheme.primaryBackground)
+    }
+}
+
+// MARK: - Feature placeholders (Calendar / Action Items)
+
+private struct MacFeatureSkeletonView: View {
+    let systemImage: String
+    let message: String
+    let detail: String
+
+    var body: some View {
+        ZStack {
+            MacAppTheme.primaryBackground
+            VStack(spacing: 20) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 52))
+                    .foregroundStyle(MacAppTheme.accent.opacity(0.9))
+                Text(message)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(MacAppTheme.primaryText)
+                Text(detail)
+                    .font(.body)
+                    .foregroundStyle(MacAppTheme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+            .padding(40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -147,8 +147,7 @@ struct emptyMyInboxApp: App {
     
     @ViewBuilder
     private var mainAppView: some View {
-        // No onboarding needed - go straight to dashboard
-            DashboardView()
+        MainTabView()
     }
 }
 

@@ -212,7 +212,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
-				AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */,
+				AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AECED5772EBEF8FA001ACEAA /* Products */;
@@ -581,7 +581,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */ = {
+		AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../Packages/EmptyMyInboxShared;
 		};
@@ -611,7 +611,7 @@
 		};
 		AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "EmptyMyInboxShared" */;
+			package = AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */;
 			productName = EmptyMyInboxShared;
 		};
 /* End XCSwiftPackageProductDependency section */

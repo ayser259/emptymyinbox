@@ -16,8 +16,8 @@ struct DashboardView: View {
     }
 
     @EnvironmentObject var authManager: AuthManager
+    @Binding var isMenuPresented: Bool
     @State private var navigationPath = NavigationPath()
-    @State private var showMenu = false
     @State private var accounts: [EmailAccount] = []
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
@@ -97,10 +97,6 @@ struct DashboardView: View {
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
-        }
-        .sheet(isPresented: $showMenu) {
-            MenuView()
-                .environmentObject(authManager)
         }
         .task {
             await loadInitialData()
@@ -246,11 +242,7 @@ struct DashboardView: View {
     }
 
     private var topBarSection: some View {
-        HStack(alignment: .center) {
-            LogoView(size: 40)
-            
-            Spacer()
-            
+        MainAppTopBar(center: {
             Group {
                 if let firstAccount = authManager.accounts.first {
                     ScrollingText(
@@ -264,18 +256,9 @@ struct DashboardView: View {
                         .primaryText()
                 }
             }
-            
-            Button {
-                showMenu = true
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20))
-                    .primaryText()
-            }
-            .iconButton()
-        }
-        .padding(.horizontal, AppTheme.spacingMedium)
-        .padding(.vertical, AppTheme.spacingMedium)
+        }, onMenuTap: {
+            isMenuPresented = true
+        })
     }
 
     private var actionButtonsSection: some View {
@@ -819,6 +802,6 @@ struct DashboardView: View {
 }
 
 #Preview {
-    DashboardView()
+    DashboardView(isMenuPresented: .constant(false))
         .environmentObject(AuthManager())
 }
