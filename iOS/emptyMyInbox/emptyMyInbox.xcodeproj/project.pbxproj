@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		AE09CE472ED911F6007A720C /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = AE09CE462ED911F6007A720C /* GoogleSignIn */; };
 		AE09CE492ED911F6007A720C /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AE09CE482ED911F6007A720C /* GoogleSignInSwift */; };
+		AEF000032EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */; };
+		AEF000042EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +61,7 @@
 			files = (
 				AE09CE472ED911F6007A720C /* GoogleSignIn in Frameworks */,
 				AE09CE492ED911F6007A720C /* GoogleSignInSwift in Frameworks */,
+				AEF000032EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AEF000042EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
