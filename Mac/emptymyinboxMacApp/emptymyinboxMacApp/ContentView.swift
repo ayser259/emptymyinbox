@@ -49,6 +49,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 560)
+        .background(MacAppTheme.primaryBackground)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task { await AppLifecycleCloudSync.pushLocalStateOnly() }
@@ -65,6 +66,14 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        LogoView(size: 28)
+                        Text("Empty My Inbox")
+                            .font(.headline)
+                            .foregroundStyle(MacAppTheme.primaryText)
+                    }
+                }
                 ToolbarItem(placement: .automatic) {
                     Button {
                         Task { await refreshMailbox() }
@@ -89,6 +98,7 @@ struct ContentView: View {
                 MacAccountsListView(accounts: authManager.accounts)
             }
         }
+        .background(MacAppTheme.primaryBackground)
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
                 await loadSnapshot()
@@ -118,20 +128,20 @@ private struct MacLoginView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: "envelope.open.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
+            LogoView(size: 88)
             Text("Empty My Inbox")
                 .font(.largeTitle.weight(.semibold))
+                .foregroundStyle(MacAppTheme.primaryText)
             Text("Sign in with Google to load your Gmail accounts and dashboard.")
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(MacAppTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
 
             if authManager.isLoading {
                 ProgressView()
                     .scaleEffect(1.1)
+                    .tint(MacAppTheme.accent)
             } else {
                 Button {
                     Task { await signIn() }
@@ -140,6 +150,7 @@ private struct MacLoginView: View {
                         .frame(minWidth: 220)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(MacAppTheme.accent)
                 .controlSize(.large)
             }
 
@@ -149,8 +160,16 @@ private struct MacLoginView: View {
                     .foregroundStyle(.red)
                     .frame(maxWidth: 420)
             }
+
+            Text("Messages in the log about “no accounts in keychain” are normal until you sign in successfully.")
+                .font(.caption2)
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.85))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
         }
         .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MacAppTheme.primaryBackground)
     }
 
     private func signIn() async {
@@ -168,11 +187,14 @@ private struct MacLoginView: View {
 private struct MacSplashView: View {
     var body: some View {
         VStack(spacing: 16) {
+            LogoView(size: 64)
             ProgressView()
+                .tint(MacAppTheme.accent)
             Text("Loading…")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(MacAppTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MacAppTheme.primaryBackground)
     }
 }
 
@@ -196,8 +218,10 @@ private struct MacDashboardDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         HStack {
+                            LogoView(size: 36)
                             Text("Dashboard")
                                 .font(.title.bold())
+                                .foregroundStyle(MacAppTheme.primaryText)
                             Spacer()
                             if isRefreshing {
                                 ProgressView()
@@ -215,25 +239,26 @@ private struct MacDashboardDetailView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(account.email)
                                         .font(.headline)
+                                        .foregroundStyle(MacAppTheme.primaryText)
                                         .lineLimit(1)
                                     Text("\(unreadCount(snapshot: snapshot, accountEmail: account.email)) unread")
                                         .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(MacAppTheme.secondaryText)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding()
-                                .background(.quaternary.opacity(0.5))
+                                .background(MacAppTheme.secondaryBackground)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
                         }
 
                         Text("Last snapshot: \(snapshot.timestamp.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(MacAppTheme.secondaryText.opacity(0.75))
 
                         Text("Tip: Use ⌘R to refresh mailbox data from Gmail.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(MacAppTheme.secondaryText)
                     }
                     .padding(24)
                 }
@@ -262,13 +287,16 @@ private struct MacAccountsListView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(account.email)
                     .font(.headline)
+                    .foregroundStyle(MacAppTheme.primaryText)
                 Text("Gmail account")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(MacAppTheme.secondaryText)
             }
             .padding(.vertical, 4)
         }
         .navigationTitle("Accounts")
+        .scrollContentBackground(.hidden)
+        .background(MacAppTheme.primaryBackground)
     }
 }
 

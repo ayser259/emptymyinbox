@@ -41,7 +41,7 @@ public class AuthManager: ObservableObject {
     
     public func checkAuthStatus() {
         sessionState = .checking
-        Telemetry.event("auth.check_status.started")
+        logDebug("Auth: checking saved session…", category: "Auth")
         Task {
             await MainActor.run {
                 let gmailAccounts = self.gmailService.getAllAccounts()
@@ -55,7 +55,7 @@ public class AuthManager: ObservableObject {
                 } else {
                     switch self.gmailService.getAccountsLoadStatus() {
                     case .notFound:
-                        logInfo("Auth: No accounts found in keychain", category: "Auth")
+                        logDebug("Auth: No saved Gmail session yet (sign in to store accounts in keychain)", category: "Auth")
                     case .transientFailure(let status):
                         logWarning("Auth: Keychain transient failure (\(status)); preserving caches", category: "Auth")
                     case .corruptedData:
@@ -66,7 +66,7 @@ public class AuthManager: ObservableObject {
                     self.accounts = []
                     self.isAuthenticated = false
                     self.sessionState = .needsLogin
-                    Telemetry.event("auth.check_status.needs_login")
+                    logDebug("Auth: showing sign-in (no saved accounts)", category: "Auth")
                 }
             }
         }

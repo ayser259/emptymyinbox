@@ -48,6 +48,7 @@ struct emptymyinboxMacAppApp: App {
             ContentView()
                 .environmentObject(authManager)
                 .preferredColorScheme(.dark)
+                .tint(MacAppTheme.accent)
                 .task {
                     await AppLifecycleCloudSync.performStartupSync()
                 }

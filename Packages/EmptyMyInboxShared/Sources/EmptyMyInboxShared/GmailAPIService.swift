@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Security
 import GoogleSignIn
 #if canImport(UIKit)
 import UIKit
@@ -317,13 +318,20 @@ public class GmailAPIService {
         guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
             throw GmailAPIError.configurationError
         }
-        
-        guard let result = try? await GIDSignIn.sharedInstance.signIn(
-            withPresenting: window,
-            hint: nil,
-            additionalScopes: scopes
-        ) else {
-            throw GmailAPIError.signInFailed
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+
+        let result: GIDSignInResult
+        do {
+            result = try await GIDSignIn.sharedInstance.signIn(
+                withPresenting: window,
+                hint: nil,
+                additionalScopes: scopes
+            )
+        } catch {
+            logWarning("Google Sign-In (macOS): \(error)", category: "Auth")
+            throw GmailAPIError.apiError(error.localizedDescription)
         }
         
         guard result.user.idToken != nil else {
@@ -759,10 +767,64 @@ public class GmailAPIService {
         }
     }
     
-    // MARK: - Storage (Keychain)
+    // MARK: - Storage (Keychain + sandbox fallback file)
     
     private let keychainService = "com.emptyMyInbox.gmail"
     private let keychainAccount = "gmail_accounts"
+    /// Used when keychain is blocked (common for sandboxed macOS without keychain-access-groups).
+    private let accountsFileName = "gmail_accounts_storage.json"
+    
+    private func appSupportAccountsFileURL() -> URL {
+        let fm = FileManager.default
+        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fm.temporaryDirectory
+        let dir = base.appendingPathComponent("emptyMyInbox", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(accountsFileName)
+    }
+    
+    private func keychainStatusDescription(_ status: OSStatus) -> String {
+        if let msg = SecCopyErrorMessageString(status, nil) as String? {
+            return "\(status) — \(msg)"
+        }
+        return "\(status)"
+    }
+    
+    private func saveAccountsToFileFallback(data: Data) -> Bool {
+        let url = appSupportAccountsFileURL()
+        do {
+            try data.write(to: url, options: .atomic)
+            logSuccess(
+                "Saved \(accounts.count) Gmail account(s) to app storage (keychain unavailable on this build)",
+                category: "Auth"
+            )
+            return true
+        } catch {
+            logError("Could not save accounts to file fallback: \(error)", category: "Auth")
+            return false
+        }
+    }
+    
+    @discardableResult
+    private func loadAccountsFromFileFallback() -> Bool {
+        let url = appSupportAccountsFileURL()
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let loaded = try? JSONDecoder().decode([GmailAccount].self, from: data) else {
+            return false
+        }
+        accounts = loaded
+        logSuccess(
+            "Loaded \(accounts.count) Gmail account(s) from app storage (keychain unavailable or empty)",
+            category: "Auth"
+        )
+        accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
+        return true
+    }
+    
+    private func removeAccountsFileFallback() {
+        try? FileManager.default.removeItem(at: appSupportAccountsFileURL())
+    }
     
     private func saveAccounts() {
         guard let data = try? JSONEncoder().encode(accounts) else {
@@ -788,12 +850,21 @@ public class GmailAPIService {
         ]
         
         let status = SecItemAdd(addQuery as CFDictionary, nil)
-        if status != errSecSuccess {
-            logWarning("Keychain save failed with status: \(status)", category: "Auth")
-            accountsLoadStatus = .transientFailure(status)
-        } else {
+        if status == errSecSuccess {
             logSuccess("Saved \(accounts.count) accounts to keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
+            removeAccountsFileFallback()
+            return
+        }
+        
+        logWarning(
+            "Keychain save failed: \(keychainStatusDescription(status)). Using Application Support fallback.",
+            category: "Auth"
+        )
+        if saveAccountsToFileFallback(data: data) {
+            accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
+        } else {
+            accountsLoadStatus = .transientFailure(status)
         }
     }
     
@@ -810,8 +881,8 @@ public class GmailAPIService {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         
         if status == errSecItemNotFound {
-            logInfo("No accounts found in keychain (first launch or cleared)", category: "Auth")
-            // Try to migrate from old keychain format
+            logDebug("No Gmail accounts in keychain yet (normal before first sign-in)", category: "Auth")
+            if loadAccountsFromFileFallback() { return }
             if migrateOldKeychainData() {
                 accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
             } else {
@@ -821,13 +892,18 @@ public class GmailAPIService {
         }
         
         guard status == errSecSuccess else {
-            logWarning("Keychain load failed with status: \(status)", category: "Auth")
+            logWarning(
+                "Keychain load failed: \(keychainStatusDescription(status)). Trying Application Support fallback.",
+                category: "Auth"
+            )
+            if loadAccountsFromFileFallback() { return }
             accountsLoadStatus = .transientFailure(status)
             return
         }
         
         guard let data = result as? Data else {
             logWarning("Keychain returned non-data result", category: "Auth")
+            if loadAccountsFromFileFallback() { return }
             accountsLoadStatus = .corruptedData
             return
         }
@@ -837,8 +913,10 @@ public class GmailAPIService {
             accounts = loadedAccounts
             logSuccess("Loaded \(accounts.count) accounts from keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
+            removeAccountsFileFallback()
         } catch {
             logError("Failed to decode accounts from keychain: \(error)", category: "Auth")
+            if loadAccountsFromFileFallback() { return }
             accountsLoadStatus = .corruptedData
         }
     }
@@ -891,6 +969,7 @@ public class GmailAPIService {
             kSecAttrAccount as String: "gmail_accounts"
         ]
         SecItemDelete(oldQuery as CFDictionary)
+        removeAccountsFileFallback()
         accountsLoadStatus = .notFound
     }
     
