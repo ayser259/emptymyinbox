@@ -1,31 +1,20 @@
-# CloudKit app-state sync
+# Cross-device app state (optional)
 
-## Scope
+## Default: local-only (no paid Apple Developer Program)
 
-- **In scope**: Durable app preferences stored as JSON under Application Support (`emptyMyInbox/`): interest profile, account inclusion flags, stories feed state, LLM **non-secret** settings file, and a **summary** of the email action outbox (counts/metadata only).
-- **Out of scope**: Gmail mail bodies, caches (`EmailCache`, `DashboardCache`, …), and the OpenAI API key (keychain per device).
+**iCloud and CloudKit require** an Apple Developer Program membership to use container entitlements in a shippable way. This project therefore **does not call CloudKit** at runtime: `AppStateCloudSync` and `AppLifecycleCloudSync` are **no-ops** so you can build and run on a free Apple ID.
 
-## Container
+- Durable settings still live as JSON under Application Support on each device.
+- **There is no automatic sync between Mac and iOS** until you add either:
+  - **Paid program + iCloud**: reintroduce CloudKit in `AppStateCloudSync.swift`, add iCloud capabilities, and use the same container on both targets; or
+  - **Your own backend** (or another sync service) and wire it through the same call sites.
 
-- Identifier: `iCloud.aysersHobbies.emptyMyInbox` (`AppCloudKitConfiguration.containerIdentifier`).
-- Add this container to **both** iOS and macOS targets in Xcode (Signing & Capabilities → iCloud → CloudKit).
+## If you join the Developer Program later
 
-## Record model
+1. Add **iCloud → CloudKit** in Xcode for both targets and create container `iCloud.aysersHobbies.emptyMyInbox` (or change `AppCloudKitConfiguration.containerIdentifier`).
+2. Replace the no-op implementation in `AppStateCloudSync.swift` with CloudKit push/pull of the JSON payloads (see git history or Apple’s CloudKit docs).
+3. Restore **entitlements** on iOS/macOS targets for that container.
 
-| Record type | Stable name | Fields |
-|-------------|-------------|--------|
-| `InterestProfile`, `AccountInclusions`, `StoriesFeed`, `LLMSettings`, `ActionOutboxSummary` | `singleton-<RecordType>` | `payload` (`Data`), `updatedAt` (`Date`) |
+## Secrets
 
-## Conflict strategy
-
-- **Last-write-wins** per singleton record: each save overwrites the previous server record; `updatedAt` is informational.
-- Local files are replaced on pull before in-memory stores are invalidated (`AppStateCloudSync.pullMergeAndReloadStores()`).
-
-## Lifecycle
-
-- **Startup**: `AppLifecycleCloudSync.performStartupSync()` — pull, reload stores, push.
-- **After local changes** (optional): `AppLifecycleCloudSync.pushLocalStateOnly()` — e.g. when settings screens dismiss.
-
-## Developer Console
-
-Create the container and deploy the schema (record types) in CloudKit Dashboard if automatic creation is disabled for your team.
+OpenAI API keys and similar stay in the **keychain per device**; do not put secrets in CloudKit records.

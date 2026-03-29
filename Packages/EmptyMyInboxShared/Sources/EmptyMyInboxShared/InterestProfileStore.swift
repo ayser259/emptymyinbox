@@ -40,7 +40,7 @@ public actor InterestProfileStore {
         min(max(value, minScore), maxScore)
     }
 
-    /// Call after CloudKit or another process replaces `interest_profile.json` on disk.
+    /// Call after an external process replaces `interest_profile.json` on disk (e.g. future sync).
     public func invalidateAfterExternalFileChange() {
         didLoad = false
     }

@@ -400,7 +400,7 @@ public actor EmailActionSynchronizer {
         return (true, error.localizedDescription)
     }
     
-    /// JSON metadata for CloudKit (pending count only; does not replace the SQLite outbox).
+    /// JSON summary of the outbox (pending count only; optional future sync; does not replace SQLite).
     public func exportCloudSyncSummaryData() async -> Data? {
         struct Summary: Codable {
             let pendingCount: Int

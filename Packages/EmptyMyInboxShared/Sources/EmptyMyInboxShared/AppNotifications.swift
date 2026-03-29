@@ -2,6 +2,6 @@ import Foundation
 
 public extension Notification.Name {
     static let accountAdded = Notification.Name("AccountAdded")
-    /// Posted after CloudKit merged remote JSON into Application Support and stores were invalidated.
+    /// Reserved for future cross-device merge flows (not used while sync is a no-op).
     static let appStateCloudKitDidMerge = Notification.Name("AppStateCloudKitDidMerge")
 }
