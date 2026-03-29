@@ -7,62 +7,62 @@
 	objects = {
 
 /* Begin PBXContainerItemProxy section */
-		AE4FCBD12F78CF860030E652 /* PBXContainerItemProxy */ = {
+		AEFBF4472F79AE0000AA180E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = AE4FCBBB2F78CF850030E652 /* Project object */;
+			containerPortal = AEFBF4312F79ADFE00AA180E /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = AE4FCBC22F78CF850030E652;
-			remoteInfo = emptymyinboxdesktop;
+			remoteGlobalIDString = AEFBF4382F79ADFE00AA180E;
+			remoteInfo = emptymyinboxMacApp;
 		};
-		AE4FCBDB2F78CF860030E652 /* PBXContainerItemProxy */ = {
+		AEFBF4512F79AE0000AA180E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = AE4FCBBB2F78CF850030E652 /* Project object */;
+			containerPortal = AEFBF4312F79ADFE00AA180E /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = AE4FCBC22F78CF850030E652;
-			remoteInfo = emptymyinboxdesktop;
+			remoteGlobalIDString = AEFBF4382F79ADFE00AA180E;
+			remoteInfo = emptymyinboxMacApp;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		AE4FCBC32F78CF850030E652 /* emptymyinboxdesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = emptymyinboxdesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AE4FCBD02F78CF860030E652 /* emptymyinboxdesktopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = emptymyinboxdesktopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		AE4FCBDA2F78CF860030E652 /* emptymyinboxdesktopUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = emptymyinboxdesktopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEFBF4392F79ADFE00AA180E /* emptymyinboxMacApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = emptymyinboxMacApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEFBF4462F79AE0000AA180E /* emptymyinboxMacAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = emptymyinboxMacAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEFBF4502F79AE0000AA180E /* emptymyinboxMacAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = emptymyinboxMacAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AE4FCBC52F78CF850030E652 /* emptymyinboxdesktop */ = {
+		AEFBF43B2F79ADFE00AA180E /* emptymyinboxMacApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = emptymyinboxdesktop;
+			path = emptymyinboxMacApp;
 			sourceTree = "<group>";
 		};
-		AE4FCBD32F78CF860030E652 /* emptymyinboxdesktopTests */ = {
+		AEFBF4492F79AE0000AA180E /* emptymyinboxMacAppTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = emptymyinboxdesktopTests;
+			path = emptymyinboxMacAppTests;
 			sourceTree = "<group>";
 		};
-		AE4FCBDD2F78CF860030E652 /* emptymyinboxdesktopUITests */ = {
+		AEFBF4532F79AE0000AA180E /* emptymyinboxMacAppUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = emptymyinboxdesktopUITests;
+			path = emptymyinboxMacAppUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		AE4FCBC02F78CF850030E652 /* Frameworks */ = {
+		AEFBF4362F79ADFE00AA180E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBCD2F78CF860030E652 /* Frameworks */ = {
+		AEFBF4432F79AE0000AA180E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBD72F78CF860030E652 /* Frameworks */ = {
+		AEFBF44D2F79AE0000AA180E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -72,22 +72,22 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		AE4FCBBA2F78CF850030E652 = {
+		AEFBF4302F79ADFE00AA180E = {
 			isa = PBXGroup;
 			children = (
-				AE4FCBC52F78CF850030E652 /* emptymyinboxdesktop */,
-				AE4FCBD32F78CF860030E652 /* emptymyinboxdesktopTests */,
-				AE4FCBDD2F78CF860030E652 /* emptymyinboxdesktopUITests */,
-				AE4FCBC42F78CF850030E652 /* Products */,
+				AEFBF43B2F79ADFE00AA180E /* emptymyinboxMacApp */,
+				AEFBF4492F79AE0000AA180E /* emptymyinboxMacAppTests */,
+				AEFBF4532F79AE0000AA180E /* emptymyinboxMacAppUITests */,
+				AEFBF43A2F79ADFE00AA180E /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		AE4FCBC42F78CF850030E652 /* Products */ = {
+		AEFBF43A2F79ADFE00AA180E /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AE4FCBC32F78CF850030E652 /* emptymyinboxdesktop.app */,
-				AE4FCBD02F78CF860030E652 /* emptymyinboxdesktopTests.xctest */,
-				AE4FCBDA2F78CF860030E652 /* emptymyinboxdesktopUITests.xctest */,
+				AEFBF4392F79ADFE00AA180E /* emptymyinboxMacApp.app */,
+				AEFBF4462F79AE0000AA180E /* emptymyinboxMacAppTests.xctest */,
+				AEFBF4502F79AE0000AA180E /* emptymyinboxMacAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,134 +95,134 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AE4FCBC22F78CF850030E652 /* emptymyinboxdesktop */ = {
+		AEFBF4382F79ADFE00AA180E /* emptymyinboxMacApp */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AE4FCBE42F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktop" */;
+			buildConfigurationList = AEFBF45A2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacApp" */;
 			buildPhases = (
-				AE4FCBBF2F78CF850030E652 /* Sources */,
-				AE4FCBC02F78CF850030E652 /* Frameworks */,
-				AE4FCBC12F78CF850030E652 /* Resources */,
+				AEFBF4352F79ADFE00AA180E /* Sources */,
+				AEFBF4362F79ADFE00AA180E /* Frameworks */,
+				AEFBF4372F79ADFE00AA180E /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				AE4FCBC52F78CF850030E652 /* emptymyinboxdesktop */,
+				AEFBF43B2F79ADFE00AA180E /* emptymyinboxMacApp */,
 			);
-			name = emptymyinboxdesktop;
+			name = emptymyinboxMacApp;
 			packageProductDependencies = (
 			);
-			productName = emptymyinboxdesktop;
-			productReference = AE4FCBC32F78CF850030E652 /* emptymyinboxdesktop.app */;
+			productName = emptymyinboxMacApp;
+			productReference = AEFBF4392F79ADFE00AA180E /* emptymyinboxMacApp.app */;
 			productType = "com.apple.product-type.application";
 		};
-		AE4FCBCF2F78CF860030E652 /* emptymyinboxdesktopTests */ = {
+		AEFBF4452F79AE0000AA180E /* emptymyinboxMacAppTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AE4FCBE72F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktopTests" */;
+			buildConfigurationList = AEFBF45D2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacAppTests" */;
 			buildPhases = (
-				AE4FCBCC2F78CF860030E652 /* Sources */,
-				AE4FCBCD2F78CF860030E652 /* Frameworks */,
-				AE4FCBCE2F78CF860030E652 /* Resources */,
+				AEFBF4422F79AE0000AA180E /* Sources */,
+				AEFBF4432F79AE0000AA180E /* Frameworks */,
+				AEFBF4442F79AE0000AA180E /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				AE4FCBD22F78CF860030E652 /* PBXTargetDependency */,
+				AEFBF4482F79AE0000AA180E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				AE4FCBD32F78CF860030E652 /* emptymyinboxdesktopTests */,
+				AEFBF4492F79AE0000AA180E /* emptymyinboxMacAppTests */,
 			);
-			name = emptymyinboxdesktopTests;
+			name = emptymyinboxMacAppTests;
 			packageProductDependencies = (
 			);
-			productName = emptymyinboxdesktopTests;
-			productReference = AE4FCBD02F78CF860030E652 /* emptymyinboxdesktopTests.xctest */;
+			productName = emptymyinboxMacAppTests;
+			productReference = AEFBF4462F79AE0000AA180E /* emptymyinboxMacAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		AE4FCBD92F78CF860030E652 /* emptymyinboxdesktopUITests */ = {
+		AEFBF44F2F79AE0000AA180E /* emptymyinboxMacAppUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AE4FCBEA2F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktopUITests" */;
+			buildConfigurationList = AEFBF4602F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacAppUITests" */;
 			buildPhases = (
-				AE4FCBD62F78CF860030E652 /* Sources */,
-				AE4FCBD72F78CF860030E652 /* Frameworks */,
-				AE4FCBD82F78CF860030E652 /* Resources */,
+				AEFBF44C2F79AE0000AA180E /* Sources */,
+				AEFBF44D2F79AE0000AA180E /* Frameworks */,
+				AEFBF44E2F79AE0000AA180E /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				AE4FCBDC2F78CF860030E652 /* PBXTargetDependency */,
+				AEFBF4522F79AE0000AA180E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				AE4FCBDD2F78CF860030E652 /* emptymyinboxdesktopUITests */,
+				AEFBF4532F79AE0000AA180E /* emptymyinboxMacAppUITests */,
 			);
-			name = emptymyinboxdesktopUITests;
+			name = emptymyinboxMacAppUITests;
 			packageProductDependencies = (
 			);
-			productName = emptymyinboxdesktopUITests;
-			productReference = AE4FCBDA2F78CF860030E652 /* emptymyinboxdesktopUITests.xctest */;
+			productName = emptymyinboxMacAppUITests;
+			productReference = AEFBF4502F79AE0000AA180E /* emptymyinboxMacAppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		AE4FCBBB2F78CF850030E652 /* Project object */ = {
+		AEFBF4312F79ADFE00AA180E /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
-					AE4FCBC22F78CF850030E652 = {
+					AEFBF4382F79ADFE00AA180E = {
 						CreatedOnToolsVersion = 26.2;
 					};
-					AE4FCBCF2F78CF860030E652 = {
+					AEFBF4452F79AE0000AA180E = {
 						CreatedOnToolsVersion = 26.2;
-						TestTargetID = AE4FCBC22F78CF850030E652;
+						TestTargetID = AEFBF4382F79ADFE00AA180E;
 					};
-					AE4FCBD92F78CF860030E652 = {
+					AEFBF44F2F79AE0000AA180E = {
 						CreatedOnToolsVersion = 26.2;
-						TestTargetID = AE4FCBC22F78CF850030E652;
+						TestTargetID = AEFBF4382F79ADFE00AA180E;
 					};
 				};
 			};
-			buildConfigurationList = AE4FCBBE2F78CF850030E652 /* Build configuration list for PBXProject "emptymyinboxdesktop" */;
+			buildConfigurationList = AEFBF4342F79ADFE00AA180E /* Build configuration list for PBXProject "emptymyinboxMacApp" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = AE4FCBBA2F78CF850030E652;
+			mainGroup = AEFBF4302F79ADFE00AA180E;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = AE4FCBC42F78CF850030E652 /* Products */;
+			productRefGroup = AEFBF43A2F79ADFE00AA180E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AE4FCBC22F78CF850030E652 /* emptymyinboxdesktop */,
-				AE4FCBCF2F78CF860030E652 /* emptymyinboxdesktopTests */,
-				AE4FCBD92F78CF860030E652 /* emptymyinboxdesktopUITests */,
+				AEFBF4382F79ADFE00AA180E /* emptymyinboxMacApp */,
+				AEFBF4452F79AE0000AA180E /* emptymyinboxMacAppTests */,
+				AEFBF44F2F79AE0000AA180E /* emptymyinboxMacAppUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		AE4FCBC12F78CF850030E652 /* Resources */ = {
+		AEFBF4372F79ADFE00AA180E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBCE2F78CF860030E652 /* Resources */ = {
+		AEFBF4442F79AE0000AA180E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBD82F78CF860030E652 /* Resources */ = {
+		AEFBF44E2F79AE0000AA180E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -232,21 +232,21 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		AE4FCBBF2F78CF850030E652 /* Sources */ = {
+		AEFBF4352F79ADFE00AA180E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBCC2F78CF860030E652 /* Sources */ = {
+		AEFBF4422F79AE0000AA180E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AE4FCBD62F78CF860030E652 /* Sources */ = {
+		AEFBF44C2F79AE0000AA180E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -256,20 +256,20 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		AE4FCBD22F78CF860030E652 /* PBXTargetDependency */ = {
+		AEFBF4482F79AE0000AA180E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = AE4FCBC22F78CF850030E652 /* emptymyinboxdesktop */;
-			targetProxy = AE4FCBD12F78CF860030E652 /* PBXContainerItemProxy */;
+			target = AEFBF4382F79ADFE00AA180E /* emptymyinboxMacApp */;
+			targetProxy = AEFBF4472F79AE0000AA180E /* PBXContainerItemProxy */;
 		};
-		AE4FCBDC2F78CF860030E652 /* PBXTargetDependency */ = {
+		AEFBF4522F79AE0000AA180E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = AE4FCBC22F78CF850030E652 /* emptymyinboxdesktop */;
-			targetProxy = AE4FCBDB2F78CF860030E652 /* PBXContainerItemProxy */;
+			target = AEFBF4382F79ADFE00AA180E /* emptymyinboxMacApp */;
+			targetProxy = AEFBF4512F79AE0000AA180E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		AE4FCBE22F78CF870030E652 /* Debug */ = {
+		AEFBF4582F79AE0000AA180E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -333,7 +333,7 @@
 			};
 			name = Debug;
 		};
-		AE4FCBE32F78CF870030E652 /* Release */ = {
+		AEFBF4592F79AE0000AA180E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -389,7 +389,7 @@
 			};
 			name = Release;
 		};
-		AE4FCBE52F78CF870030E652 /* Debug */ = {
+		AEFBF45B2F79AE0000AA180E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -409,7 +409,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktop;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -421,7 +421,7 @@
 			};
 			name = Debug;
 		};
-		AE4FCBE62F78CF870030E652 /* Release */ = {
+		AEFBF45C2F79AE0000AA180E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -441,7 +441,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktop;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -453,7 +453,7 @@
 			};
 			name = Release;
 		};
-		AE4FCBE82F78CF870030E652 /* Debug */ = {
+		AEFBF45E2F79AE0000AA180E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -463,18 +463,18 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktopTests;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/emptymyinboxdesktop.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/emptymyinboxdesktop";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/emptymyinboxMacApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/emptymyinboxMacApp";
 			};
 			name = Debug;
 		};
-		AE4FCBE92F78CF870030E652 /* Release */ = {
+		AEFBF45F2F79AE0000AA180E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -484,18 +484,18 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktopTests;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/emptymyinboxdesktop.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/emptymyinboxdesktop";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/emptymyinboxMacApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/emptymyinboxMacApp";
 			};
 			name = Release;
 		};
-		AE4FCBEB2F78CF870030E652 /* Debug */ = {
+		AEFBF4612F79AE0000AA180E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -503,18 +503,18 @@
 				DEVELOPMENT_TEAM = XFXK72ST27;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktopUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacAppUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = emptymyinboxdesktop;
+				TEST_TARGET_NAME = emptymyinboxMacApp;
 			};
 			name = Debug;
 		};
-		AE4FCBEC2F78CF870030E652 /* Release */ = {
+		AEFBF4622F79AE0000AA180E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -522,57 +522,57 @@
 				DEVELOPMENT_TEAM = XFXK72ST27;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxdesktopUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.emptymyinboxMacAppUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = emptymyinboxdesktop;
+				TEST_TARGET_NAME = emptymyinboxMacApp;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AE4FCBBE2F78CF850030E652 /* Build configuration list for PBXProject "emptymyinboxdesktop" */ = {
+		AEFBF4342F79ADFE00AA180E /* Build configuration list for PBXProject "emptymyinboxMacApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AE4FCBE22F78CF870030E652 /* Debug */,
-				AE4FCBE32F78CF870030E652 /* Release */,
+				AEFBF4582F79AE0000AA180E /* Debug */,
+				AEFBF4592F79AE0000AA180E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AE4FCBE42F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktop" */ = {
+		AEFBF45A2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AE4FCBE52F78CF870030E652 /* Debug */,
-				AE4FCBE62F78CF870030E652 /* Release */,
+				AEFBF45B2F79AE0000AA180E /* Debug */,
+				AEFBF45C2F79AE0000AA180E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AE4FCBE72F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktopTests" */ = {
+		AEFBF45D2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacAppTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AE4FCBE82F78CF870030E652 /* Debug */,
-				AE4FCBE92F78CF870030E652 /* Release */,
+				AEFBF45E2F79AE0000AA180E /* Debug */,
+				AEFBF45F2F79AE0000AA180E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AE4FCBEA2F78CF870030E652 /* Build configuration list for PBXNativeTarget "emptymyinboxdesktopUITests" */ = {
+		AEFBF4602F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacAppUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AE4FCBEB2F78CF870030E652 /* Debug */,
-				AE4FCBEC2F78CF870030E652 /* Release */,
+				AEFBF4612F79AE0000AA180E /* Debug */,
+				AEFBF4622F79AE0000AA180E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = AE4FCBBB2F78CF850030E652 /* Project object */;
+	rootObject = AEFBF4312F79ADFE00AA180E /* Project object */;
 }
