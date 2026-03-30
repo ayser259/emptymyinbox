@@ -425,7 +425,50 @@ public class GmailAPIService {
         
         return newAccessToken
     }
-    
+
+    // MARK: - Google Drive (vault)
+
+    public static let googleDriveFileScope = "https://www.googleapis.com/auth/drive.file"
+
+    #if canImport(UIKit)
+    @MainActor
+    public func requestGoogleDriveFileScope(presentingViewController: UIViewController) async throws {
+        guard let user = GIDSignIn.sharedInstance.currentUser else {
+            throw GmailAPIError.notAuthenticated
+        }
+        let result = try await user.addScopes([Self.googleDriveFileScope], presenting: presentingViewController)
+        try updateAccountAccessTokenFromSignIn(result)
+    }
+    #endif
+
+    #if os(macOS)
+    @MainActor
+    public func requestGoogleDriveFileScope(presentingWindow: NSWindow?) async throws {
+        guard let user = GIDSignIn.sharedInstance.currentUser else {
+            throw GmailAPIError.notAuthenticated
+        }
+        guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
+            throw GmailAPIError.configurationError
+        }
+        let result = try await user.addScopes([Self.googleDriveFileScope], presenting: window)
+        try updateAccountAccessTokenFromSignIn(result)
+    }
+    #endif
+
+    @MainActor
+    private func updateAccountAccessTokenFromSignIn(_ result: GIDSignInResult) throws {
+        let email = result.user.profile?.email ?? ""
+        guard !email.isEmpty else { throw GmailAPIError.noToken }
+        let accessToken = result.user.accessToken.tokenString
+        let tokenExpiry = Date().addingTimeInterval(3600)
+        guard let idx = accounts.firstIndex(where: { $0.email == email }) else {
+            throw GmailAPIError.notAuthenticated
+        }
+        accounts[idx].accessToken = accessToken
+        accounts[idx].tokenExpiry = tokenExpiry
+        saveAccounts()
+    }
+
     private func refreshAccessToken(refreshToken: String, clientID: String, clientSecret: String) async throws -> String {
         let url = URL(string: "https://oauth2.googleapis.com/token")!
         var request = URLRequest(url: url)

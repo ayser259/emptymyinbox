@@ -50,6 +50,7 @@ struct emptymyinboxMacAppApp: App {
                 .preferredColorScheme(.dark)
                 .tint(MacAppTheme.accent)
                 .task {
+                    await VaultManager.shared.reloadFromPreferences()
                     await AppLifecycleCloudSync.performStartupSync()
                 }
                 .onOpenURL { url in
@@ -62,6 +63,12 @@ struct emptymyinboxMacAppApp: App {
                     authManager.logout()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            }
+            CommandMenu("Vault") {
+                Button("Vault Settings…") {
+                    NotificationCenter.default.post(name: .macOpenVaultSettings, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
             }
         }
     }

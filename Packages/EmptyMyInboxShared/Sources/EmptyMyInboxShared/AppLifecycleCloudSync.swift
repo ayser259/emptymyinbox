@@ -7,10 +7,12 @@ public enum AppLifecycleCloudSync {
         await AppStateCloudSync.shared.pullMergeAndReloadStores()
         let summary = await EmailActionSynchronizer.shared.exportCloudSyncSummaryData()
         await AppStateCloudSync.shared.pushLocalSnapshotsFromApplicationSupport(actionOutboxSummary: summary)
+        await VaultManager.shared.performLifecycleSync()
     }
 
     public static func pushLocalStateOnly() async {
         let summary = await EmailActionSynchronizer.shared.exportCloudSyncSummaryData()
         await AppStateCloudSync.shared.pushLocalSnapshotsFromApplicationSupport(actionOutboxSummary: summary)
+        await VaultManager.shared.performLifecycleSync()
     }
 }

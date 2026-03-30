@@ -59,6 +59,7 @@ struct emptyMyInboxApp: App {
             .preferredColorScheme(.dark) // Force dark mode
             .background(AppTheme.primaryBackground)
             .task {
+                await VaultManager.shared.reloadFromPreferences()
                 await AppLifecycleCloudSync.performStartupSync()
                 // Clean up old cached emails in background
                 Task.detached(priority: .background) {

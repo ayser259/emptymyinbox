@@ -2,10 +2,11 @@
 //  IOSFeatureShellViews.swift
 //  emptyMyInbox
 //
-//  Shared top chrome and skeleton screens for Calendar / Action Items tabs.
+//  Shared top chrome and Calendar / Action Items tabs (vault-backed).
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct MainAppTopBar<Center: View>: View {
     @ViewBuilder var center: () -> Center
@@ -36,39 +37,114 @@ struct MainAppTopBar<Center: View>: View {
 struct CalendarSkeletonView: View {
     var onMenuTap: () -> Void
 
+    @ObservedObject private var vaultManager = VaultManager.shared
+    @State private var events: [VaultCalendarEventRecord] = []
+    @State private var errorText: String?
+    @State private var showAdd = false
+    @State private var newTitle = ""
+
     var body: some View {
         NavigationStack {
             ZStack {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Calendar")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
+                ZStack(alignment: .topTrailing) {
+                    VStack(spacing: 0) {
+                        MainAppTopBar(center: {
+                            Text("Calendar")
+                                .font(AppTheme.headline)
+                                .primaryText()
+                        }, onMenuTap: onMenuTap)
 
-                    Spacer()
+                        if let errorText {
+                            Text(errorText)
+                                .font(AppTheme.caption)
+                                .foregroundColor(.orange)
+                                .padding(.horizontal)
+                        }
 
-                    VStack(spacing: AppTheme.spacingMedium) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 48))
-                            .foregroundStyle(AppTheme.accent.opacity(0.85))
-                        Text("Calendar is coming soon")
-                            .font(AppTheme.title3)
-                            .primaryText()
-                        Text("You’ll see events and email-linked dates here.")
-                            .font(AppTheme.body)
-                            .secondaryText()
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, AppTheme.spacingLarge)
+                        List {
+                            ForEach(events) { ev in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(ev.title)
+                                        .font(AppTheme.body)
+                                        .primaryText()
+                                    if let s = ev.startDate {
+                                        Text(s.formatted(date: .abbreviated, time: .shortened))
+                                            .font(AppTheme.caption)
+                                            .secondaryText()
+                                    }
+                                }
+                                .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
+                            }
+                            .onDelete(perform: deleteEvents)
+                        }
+                        .scrollContentBackground(.hidden)
+                        .listStyle(.plain)
                     }
 
-                    Spacer()
+                    Button {
+                        newTitle = ""
+                        showAdd = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.trailing, AppTheme.spacingMedium)
+                    .padding(.top, AppTheme.spacingSmall)
                 }
             }
             .navigationBarHidden(true)
+        }
+        .task { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task { await reload() }
+        }
+        .sheet(isPresented: $showAdd) {
+            NavigationStack {
+                Form {
+                    TextField("Title", text: $newTitle)
+                }
+                .navigationTitle("New event")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showAdd = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            Task {
+                                let ev = VaultCalendarEventRecord(title: newTitle.isEmpty ? "Untitled" : newTitle)
+                                try? await vaultManager.upsertCalendarEvent(ev)
+                                showAdd = false
+                                await reload()
+                            }
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+    }
+
+    private func deleteEvents(at offsets: IndexSet) {
+        Task {
+            for i in offsets {
+                let id = events[i].id
+                try? await vaultManager.deleteCalendarEvent(id: id)
+            }
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        errorText = nil
+        do {
+            events = try await vaultManager.listCalendarEvents()
+        } catch {
+            errorText = error.localizedDescription
+            events = []
         }
     }
 }
@@ -76,39 +152,123 @@ struct CalendarSkeletonView: View {
 struct ActionItemsSkeletonView: View {
     var onMenuTap: () -> Void
 
+    @ObservedObject private var vaultManager = VaultManager.shared
+    @State private var items: [VaultActionItemRecord] = []
+    @State private var errorText: String?
+    @State private var showAdd = false
+    @State private var newTitle = ""
+
     var body: some View {
         NavigationStack {
             ZStack {
                 AppTheme.primaryBackground
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Action Items")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
+                ZStack(alignment: .topTrailing) {
+                    VStack(spacing: 0) {
+                        MainAppTopBar(center: {
+                            Text("Action Items")
+                                .font(AppTheme.headline)
+                                .primaryText()
+                        }, onMenuTap: onMenuTap)
 
-                    Spacer()
+                        if let errorText {
+                            Text(errorText)
+                                .font(AppTheme.caption)
+                                .foregroundColor(.orange)
+                                .padding(.horizontal)
+                        }
 
-                    VStack(spacing: AppTheme.spacingMedium) {
-                        Image(systemName: "checklist")
-                            .font(.system(size: 48))
-                            .foregroundStyle(AppTheme.accent.opacity(0.85))
-                        Text("Action items are coming soon")
-                            .font(AppTheme.title3)
-                            .primaryText()
-                        Text("Track todos and follow-ups from your mail.")
-                            .font(AppTheme.body)
-                            .secondaryText()
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, AppTheme.spacingLarge)
+                        List {
+                            ForEach(items) { item in
+                                HStack(alignment: .center, spacing: AppTheme.spacingMedium) {
+                                    Button {
+                                        Task {
+                                            var u = item
+                                            u.isDone.toggle()
+                                            try? await vaultManager.upsertActionItem(u)
+                                            await reload()
+                                        }
+                                    } label: {
+                                        Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(item.isDone ? AppTheme.accent : AppTheme.secondaryText)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Text(item.title)
+                                        .font(AppTheme.body)
+                                        .strikethrough(item.isDone)
+                                        .primaryText()
+                                }
+                                .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
+                            }
+                            .onDelete(perform: deleteItems)
+                        }
+                        .scrollContentBackground(.hidden)
+                        .listStyle(.plain)
                     }
 
-                    Spacer()
+                    Button {
+                        newTitle = ""
+                        showAdd = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.trailing, AppTheme.spacingMedium)
+                    .padding(.top, AppTheme.spacingSmall)
                 }
             }
             .navigationBarHidden(true)
+        }
+        .task { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task { await reload() }
+        }
+        .sheet(isPresented: $showAdd) {
+            NavigationStack {
+                Form {
+                    TextField("Title", text: $newTitle)
+                }
+                .navigationTitle("New action")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showAdd = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            Task {
+                                let it = VaultActionItemRecord(title: newTitle.isEmpty ? "Untitled" : newTitle)
+                                try? await vaultManager.upsertActionItem(it)
+                                showAdd = false
+                                await reload()
+                            }
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+    }
+
+    private func deleteItems(at offsets: IndexSet) {
+        Task {
+            for i in offsets {
+                let id = items[i].id
+                try? await vaultManager.deleteActionItem(id: id)
+            }
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        errorText = nil
+        do {
+            items = try await vaultManager.listActionItems()
+        } catch {
+            errorText = error.localizedDescription
+            items = []
         }
     }
 }

@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
     @State private var refreshMessage: String?
+    @State private var showVaultSettings = false
 
     var body: some View {
         Group {
@@ -67,6 +68,12 @@ struct ContentView: View {
         }
         .frame(minWidth: 880, minHeight: 560)
         .background(MacAppTheme.primaryBackground)
+        .sheet(isPresented: $showVaultSettings) {
+            MacVaultSettingsView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
+            showVaultSettings = true
+        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task { await AppLifecycleCloudSync.pushLocalStateOnly() }
@@ -84,17 +91,9 @@ struct ContentView: View {
                 case .mail:
                     mailSplitView
                 case .calendar:
-                    MacFeatureSkeletonView(
-                        systemImage: "calendar",
-                        message: "Calendar is coming soon.",
-                        detail: "Events and email-linked dates will live here."
-                    )
+                    MacVaultCalendarTab()
                 case .actionItems:
-                    MacFeatureSkeletonView(
-                        systemImage: "checklist",
-                        message: "Action items are coming soon.",
-                        detail: "Todos and follow-ups from your mail will appear here."
-                    )
+                    MacVaultActionItemsTab()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -122,6 +121,14 @@ struct ContentView: View {
             .layoutPriority(1)
 
             Group {
+                Button {
+                    showVaultSettings = true
+                } label: {
+                    Label("Vault", systemImage: "shippingbox")
+                }
+                .labelStyle(.iconOnly)
+                .help("Vault storage settings")
+
                 if rootTab == .mail {
                     Button {
                         Task { await refreshMailbox() }
@@ -361,35 +368,6 @@ private struct MacAccountsListView: View {
         .navigationTitle("Accounts")
         .scrollContentBackground(.hidden)
         .background(MacAppTheme.primaryBackground)
-    }
-}
-
-// MARK: - Feature placeholders (Calendar / Action Items)
-
-private struct MacFeatureSkeletonView: View {
-    let systemImage: String
-    let message: String
-    let detail: String
-
-    var body: some View {
-        ZStack {
-            MacAppTheme.primaryBackground
-            VStack(spacing: 20) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 52))
-                    .foregroundStyle(MacAppTheme.accent.opacity(0.9))
-                Text(message)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(MacAppTheme.primaryText)
-                Text(detail)
-                    .font(.body)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-            }
-            .padding(40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
