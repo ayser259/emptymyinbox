@@ -1,8 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
-import EmptyMyInboxShared
+#endif
 
-struct NewsletterInsightDeckView: View {
+public struct NewsletterInsightDeckView: View {
     let emails: [EmailListItem]
     let onDiveDeeper: (Int) -> Void
     let onOpenLLMSettings: () -> Void
@@ -15,16 +16,30 @@ struct NewsletterInsightDeckView: View {
     @State private var refreshTask: Task<Void, Never>?
     @State private var aiStatusMessage: String?
 
+    #if os(iOS)
     private let impact = UIImpactFeedbackGenerator(style: .light)
+    #endif
 
-    var body: some View {
+    public init(
+        emails: [EmailListItem],
+        onDiveDeeper: @escaping (Int) -> Void,
+        onOpenLLMSettings: @escaping () -> Void
+    ) {
+        self.emails = emails
+        self.onDiveDeeper = onDiveDeeper
+        self.onOpenLLMSettings = onOpenLLMSettings
+    }
+
+    public var body: some View {
         ZStack {
-            AppTheme.primaryBackground
+            SharedAppTheme.primaryBackground
+                #if os(iOS)
                 .ignoresSafeArea()
+                #endif
 
             if isLoading {
                 ProgressView("Building stories...")
-                    .tint(AppTheme.accent)
+                    .tint(SharedAppTheme.accent)
             } else if !hasKey {
                 LLMUpsellView(
                     title: "Unlock Stories",
@@ -33,40 +48,40 @@ struct NewsletterInsightDeckView: View {
                     onAction: onOpenLLMSettings
                 )
             } else if cards.isEmpty {
-                VStack(spacing: AppTheme.spacingMedium) {
+                VStack(spacing: SharedAppTheme.spacingMedium) {
                     Text("No stories right now")
-                        .font(AppTheme.title3)
-                        .primaryText()
+                        .font(SharedAppTheme.title3)
+                        .foregroundStyle(SharedAppTheme.primaryText)
                     Text("No new newsletter stories since your last visit.")
-                        .font(AppTheme.body)
-                        .secondaryText()
+                        .font(SharedAppTheme.body)
+                        .foregroundStyle(SharedAppTheme.secondaryText)
                     if let aiStatusMessage {
                         Text(aiStatusMessage)
-                            .font(AppTheme.caption)
-                            .foregroundColor(AppTheme.secondaryText)
+                            .font(SharedAppTheme.caption)
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, AppTheme.spacingLarge)
+                            .padding(.horizontal, SharedAppTheme.spacingLarge)
                     }
                 }
             } else {
                 ScrollView {
-                    VStack(spacing: AppTheme.spacingMedium) {
+                    VStack(spacing: SharedAppTheme.spacingMedium) {
                         HStack {
                             Text("\(cards.count) stories")
-                                .font(AppTheme.headline)
-                                .foregroundColor(AppTheme.accent)
+                                .font(SharedAppTheme.headline)
+                                .foregroundStyle(SharedAppTheme.accent)
                             if isRefreshingStories {
                                 Text("Generating...")
-                                    .font(AppTheme.caption)
-                                    .foregroundColor(AppTheme.secondaryText)
+                                    .font(SharedAppTheme.caption)
+                                    .foregroundStyle(SharedAppTheme.secondaryText)
                             }
                             Spacer()
                         }
-                        .padding(.top, AppTheme.spacingSmall)
+                        .padding(.top, SharedAppTheme.spacingSmall)
                         if let aiStatusMessage {
                             Text(aiStatusMessage)
-                                .font(AppTheme.caption)
-                                .foregroundColor(AppTheme.secondaryText)
+                                .font(SharedAppTheme.caption)
+                                .foregroundStyle(SharedAppTheme.secondaryText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
@@ -74,13 +89,15 @@ struct NewsletterInsightDeckView: View {
                             insightCard(card)
                         }
                     }
-                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.horizontal, SharedAppTheme.spacingMedium)
                 }
-                .padding(.bottom, AppTheme.spacingLarge)
+                .padding(.bottom, SharedAppTheme.spacingLarge)
             }
         }
         .navigationTitle("Stories")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             scheduleRefreshContent()
         }
@@ -90,14 +107,14 @@ struct NewsletterInsightDeckView: View {
     }
 
     private func insightCard(_ card: InsightCard) -> some View {
-        return VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+        VStack(alignment: .leading, spacing: SharedAppTheme.spacingMedium) {
             HStack {
                 Text("#\(card.theme.tag)")
-                    .font(AppTheme.caption)
-                    .foregroundColor(AppTheme.accent)
+                    .font(SharedAppTheme.caption)
+                    .foregroundStyle(SharedAppTheme.accent)
                 Text(card.senderName ?? card.sender)
-                    .font(AppTheme.caption)
-                    .secondaryText()
+                    .font(SharedAppTheme.caption)
+                    .foregroundStyle(SharedAppTheme.secondaryText)
                 Spacer()
                 Button {
                     Task {
@@ -109,34 +126,34 @@ struct NewsletterInsightDeckView: View {
                 } label: {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(AppTheme.accent)
+                        .foregroundStyle(SharedAppTheme.accent)
                 }
                 .buttonStyle(.plain)
             }
 
             Text(card.subject)
-                .font(AppTheme.title3)
-                .primaryText()
+                .font(SharedAppTheme.title3)
+                .foregroundStyle(SharedAppTheme.primaryText)
 
             Text(card.summary)
-                .font(AppTheme.body)
-                .secondaryText()
+                .font(SharedAppTheme.body)
+                .foregroundStyle(SharedAppTheme.secondaryText)
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(card.keyPoints.prefix(3), id: \.self) { point in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
-                            .secondaryText()
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                         Text(point)
-                            .font(AppTheme.caption)
-                            .secondaryText()
+                            .font(SharedAppTheme.caption)
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                     }
                 }
             }
 
             Spacer(minLength: 0)
 
-            HStack(spacing: AppTheme.spacingSmall) {
+            HStack(spacing: SharedAppTheme.spacingSmall) {
                 Button("See Less (-)") {
                     Task { await applyFeedback(.less, for: card) }
                 }
@@ -153,15 +170,15 @@ struct NewsletterInsightDeckView: View {
                     onDiveDeeper(card.emailId)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(AppTheme.accent)
+                .tint(SharedAppTheme.accent)
             }
         }
-        .padding(AppTheme.spacingMedium)
+        .padding(SharedAppTheme.spacingMedium)
         .frame(maxWidth: .infinity, minHeight: 240)
-        .background(AppTheme.secondaryBackground)
-        .cornerRadius(AppTheme.cornerRadiusLarge)
+        .background(SharedAppTheme.secondaryBackground)
+        .cornerRadius(SharedAppTheme.cornerRadiusLarge)
         .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.cornerRadiusLarge)
+            RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusLarge)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
     }
@@ -175,9 +192,11 @@ struct NewsletterInsightDeckView: View {
         )
         await InterestProfileStore.shared.applySignal(signal)
 
+        #if os(iOS)
         await MainActor.run {
             impact.impactOccurred()
         }
+        #endif
     }
 
     @MainActor
@@ -191,9 +210,10 @@ struct NewsletterInsightDeckView: View {
     }
 
     private func refreshContent(generation: Int) async {
+        #if os(iOS)
         impact.prepare()
+        #endif
 
-        // Show persisted stories immediately to avoid blocking UX on re-entry.
         let persistedStories = await StoriesFeedStore.shared.stories()
         guard !Task.isCancelled, isLatestRefresh(generation) else { return }
         await MainActor.run {
@@ -213,7 +233,6 @@ struct NewsletterInsightDeckView: View {
             )
             guard !Task.isCancelled, isLatestRefresh(generation) else { return }
 
-            // If there is nothing new, skip LLM calls entirely.
             if !candidates.isEmpty {
                 await MainActor.run {
                     isRefreshingStories = true

@@ -89,10 +89,44 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(item.title, "Legacy task")
         XCTAssertTrue(item.isDone)
         XCTAssertEqual(item.notes, "hello")
+        XCTAssertEqual(item.numericId, 0)
         XCTAssertTrue(item.comments.isEmpty)
         XCTAssertNil(item.startDate)
         XCTAssertNil(item.priority)
         XCTAssertNil(item.taskDescription)
+    }
+
+    func testVaultLayoutIncludesActionItemSubfolders() {
+        let subs = VaultLayout.standardSubfolders()
+        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsCompletedSubfolder)"))
+        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsContextsSubfolder)"))
+        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsTypesSubfolder)"))
+    }
+
+    func testVaultActionItemNumericAndIdsRoundTrip() throws {
+        let original = VaultActionItemRecord(
+            numericId: 42,
+            title: "T",
+            subjectLabel: "Inbox",
+            contextId: "ctx-1",
+            typeLabel: "Meeting",
+            typeId: "type-1"
+        )
+        let data = try VaultJSON.encoder().encode(original)
+        let back = try VaultJSON.decoder().decode(VaultActionItemRecord.self, from: data)
+        XCTAssertEqual(back.numericId, 42)
+        XCTAssertEqual(back.contextId, "ctx-1")
+        XCTAssertEqual(back.typeId, "type-1")
+    }
+
+    func testVaultEnsureStructureCreatesActionItemCompletedFolder() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vault_action_items_\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let backend = VaultLocalFolderBackend(vaultRoot: tmp)
+        try await backend.ensureStructure()
+        let completed = tmp.appendingPathComponent("ActionItems/completed", isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: completed.path))
     }
 
     func testVaultActionItemDescriptionCodingKeyRoundTrip() throws {

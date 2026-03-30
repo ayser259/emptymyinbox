@@ -1,81 +1,93 @@
 import SwiftUI
-import EmptyMyInboxShared
 
-struct DailyBriefingSheet: View {
+public struct DailyBriefingSheet: View {
     let payload: DailyBriefingPayload
     let onItemTap: (DailyBriefingItem) -> Void
     let onDismiss: () -> Void
 
-    var body: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+    public init(
+        payload: DailyBriefingPayload,
+        onItemTap: @escaping (DailyBriefingItem) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.payload = payload
+        self.onItemTap = onItemTap
+        self.onDismiss = onDismiss
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: SharedAppTheme.spacingMedium) {
                 Text(payload.introText)
-                    .font(AppTheme.body)
-                    .secondaryText()
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.top, AppTheme.spacingSmall)
+                    .font(SharedAppTheme.body)
+                    .foregroundStyle(SharedAppTheme.secondaryText)
+                    .padding(.horizontal, SharedAppTheme.spacingMedium)
+                    .padding(.top, SharedAppTheme.spacingSmall)
 
                 if payload.items.isEmpty {
                     Text("No important updates right now.")
-                        .font(AppTheme.subheadline)
-                        .secondaryText()
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                        .padding(.top, AppTheme.spacingMedium)
+                        .font(SharedAppTheme.subheadline)
+                        .foregroundStyle(SharedAppTheme.secondaryText)
+                        .padding(.horizontal, SharedAppTheme.spacingMedium)
+                        .padding(.top, SharedAppTheme.spacingMedium)
                     Spacer()
                 } else {
                     ScrollView {
-                        VStack(spacing: AppTheme.spacingSmall) {
+                        VStack(spacing: SharedAppTheme.spacingSmall) {
                             ForEach(payload.items) { item in
                                 Button {
                                     onItemTap(item)
                                 } label: {
                                     HStack(alignment: .top, spacing: 12) {
                                         Image(systemName: "checklist.checked")
-                                            .foregroundColor(AppTheme.accent)
+                                            .foregroundStyle(SharedAppTheme.accent)
                                             .padding(.top, 2)
 
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(item.subject)
-                                                .font(AppTheme.subheadline)
-                                                .foregroundColor(AppTheme.primaryText)
+                                                .font(SharedAppTheme.subheadline)
+                                                .foregroundStyle(SharedAppTheme.primaryText)
                                                 .multilineTextAlignment(.leading)
                                             Text("\(item.senderName ?? item.sender) • \(caption(for: item.type))")
-                                                .font(AppTheme.caption)
-                                                .foregroundColor(AppTheme.secondaryText)
+                                                .font(SharedAppTheme.caption)
+                                                .foregroundStyle(SharedAppTheme.secondaryText)
                                                 .multilineTextAlignment(.leading)
                                             Text(item.snippet)
-                                                .font(AppTheme.caption)
-                                                .foregroundColor(AppTheme.secondaryText)
+                                                .font(SharedAppTheme.caption)
+                                                .foregroundStyle(SharedAppTheme.secondaryText)
                                                 .lineLimit(2)
                                                 .multilineTextAlignment(.leading)
                                         }
                                         Spacer()
                                         Image(systemName: "chevron.right")
                                             .font(.caption)
-                                            .foregroundColor(AppTheme.secondaryText)
+                                            .foregroundStyle(SharedAppTheme.secondaryText)
                                             .padding(.top, 4)
                                     }
-                                    .padding(AppTheme.spacingMedium)
-                                    .background(AppTheme.secondaryBackground)
-                                    .cornerRadius(AppTheme.cornerRadiusMedium)
+                                    .padding(SharedAppTheme.spacingMedium)
+                                    .background(SharedAppTheme.secondaryBackground)
+                                    .cornerRadius(SharedAppTheme.cornerRadiusMedium)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                        .padding(.bottom, AppTheme.spacingMedium)
+                        .padding(.horizontal, SharedAppTheme.spacingMedium)
+                        .padding(.bottom, SharedAppTheme.spacingMedium)
                     }
                 }
             }
-            .primaryBackground()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(SharedAppTheme.primaryBackground)
             .navigationTitle("Daily Executive Briefing")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         onDismiss()
                     }
-                    .textButton()
+                    .foregroundStyle(SharedAppTheme.accent)
                 }
             }
         }
