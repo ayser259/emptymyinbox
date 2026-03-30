@@ -18,6 +18,11 @@ public enum VaultLayout {
     public static let inboxThreadsSubfolder = "threads"
     public static let calendarEventsSubfolder = "events"
     public static let actionItemsSubfolder = "items"
+    public static let actionItemsCompletedSubfolder = "completed"
+    public static let actionItemsMetaSubfolder = "meta"
+    public static let actionItemSequenceFileName = "action_item_sequence.json"
+    public static let actionItemsContextsSubfolder = "contexts"
+    public static let actionItemsTypesSubfolder = "types"
 
     public static let currentSchemaVersion = 1
 
@@ -25,8 +30,16 @@ public enum VaultLayout {
         [
             "\(inboxFolder)/\(inboxThreadsSubfolder)",
             "\(calendarFolder)/\(calendarEventsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsSubfolder)"
+            "\(actionItemsFolder)/\(actionItemsSubfolder)",
+            "\(actionItemsFolder)/\(actionItemsCompletedSubfolder)",
+            "\(actionItemsFolder)/\(actionItemsMetaSubfolder)",
+            "\(actionItemsFolder)/\(actionItemsContextsSubfolder)",
+            "\(actionItemsFolder)/\(actionItemsTypesSubfolder)"
         ]
+    }
+
+    public static var actionItemSequenceRelativePath: String {
+        "\(actionItemsFolder)/\(actionItemsMetaSubfolder)/\(actionItemSequenceFileName)"
     }
 }
 
@@ -166,6 +179,8 @@ public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equ
 
 public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable {
     public var id: String
+    /// Monotonic human-visible id (e.g. "#42"); persisted and unique across active + completed.
+    public var numericId: Int
     public var title: String
     public var isDone: Bool
     public var notes: String?
@@ -183,23 +198,28 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var parentTaskId: String?
     /// Context / channel / subject grouping.
     public var subjectLabel: String?
+    /// Optional link to a saved context definition (`ActionItems/contexts/*.json`).
+    public var contextId: String?
     /// Work type: learning block, time block, action item, meeting, etc.
     public var typeLabel: String?
+    /// Optional link to a saved type definition (`ActionItems/types/*.json`).
+    public var typeId: String?
     public var createdAt: Date?
     public var updatedAt: Date?
     public var completedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, isDone, notes
+        case id, numericId, title, isDone, notes
         case startDate, endDate, priority
         case taskDescription = "description"
         case contextNotes, comments
-        case parentTaskId, subjectLabel, typeLabel
+        case parentTaskId, subjectLabel, contextId, typeLabel, typeId
         case createdAt, updatedAt, completedAt
     }
 
     public init(
         id: String = UUID().uuidString,
+        numericId: Int = 0,
         title: String,
         isDone: Bool = false,
         notes: String? = nil,
@@ -211,12 +231,15 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         comments: [VaultActionItemCommentRecord] = [],
         parentTaskId: String? = nil,
         subjectLabel: String? = nil,
+        contextId: String? = nil,
         typeLabel: String? = nil,
+        typeId: String? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
         completedAt: Date? = nil
     ) {
         self.id = id
+        self.numericId = numericId
         self.title = title
         self.isDone = isDone
         self.notes = notes
@@ -228,7 +251,9 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         self.comments = comments
         self.parentTaskId = parentTaskId
         self.subjectLabel = subjectLabel
+        self.contextId = contextId
         self.typeLabel = typeLabel
+        self.typeId = typeId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.completedAt = completedAt
@@ -237,6 +262,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        numericId = try c.decodeIfPresent(Int.self, forKey: .numericId) ?? 0
         title = try c.decode(String.self, forKey: .title)
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
@@ -248,7 +274,9 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         comments = try c.decodeIfPresent([VaultActionItemCommentRecord].self, forKey: .comments) ?? []
         parentTaskId = try c.decodeIfPresent(String.self, forKey: .parentTaskId)
         subjectLabel = try c.decodeIfPresent(String.self, forKey: .subjectLabel)
+        contextId = try c.decodeIfPresent(String.self, forKey: .contextId)
         typeLabel = try c.decodeIfPresent(String.self, forKey: .typeLabel)
+        typeId = try c.decodeIfPresent(String.self, forKey: .typeId)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
@@ -257,6 +285,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
+        try c.encode(numericId, forKey: .numericId)
         try c.encode(title, forKey: .title)
         try c.encode(isDone, forKey: .isDone)
         try c.encodeIfPresent(notes, forKey: .notes)
@@ -268,10 +297,87 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         try c.encode(comments, forKey: .comments)
         try c.encodeIfPresent(parentTaskId, forKey: .parentTaskId)
         try c.encodeIfPresent(subjectLabel, forKey: .subjectLabel)
+        try c.encodeIfPresent(contextId, forKey: .contextId)
         try c.encodeIfPresent(typeLabel, forKey: .typeLabel)
+        try c.encodeIfPresent(typeId, forKey: .typeId)
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
+    }
+}
+
+// MARK: - Action item sequence (numeric IDs)
+
+public struct VaultActionItemSequenceState: Codable, Sendable, Equatable {
+    /// Next value to assign when creating a new action item (`numericId`).
+    public var nextNumericId: Int
+
+    public init(nextNumericId: Int = 1) {
+        self.nextNumericId = nextNumericId
+    }
+}
+
+// MARK: - Context & type definitions (rich tagging)
+
+public struct VaultContextDefinition: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var notes: String?
+    public var accentColorHex: String?
+    public var symbolName: String?
+    public var sortOrder: Int
+    public var createdAt: Date?
+    public var updatedAt: Date?
+
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        notes: String? = nil,
+        accentColorHex: String? = nil,
+        symbolName: String? = nil,
+        sortOrder: Int = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.notes = notes
+        self.accentColorHex = accentColorHex
+        self.symbolName = symbolName
+        self.sortOrder = sortOrder
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct VaultActionTypeDefinition: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var notes: String?
+    public var accentColorHex: String?
+    public var symbolName: String?
+    public var sortOrder: Int
+    public var createdAt: Date?
+    public var updatedAt: Date?
+
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        notes: String? = nil,
+        accentColorHex: String? = nil,
+        symbolName: String? = nil,
+        sortOrder: Int = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.notes = notes
+        self.accentColorHex = accentColorHex
+        self.symbolName = symbolName
+        self.sortOrder = sortOrder
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }
 

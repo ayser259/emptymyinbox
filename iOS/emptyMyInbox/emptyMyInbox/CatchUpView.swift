@@ -13,8 +13,9 @@
 //
 
 import SwiftUI
-import WebKit
+#if canImport(UIKit)
 import UIKit
+#endif
 import EmptyMyInboxShared
 
 struct CatchUpView: View {
@@ -64,10 +65,12 @@ struct CatchUpView: View {
     @State private var sessionStartTime: Date?
     @State private var sessionStats = CatchUpSessionStats()
     
-    // Haptic generators
+    // Haptic generators (iOS only)
+    #if os(iOS)
     private let impactLight = UIImpactFeedbackGenerator(style: .light)
     private let impactMedium = UIImpactFeedbackGenerator(style: .medium)
     private let notificationGenerator = UINotificationFeedbackGenerator()
+    #endif
     
     /// Maximum cards to render in the deck (for performance)
     private let maxVisibleCards = 4
@@ -89,7 +92,7 @@ struct CatchUpView: View {
     
     var body: some View {
         ZStack {
-            AppTheme.primaryBackground
+            SharedAppTheme.primaryBackground
                 .ignoresSafeArea()
             
             mainContent
@@ -99,8 +102,10 @@ struct CatchUpView: View {
             unsubscribeToastOverlay
         }
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
+        #endif
         .sheet(isPresented: $showUnsubscribeWebView) {
             if let url = unsubscribeManualURL {
                 UnsubscribeWebView(url: url)
@@ -183,7 +188,7 @@ struct CatchUpView: View {
                     .padding(.vertical, 12)
                     .background(Color.black.opacity(0.9))
                     .cornerRadius(12)
-                    .frame(maxWidth: UIScreen.main.bounds.width - 40)
+                    .frame(maxWidth: 560)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .padding(.bottom, 120)
@@ -196,10 +201,11 @@ struct CatchUpView: View {
     // MARK: - Lifecycle
     
     private func onAppear() async {
-        // Prepare haptic generators
+        #if os(iOS)
         impactLight.prepare()
         impactMedium.prepare()
         notificationGenerator.prepare()
+        #endif
         
         // Resume pending actions
         await EmailActionSynchronizer.shared.resumePendingActions()
@@ -239,7 +245,7 @@ struct CatchUpView: View {
         VStack(spacing: 16) {
             ProgressView()
             Text("Loading emails...")
-                .font(AppTheme.body)
+                .font(SharedAppTheme.body)
                 .secondaryText()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -266,7 +272,7 @@ struct CatchUpView: View {
                 if emailLoader.currentLoadState == .failed {
                     failedCurrentCardBanner
                         .padding(.bottom, 100)
-                        .padding(.horizontal, AppTheme.spacingMedium)
+                        .padding(.horizontal, SharedAppTheme.spacingMedium)
                 }
                 actionButtonsSection
                 
@@ -292,21 +298,21 @@ struct CatchUpView: View {
             HStack(spacing: 8) {
                 Text("\(emailLoader.remainingCount) left to review")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(AppTheme.accent)
+                    .foregroundColor(SharedAppTheme.accent)
                 
                 if sessionStats.reviewed > 0 {
                     Text("•")
-                        .foregroundColor(AppTheme.secondaryText)
+                        .foregroundColor(SharedAppTheme.secondaryText)
                     Text("\(sessionStats.reviewed) reviewed")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppTheme.secondaryText)
+                        .foregroundColor(SharedAppTheme.secondaryText)
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, AppTheme.spacingMedium)
-        .padding(.vertical, AppTheme.spacingSmall)
-        .background(AppTheme.secondaryBackground.opacity(0.5))
+        .padding(.horizontal, SharedAppTheme.spacingMedium)
+        .padding(.vertical, SharedAppTheme.spacingSmall)
+        .background(SharedAppTheme.secondaryBackground.opacity(0.5))
     }
     
     // MARK: - Unified Card Stack Renderer
@@ -495,17 +501,17 @@ struct CatchUpView: View {
     private var failedCurrentCardBanner: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Could not load this email")
-                .font(AppTheme.subheadline)
+                .font(SharedAppTheme.subheadline)
                 .primaryText()
             Text("You can retry loading or skip to the next email.")
-                .font(AppTheme.caption)
+                .font(SharedAppTheme.caption)
                 .secondaryText()
             HStack(spacing: 10) {
                 Button("Retry") {
                     Task { await retryCurrentFailedCard() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(AppTheme.accent)
+                .tint(SharedAppTheme.accent)
 
                 Button("Skip") {
                     skipCurrentFailedCard()
@@ -513,10 +519,10 @@ struct CatchUpView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .padding(AppTheme.spacingMedium)
+        .padding(SharedAppTheme.spacingMedium)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.secondaryBackground)
-        .cornerRadius(AppTheme.cornerRadiusMedium)
+        .background(SharedAppTheme.secondaryBackground)
+        .cornerRadius(SharedAppTheme.cornerRadiusMedium)
     }
     
     // MARK: - Action Handlers
@@ -528,8 +534,9 @@ struct CatchUpView: View {
         isProcessing = true
         isAnimating = true
         
-        // Haptic feedback
+        #if os(iOS)
         impactMedium.impactOccurred()
+        #endif
         
         // Perform dismissal animation (card shoots up)
         await performDismissalAnimation(cardId: email.id, direction: .up)
@@ -555,8 +562,9 @@ struct CatchUpView: View {
         // Reset animation state
         resetAnimationState()
         
-        // Success haptic
+        #if os(iOS)
         notificationGenerator.notificationOccurred(.success)
+        #endif
         
         isProcessing = false
         isAnimating = false
@@ -605,8 +613,9 @@ struct CatchUpView: View {
         
         isAnimating = true
         
-        // Haptic feedback
+        #if os(iOS)
         impactLight.impactOccurred()
+        #endif
         
         // Perform dismissal animation (card goes left)
         await performDismissalAnimation(cardId: email.id, direction: .left)
@@ -635,8 +644,9 @@ struct CatchUpView: View {
         isProcessing = true
         isAnimating = true
         
-        // Haptic feedback
+        #if os(iOS)
         impactMedium.impactOccurred()
+        #endif
         
         // Perform dismissal animation (card goes right)
         await performDismissalAnimation(cardId: email.id, direction: .right)
@@ -659,8 +669,9 @@ struct CatchUpView: View {
         // Reset animation state
         resetAnimationState()
         
-        // Success haptic
+        #if os(iOS)
         notificationGenerator.notificationOccurred(.success)
+        #endif
         
         isAnimating = false
         isProcessing = false
@@ -678,8 +689,9 @@ struct CatchUpView: View {
         isProcessing = true
         isAnimating = true
         
-        // Haptic feedback
+        #if os(iOS)
         impactMedium.impactOccurred()
+        #endif
         
         // Get unsubscribe info
         let unsubscribeService = UnsubscribeService.shared
@@ -702,7 +714,9 @@ struct CatchUpView: View {
                     "manual_required": "\(result.requiresManualAction)"
                 ])
                 logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
+                #if os(iOS)
                 notificationGenerator.notificationOccurred(.success)
+                #endif
                 
                 // Extract domain from sender email or unsubscribe URL for tracking
                 var unsubscribeDomain: String? = nil
@@ -774,7 +788,9 @@ struct CatchUpView: View {
             } else {
                 Telemetry.event("catchup.action.unsubscribe_failed")
                 logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
+                #if os(iOS)
                 notificationGenerator.notificationOccurred(.error)
+                #endif
                 
                 // If manual action URL is available, open it immediately
                 if let url = result.manualActionURL {
@@ -801,7 +817,9 @@ struct CatchUpView: View {
             }
         } else {
             logWarning("⚠️ No unsubscribe method found for this email", category: "Unsubscribe")
+            #if os(iOS)
             notificationGenerator.notificationOccurred(.warning)
+            #endif
         }
         
         isAnimating = false
@@ -823,17 +841,24 @@ struct CatchUpView: View {
         riseProgress = 0
         
         // Animate card out AND other cards rising simultaneously
+        #if os(iOS)
+        let screenW = UIScreen.main.bounds.width
+        let screenH = UIScreen.main.bounds.height
+        #else
+        let screenW: CGFloat = 900
+        let screenH: CGFloat = 800
+        #endif
         withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
             // Set dismissal transforms based on direction
             switch direction {
             case .left:
-                dismissOffset = CGSize(width: -UIScreen.main.bounds.width * 1.3, height: 0)
+                dismissOffset = CGSize(width: -screenW * 1.3, height: 0)
                 dismissRotation = -15
             case .right:
-                dismissOffset = CGSize(width: UIScreen.main.bounds.width * 1.3, height: 0)
+                dismissOffset = CGSize(width: screenW * 1.3, height: 0)
                 dismissRotation = 15
             case .up:
-                dismissOffset = CGSize(width: 0, height: -UIScreen.main.bounds.height)
+                dismissOffset = CGSize(width: 0, height: -screenH)
                 dismissRotation = 5
             }
             dismissOpacity = 0

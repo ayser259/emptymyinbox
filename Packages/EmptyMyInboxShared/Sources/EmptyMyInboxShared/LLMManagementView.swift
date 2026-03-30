@@ -1,7 +1,8 @@
+import Security
 import SwiftUI
-import EmptyMyInboxShared
 
-struct LLMManagementView: View {
+/// LLM API key and model settings (iOS + macOS).
+public struct LLMManagementView: View {
     @State private var settings: LLMSettings = .default
     @State private var apiKey: String = ""
     @State private var keyStatus: LLMAPIKeyStatus?
@@ -12,21 +13,25 @@ struct LLMManagementView: View {
 
     private let modelOptions = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o"]
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         Form {
             Section("OpenAI API Key") {
                 SecureField("sk-...", text: $apiKey)
-                    .textInputAutocapitalization(.never)
-                    .disableAutocorrection(true)
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .disableAutocorrection(true)
 
                 if let keyStatus {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Stored Key: \(keyStatus.maskedKey)")
-                            .font(AppTheme.caption)
-                            .foregroundColor(AppTheme.secondaryText)
+                            .font(SharedAppTheme.caption)
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                         Text("Added: \(formattedDate(keyStatus.addedAt))")
-                            .font(AppTheme.caption)
-                            .foregroundColor(AppTheme.secondaryText)
+                            .font(SharedAppTheme.caption)
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                     }
                 }
 
@@ -96,12 +101,14 @@ struct LLMManagementView: View {
             if let testResult {
                 Section("Status") {
                     Text(testResult)
-                        .font(AppTheme.caption)
+                        .font(SharedAppTheme.caption)
                 }
             }
         }
         .navigationTitle("LLM Management")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             await load()
         }
@@ -197,4 +204,3 @@ struct LLMManagementView: View {
         testResult = message
     }
 }
-

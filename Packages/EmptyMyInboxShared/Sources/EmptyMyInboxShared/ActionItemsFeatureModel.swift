@@ -7,6 +7,8 @@
 
 import Foundation
 
+/// Filtering, grouping, and sorting for vault-backed action items.
+/// Call sites should pass **active** items from `VaultManager.listActionItems()` (completed items live under `ActionItems/completed/`).
 public enum ActionItemsFeatureModel {
     // MARK: - Subject / context
 

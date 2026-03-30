@@ -120,6 +120,7 @@ struct emptyMyInboxApp: App {
         // Post notification to refresh (only if authenticated)
         if case .authenticated = authManager.sessionState {
             NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
+            NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
 
             let shouldShowBriefing: Bool
             if let lastBriefingDate = userDefaults.object(forKey: lastBriefingShownKey) as? Date {
@@ -155,7 +156,6 @@ struct emptyMyInboxApp: App {
 extension Notification.Name {
     static let appShouldRefreshData = Notification.Name("AppShouldRefreshData")
     static let appShouldShowDailyBriefing = Notification.Name("AppShouldShowDailyBriefing")
-    static let cacheCleared = Notification.Name("CacheCleared")
 }
 
 struct SplashView: View {
