@@ -211,6 +211,109 @@ public final class VaultManager: ObservableObject {
     // MARK: - Action items
 
     public func listActionItems() async throws -> [VaultActionItemRecord] {
+        let raw = try await loadAllActionItemsUnsorted()
+        return ActionItemsFeatureModel.defaultSorted(raw)
+    }
+
+    /// Scheduled for the given day (start/end overlap) plus unscheduled items (no start/end).
+    public func listActionItemsForToday(
+        referenceDay: Date = Date(),
+        calendar: Calendar = .current
+    ) async throws -> (scheduled: [VaultActionItemRecord], unscheduled: [VaultActionItemRecord]) {
+        let all = try await loadAllActionItemsUnsorted()
+        return ActionItemsFeatureModel.itemsForTodayList(all, referenceDay: referenceDay, calendar: calendar)
+    }
+
+    public func listActionItemsBySubject(_ subjectKey: String) async throws -> [VaultActionItemRecord] {
+        let all = try await listActionItems()
+        return all.filter { ActionItemsFeatureModel.normalizedSubjectKey($0.subjectLabel) == subjectKey }
+    }
+
+    public func listActionItemSubjectGroups() async throws -> [(key: String, items: [VaultActionItemRecord])] {
+        let all = try await loadAllActionItemsUnsorted()
+        return ActionItemsFeatureModel.groupedBySubject(all)
+    }
+
+    public func listActionItemsForCalendarRange(
+        start: Date,
+        end: Date,
+        calendar: Calendar = .current
+    ) async throws -> [VaultActionItemRecord] {
+        let all = try await loadAllActionItemsUnsorted()
+        return ActionItemsFeatureModel.itemsIntersectingRange(all, rangeStart: start, rangeEnd: end, calendar: calendar)
+    }
+
+    public func loadActionItem(id: String) async throws -> VaultActionItemRecord {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = actionItemPath(id: id)
+        let data = try await backend.read(relativePath: path)
+        let env = try VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
+        return env.payload
+    }
+
+    /// Creates a child task with subject/type/priority and documentation fields copied from the parent (snapshot).
+    public func createChildTask(fromParentId parentId: String, title: String) async throws -> VaultActionItemRecord {
+        let all = try await loadAllActionItemsUnsorted()
+        guard let parent = all.first(where: { $0.id == parentId }) else {
+            throw VaultError.actionItemNotFound(parentId)
+        }
+        let now = Date()
+        let child = VaultActionItemRecord(
+            title: title,
+            notes: nil,
+            startDate: nil,
+            endDate: nil,
+            priority: parent.priority,
+            taskDescription: parent.taskDescription,
+            contextNotes: parent.contextNotes,
+            comments: [],
+            parentTaskId: parentId,
+            subjectLabel: parent.subjectLabel,
+            typeLabel: parent.typeLabel,
+            createdAt: now,
+            updatedAt: now,
+            completedAt: nil
+        )
+        try await upsertActionItem(child)
+        return child
+    }
+
+    public func updateActionItemCompletion(id: String, isDone: Bool) async throws {
+        var item = try await loadActionItem(id: id)
+        item.isDone = isDone
+        item.completedAt = isDone ? (item.completedAt ?? Date()) : nil
+        try await upsertActionItem(item)
+    }
+
+    public func upsertActionItem(_ item: VaultActionItemRecord) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = actionItemPath(id: item.id)
+        let existing = try? await backend.read(relativePath: path)
+        var normalized = item
+        if let p = normalized.priority {
+            normalized.priority = min(3, max(0, p))
+        }
+        if existing == nil, normalized.createdAt == nil {
+            normalized.createdAt = Date()
+        }
+        normalized.updatedAt = Date()
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
+        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: normalized)
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: path, data: data)
+    }
+
+    public func deleteActionItem(id: String) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = actionItemPath(id: id)
+        try await backend.remove(relativePath: path)
+    }
+
+    private func actionItemPath(id: String) -> String {
+        "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/\(id).json"
+    }
+
+    private func loadAllActionItemsUnsorted() async throws -> [VaultActionItemRecord] {
         guard let backend = folderBackend else { throw VaultError.notConfigured }
         let prefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/"
         let paths = try await backend.listRelativeFilePaths()
@@ -222,23 +325,7 @@ public final class VaultManager: ObservableObject {
             else { continue }
             out.append(env.payload)
         }
-        return out.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-    }
-
-    public func upsertActionItem(_ item: VaultActionItemRecord) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let path = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/\(item.id).json"
-        let existing = try? await backend.read(relativePath: path)
-        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
-        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: item)
-        let data = try VaultJSON.encoder().encode(envelope)
-        try await backend.write(relativePath: path, data: data)
-    }
-
-    public func deleteActionItem(id: String) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let path = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/\(id).json"
-        try await backend.remove(relativePath: path)
+        return out
     }
 
     // MARK: - Migration

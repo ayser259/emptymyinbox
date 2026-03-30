@@ -17,6 +17,7 @@ public enum VaultError: Error, Sendable, Equatable, LocalizedError {
     case driveAPIFailed(Int, String)
     case noGoogleAccount
     case syncInProgress
+    case actionItemNotFound(String)
 
     public var errorDescription: String? {
         switch self {
@@ -31,6 +32,7 @@ public enum VaultError: Error, Sendable, Equatable, LocalizedError {
         case .driveAPIFailed(let code, let body): return "Drive API error (\(code)): \(body)"
         case .noGoogleAccount: return "Sign in with Google first to use a Drive vault."
         case .syncInProgress: return "Vault sync is already running."
+        case .actionItemNotFound(let id): return "Action item not found: \(id)"
         }
     }
 }

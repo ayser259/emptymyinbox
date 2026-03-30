@@ -149,17 +149,129 @@ public struct VaultCalendarEventRecord: Codable, Sendable, Identifiable, Equatab
     }
 }
 
+// MARK: - Action items (tasks)
+
+/// A single comment / note entry on an action item (timestamped).
+public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    public var createdAt: Date
+    public var text: String
+
+    public init(id: String = UUID().uuidString, createdAt: Date = Date(), text: String) {
+        self.id = id
+        self.createdAt = createdAt
+        self.text = text
+    }
+}
+
 public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable {
     public var id: String
     public var title: String
     public var isDone: Bool
     public var notes: String?
+    /// Optional scheduled / tracked start (used for Today and Calendar views).
+    public var startDate: Date?
+    /// Optional scheduled / tracked end.
+    public var endDate: Date?
+    /// Optional priority on a 0...3 scale (3 = highest).
+    public var priority: Int?
+    /// Longer documentation for the task (JSON key `"description"`).
+    public var taskDescription: String?
+    /// Extra structured-ish context (tags, freeform).
+    public var contextNotes: String?
+    public var comments: [VaultActionItemCommentRecord]
+    public var parentTaskId: String?
+    /// Context / channel / subject grouping.
+    public var subjectLabel: String?
+    /// Work type: learning block, time block, action item, meeting, etc.
+    public var typeLabel: String?
+    public var createdAt: Date?
+    public var updatedAt: Date?
+    public var completedAt: Date?
 
-    public init(id: String = UUID().uuidString, title: String, isDone: Bool = false, notes: String? = nil) {
+    enum CodingKeys: String, CodingKey {
+        case id, title, isDone, notes
+        case startDate, endDate, priority
+        case taskDescription = "description"
+        case contextNotes, comments
+        case parentTaskId, subjectLabel, typeLabel
+        case createdAt, updatedAt, completedAt
+    }
+
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        isDone: Bool = false,
+        notes: String? = nil,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        priority: Int? = nil,
+        taskDescription: String? = nil,
+        contextNotes: String? = nil,
+        comments: [VaultActionItemCommentRecord] = [],
+        parentTaskId: String? = nil,
+        subjectLabel: String? = nil,
+        typeLabel: String? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil,
+        completedAt: Date? = nil
+    ) {
         self.id = id
         self.title = title
         self.isDone = isDone
         self.notes = notes
+        self.startDate = startDate
+        self.endDate = endDate
+        self.priority = priority
+        self.taskDescription = taskDescription
+        self.contextNotes = contextNotes
+        self.comments = comments
+        self.parentTaskId = parentTaskId
+        self.subjectLabel = subjectLabel
+        self.typeLabel = typeLabel
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.completedAt = completedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        startDate = try c.decodeIfPresent(Date.self, forKey: .startDate)
+        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate)
+        priority = try c.decodeIfPresent(Int.self, forKey: .priority)
+        taskDescription = try c.decodeIfPresent(String.self, forKey: .taskDescription)
+        contextNotes = try c.decodeIfPresent(String.self, forKey: .contextNotes)
+        comments = try c.decodeIfPresent([VaultActionItemCommentRecord].self, forKey: .comments) ?? []
+        parentTaskId = try c.decodeIfPresent(String.self, forKey: .parentTaskId)
+        subjectLabel = try c.decodeIfPresent(String.self, forKey: .subjectLabel)
+        typeLabel = try c.decodeIfPresent(String.self, forKey: .typeLabel)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(isDone, forKey: .isDone)
+        try c.encodeIfPresent(notes, forKey: .notes)
+        try c.encodeIfPresent(startDate, forKey: .startDate)
+        try c.encodeIfPresent(endDate, forKey: .endDate)
+        try c.encodeIfPresent(priority, forKey: .priority)
+        try c.encodeIfPresent(taskDescription, forKey: .taskDescription)
+        try c.encodeIfPresent(contextNotes, forKey: .contextNotes)
+        try c.encode(comments, forKey: .comments)
+        try c.encodeIfPresent(parentTaskId, forKey: .parentTaskId)
+        try c.encodeIfPresent(subjectLabel, forKey: .subjectLabel)
+        try c.encodeIfPresent(typeLabel, forKey: .typeLabel)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
+        try c.encodeIfPresent(completedAt, forKey: .completedAt)
     }
 }
 

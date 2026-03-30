@@ -6,4 +6,6 @@ public extension Notification.Name {
     static let appStateCloudKitDidMerge = Notification.Name("AppStateCloudKitDidMerge")
     /// Posted after a vault sync completes successfully (e.g. Google Drive pull/push).
     static let vaultDidSync = Notification.Name("VaultDidSync")
+    /// Posted when calendar account/calendar visibility settings change.
+    static let calendarVisibilityDidChange = Notification.Name("CalendarVisibilityDidChange")
 }
