@@ -82,15 +82,28 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainChrome: some View {
-        Group {
-            switch rootTab {
-            case .mail:
-                mailSplitView
-            case .calendar:
-                MacVaultCalendarTab(model: calendarModel, onOpenSettings: { showAppSettings = true })
-            case .actionItems:
-                MacVaultActionItemsTab(onOpenSettings: { showAppSettings = true })
+        VStack(spacing: 0) {
+            Group {
+                switch rootTab {
+                case .mail:
+                    mailSplitView
+                case .calendar:
+                    MacVaultCalendarTab(model: calendarModel, onOpenSettings: { showAppSettings = true })
+                case .actionItems:
+                    MacVaultActionItemsTab(onOpenSettings: { showAppSettings = true })
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MacAppTheme.primaryBackground)
+
+            Divider()
+                .opacity(0.35)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(MacAppTheme.secondaryBackground.opacity(0.45))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
@@ -131,6 +144,7 @@ struct ContentView: View {
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
             Task {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
                 await calendarModel.refresh()
                 lastCalendarRefreshAt = Date()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
@@ -139,6 +153,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
             Task {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
                 await calendarModel.refresh()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             }
@@ -175,6 +190,7 @@ struct ContentView: View {
         isRefreshing = true
         refreshMessage = nil
         defer { isRefreshing = false }
+        await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
@@ -186,6 +202,7 @@ struct ContentView: View {
         case .mail:
             await refreshMailbox()
         case .calendar:
+            await VaultManager.shared.performLifecycleSync(postNotification: false)
             await calendarModel.refresh()
             lastCalendarRefreshAt = Date()
         case .actionItems:

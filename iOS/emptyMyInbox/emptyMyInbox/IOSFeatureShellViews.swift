@@ -78,52 +78,64 @@ struct CalendarSkeletonView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
-            Task { await calendarModel.refresh() }
+            Task { await calendarRefresh() }
         }
     }
 
+    private func calendarRefresh() async {
+        await VaultManager.shared.performLifecycleSync(postNotification: false)
+        await calendarModel.refresh()
+    }
+
     private var calendarModeCarousel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AppTheme.spacingMedium) {
-                ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppTheme.spacingMedium) {
+                    ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+                        Button {
+                            calendarModel.mode = mode
+                        } label: {
+                            Text(mode.rawValue.capitalized)
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(calendarModel.mode == mode ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(calendarModel.mode == mode ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(AppTheme.accent.opacity(calendarModel.mode == mode ? 0.5 : 0.15), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Button {
-                        calendarModel.mode = mode
+                        Task { await calendarRefresh() }
                     } label: {
-                        Text(mode.rawValue.capitalized)
-                            .font(AppTheme.subheadline)
-                            .foregroundColor(calendarModel.mode == mode ? AppTheme.primaryText : AppTheme.secondaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .fill(calendarModel.mode == mode ? AppTheme.secondaryBackground : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .stroke(AppTheme.accent.opacity(calendarModel.mode == mode ? 0.5 : 0.15), lineWidth: 1)
-                            )
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Refresh")
+                                .font(AppTheme.subheadline)
+                        }
+                        .foregroundColor(AppTheme.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.secondaryBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
                     }
                     .buttonStyle(.plain)
                 }
-
-                Button {
-                    Task { await calendarModel.refresh() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh")
-                            .font(AppTheme.subheadline)
-                    }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
-                }
-                .buttonStyle(.plain)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.vertical, AppTheme.spacingSmall)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.vertical, AppTheme.spacingSmall)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
         }
     }
 }
@@ -312,63 +324,70 @@ struct ActionItemsSkeletonView: View {
     }
 
     private var actionItemsModeCarousel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AppTheme.spacingMedium) {
-                ForEach(ActionItemsChromeMode.allCases) { m in
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppTheme.spacingMedium) {
+                    ForEach(ActionItemsChromeMode.allCases) { m in
+                        Button {
+                            mode = m
+                        } label: {
+                            Text(m.title)
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(mode == m ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(mode == m ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(AppTheme.accent.opacity(mode == m ? 0.5 : 0.15), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Button {
-                        mode = m
+                        showTagLibrary = true
                     } label: {
-                        Text(m.title)
-                            .font(AppTheme.subheadline)
-                            .foregroundColor(mode == m ? AppTheme.primaryText : AppTheme.secondaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .fill(mode == m ? AppTheme.secondaryBackground : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .stroke(AppTheme.accent.opacity(mode == m ? 0.5 : 0.15), lineWidth: 1)
-                            )
+                        HStack(spacing: 6) {
+                            Image(systemName: "tag")
+                            Text("Labels")
+                                .font(AppTheme.subheadline)
+                        }
+                        .foregroundColor(AppTheme.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.secondaryBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        Task { await reload() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Refresh")
+                                .font(AppTheme.subheadline)
+                        }
+                        .foregroundColor(AppTheme.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.secondaryBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
                     }
                     .buttonStyle(.plain)
                 }
-
-                Button {
-                    showTagLibrary = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "tag")
-                        Text("Labels")
-                            .font(AppTheme.subheadline)
-                    }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    Task { await reload() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh")
-                            .font(AppTheme.subheadline)
-                    }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
-                }
-                .buttonStyle(.plain)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.bottom, AppTheme.spacingSmall)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
         }
     }
 

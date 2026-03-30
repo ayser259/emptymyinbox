@@ -23,7 +23,10 @@ struct MacVaultCalendarTab: View {
                         }
                     }
                     Button {
-                        Task { await model.refresh() }
+                        Task {
+                            await VaultManager.shared.performLifecycleSync(postNotification: false)
+                            await model.refresh()
+                        }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }

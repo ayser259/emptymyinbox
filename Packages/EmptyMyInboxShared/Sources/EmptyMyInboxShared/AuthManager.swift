@@ -42,32 +42,33 @@ public class AuthManager: ObservableObject {
     public func checkAuthStatus() {
         sessionState = .checking
         logDebug("Auth: checking saved session…", category: "Auth")
-        Task {
-            await MainActor.run {
-                let gmailAccounts = self.gmailService.getAllAccounts()
-                
-                if !gmailAccounts.isEmpty {
-                    self.accounts = gmailAccounts
-                    self.isAuthenticated = true
-                    self.sessionState = .authenticated
-                    logSuccess("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
-                    Telemetry.counter("auth.accounts_loaded", delta: gmailAccounts.count)
-                } else {
-                    switch self.gmailService.getAccountsLoadStatus() {
-                    case .notFound:
-                        logDebug("Auth: No saved Gmail session yet (sign in to store accounts in keychain)", category: "Auth")
-                    case .transientFailure(let status):
-                        logWarning("Auth: Keychain transient failure (\(status)); preserving caches", category: "Auth")
-                    case .corruptedData:
-                        logWarning("Auth: Keychain data corrupted/unreadable; preserving caches", category: "Auth")
-                    case .loaded:
-                        logWarning("Auth: Account load status is loaded but no accounts available", category: "Auth")
-                    }
-                    self.accounts = []
-                    self.isAuthenticated = false
-                    self.sessionState = .needsLogin
-                    logDebug("Auth: showing sign-in (no saved accounts)", category: "Auth")
+        Task { @MainActor in
+            let gmailAccounts = self.gmailService.getAllAccounts()
+
+            if !gmailAccounts.isEmpty {
+                self.accounts = gmailAccounts
+                self.isAuthenticated = true
+                self.sessionState = .authenticated
+                logSuccess("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
+                Telemetry.counter("auth.accounts_loaded", delta: gmailAccounts.count)
+                if let api = self.gmailService as? GmailAPIService {
+                    await api.restoreGoogleSignInSessionIfNeeded()
                 }
+            } else {
+                switch self.gmailService.getAccountsLoadStatus() {
+                case .notFound:
+                    logDebug("Auth: No saved Gmail session yet (sign in to store accounts in keychain)", category: "Auth")
+                case .transientFailure(let status):
+                    logWarning("Auth: Keychain transient failure (\(status)); preserving caches", category: "Auth")
+                case .corruptedData:
+                    logWarning("Auth: Keychain data corrupted/unreadable; preserving caches", category: "Auth")
+                case .loaded:
+                    logWarning("Auth: Account load status is loaded but no accounts available", category: "Auth")
+                }
+                self.accounts = []
+                self.isAuthenticated = false
+                self.sessionState = .needsLogin
+                logDebug("Auth: showing sign-in (no saved accounts)", category: "Auth")
             }
         }
     }

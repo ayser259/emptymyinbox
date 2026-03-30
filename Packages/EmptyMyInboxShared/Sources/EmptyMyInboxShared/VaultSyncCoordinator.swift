@@ -129,8 +129,8 @@ public enum VaultSyncCoordinator {
             }
         }
 
-        // Update manifest timestamps on disk
-        try await updateManifestAfterSync(folderBackend: folderBackend)
+        // Update manifest timestamps and Drive metadata on disk
+        try await updateManifestAfterSync(folderBackend: folderBackend, configuration: configuration)
     }
 
     private static func localFileModificationDate(folderBackend: any VaultFolderBackend, relativePath: String) throws -> Date? {
@@ -139,11 +139,21 @@ public enum VaultSyncCoordinator {
         return vals.contentModificationDate
     }
 
-    private static func updateManifestAfterSync(folderBackend: any VaultFolderBackend) async throws {
+    private static func updateManifestAfterSync(
+        folderBackend: any VaultFolderBackend,
+        configuration: VaultActiveConfiguration
+    ) async throws {
         let data = try await folderBackend.read(relativePath: VaultLayout.manifestFileName)
         var manifest = try VaultJSON.decoder().decode(VaultManifest.self, from: data)
         manifest.lastSuccessfulSyncAt = Date()
         manifest.updatedAt = Date()
+        if configuration.backend == .googleDrive {
+            if manifest.driveRootFolderId == nil { manifest.driveRootFolderId = configuration.driveRootFolderId }
+            if manifest.driveAccountEmail == nil { manifest.driveAccountEmail = configuration.driveAccountEmail }
+        }
+        if manifest.displayName == nil, let name = configuration.displayName, !name.isEmpty {
+            manifest.displayName = name
+        }
         let out = try VaultJSON.encoder().encode(manifest)
         try await folderBackend.write(relativePath: VaultLayout.manifestFileName, data: out)
     }

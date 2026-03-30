@@ -108,6 +108,24 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
         self.driveRootFolderId = driveRootFolderId
         self.driveAccountEmail = driveAccountEmail
     }
+
+    /// Web URL for the vault root folder (Safari or Google Drive app on iOS).
+    public var googleDriveRootWebURL: URL? {
+        guard backend == .googleDrive else { return nil }
+        guard let id = driveRootFolderId else { return nil }
+        return GoogleDriveWebLinks.folderURL(folderId: id)
+    }
+}
+
+// MARK: - Google Drive (web)
+
+public enum GoogleDriveWebLinks {
+    /// `https://drive.google.com/drive/folders/…` — opens in the browser or the Drive app when available.
+    public static func folderURL(folderId: String) -> URL? {
+        let trimmed = folderId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: "https://drive.google.com/drive/folders/\(trimmed)")
+    }
 }
 
 // MARK: - Manifest (lives at vault root)
@@ -121,6 +139,11 @@ public struct VaultManifest: Codable, Sendable, Equatable {
     /// Google Drive `changes` API start page token (optional incremental sync)
     public var driveChangesPageToken: String?
     public var lastSuccessfulSyncAt: Date?
+    /// Persisted so a Drive vault can be reopened from disk (tokens stay in Keychain).
+    public var driveRootFolderId: String?
+    public var driveAccountEmail: String?
+    /// Optional label for discovery UI (not required for sync).
+    public var displayName: String?
 
     public init(
         vaultId: String,
@@ -129,7 +152,10 @@ public struct VaultManifest: Codable, Sendable, Equatable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         driveChangesPageToken: String? = nil,
-        lastSuccessfulSyncAt: Date? = nil
+        lastSuccessfulSyncAt: Date? = nil,
+        driveRootFolderId: String? = nil,
+        driveAccountEmail: String? = nil,
+        displayName: String? = nil
     ) {
         self.vaultId = vaultId
         self.schemaVersion = schemaVersion
@@ -138,6 +164,9 @@ public struct VaultManifest: Codable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.driveChangesPageToken = driveChangesPageToken
         self.lastSuccessfulSyncAt = lastSuccessfulSyncAt
+        self.driveRootFolderId = driveRootFolderId
+        self.driveAccountEmail = driveAccountEmail
+        self.displayName = displayName
     }
 }
 

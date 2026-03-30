@@ -224,6 +224,11 @@ struct DashboardView: View {
         ScrollView {
             VStack(spacing: 0) {
                 topBarSection
+
+                VaultRefreshStatusLabel(font: .caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AppTheme.spacingMedium)
+                    .padding(.bottom, AppTheme.spacingSmall)
                 
                 actionButtonsSection
                     .padding(.bottom, AppTheme.spacingMedium)
@@ -622,6 +627,9 @@ struct DashboardView: View {
         }
         
         do {
+            if shouldSync {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
+            }
             if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync, progressCallback: progressCallback) {
                 // Get health statuses after refresh
                 let healthStatuses = await DashboardDataManager.shared.getAccountHealth()

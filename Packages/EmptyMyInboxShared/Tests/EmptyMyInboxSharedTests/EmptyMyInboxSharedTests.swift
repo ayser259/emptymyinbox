@@ -295,4 +295,82 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertNil(child.startDate)
         XCTAssertEqual(child.parentTaskId, parent.id)
     }
+
+    // MARK: - Vault manifest & discovery
+
+    func testVaultManifestRoundTripWithDriveMetadataNil() throws {
+        let original = VaultManifest(
+            vaultId: "vid",
+            backendKind: .googleDrive,
+            driveRootFolderId: nil,
+            driveAccountEmail: nil,
+            displayName: nil
+        )
+        let data = try VaultJSON.encoder().encode(original)
+        let back = try VaultJSON.decoder().decode(VaultManifest.self, from: data)
+        XCTAssertEqual(back.vaultId, "vid")
+        XCTAssertEqual(back.backendKind, .googleDrive)
+        XCTAssertNil(back.driveRootFolderId)
+        XCTAssertNil(back.driveAccountEmail)
+        XCTAssertNil(back.displayName)
+    }
+
+    func testVaultManifestRoundTripWithDriveMetadataSet() throws {
+        let original = VaultManifest(
+            vaultId: "vid",
+            backendKind: .googleDrive,
+            driveRootFolderId: "folder123",
+            driveAccountEmail: "u@x.com",
+            displayName: "My vault"
+        )
+        let data = try VaultJSON.encoder().encode(original)
+        let back = try VaultJSON.decoder().decode(VaultManifest.self, from: data)
+        XCTAssertEqual(back.driveRootFolderId, "folder123")
+        XCTAssertEqual(back.driveAccountEmail, "u@x.com")
+        XCTAssertEqual(back.displayName, "My vault")
+    }
+
+    func testGoogleDriveFolderWebURL() {
+        XCTAssertNil(GoogleDriveWebLinks.folderURL(folderId: ""))
+        XCTAssertNil(GoogleDriveWebLinks.folderURL(folderId: "   "))
+        XCTAssertEqual(
+            GoogleDriveWebLinks.folderURL(folderId: "abc")?.absoluteString,
+            "https://drive.google.com/drive/folders/abc"
+        )
+        let noId = VaultActiveConfiguration(backend: .googleDrive, driveRootFolderId: nil)
+        XCTAssertNil(noId.googleDriveRootWebURL)
+        let local = VaultActiveConfiguration(backend: .local)
+        XCTAssertNil(local.googleDriveRootWebURL)
+        let drive = VaultActiveConfiguration(backend: .googleDrive, driveRootFolderId: "root1")
+        XCTAssertEqual(drive.googleDriveRootWebURL?.absoluteString, "https://drive.google.com/drive/folders/root1")
+        let remote = DiscoveredRemoteGoogleDriveVaultSummary(
+            vaultId: "vid",
+            driveRootFolderId: "root2",
+            displayName: "Remote",
+            connectedAccountEmail: "u@x.com"
+        )
+        XCTAssertEqual(remote.googleDriveRootWebURL?.absoluteString, "https://drive.google.com/drive/folders/root2")
+    }
+
+    func testVaultDiscoveryListsLocalMirrors() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vault_disc_\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let vaultId = UUID().uuidString
+        let vaultDir = base.appendingPathComponent(vaultId, isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultDir, withIntermediateDirectories: true)
+        let manifest = VaultManifest(
+            vaultId: vaultId,
+            backendKind: .local,
+            displayName: "Alpha"
+        )
+        let data = try VaultJSON.encoder().encode(manifest)
+        try data.write(to: vaultDir.appendingPathComponent(VaultLayout.manifestFileName))
+        let found = VaultDiscovery.discoverLocalMirrorVaults(vaultsDirectory: base)
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found.first?.vaultId, vaultId)
+        XCTAssertEqual(found.first?.backendKind, .local)
+        XCTAssertEqual(found.first?.displayName, "Alpha")
+    }
 }

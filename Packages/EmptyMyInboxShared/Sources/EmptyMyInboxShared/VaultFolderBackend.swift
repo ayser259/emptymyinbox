@@ -56,8 +56,20 @@ public final class VaultLocalFolderBackend: VaultFolderBackend, @unchecked Senda
         }
         for sub in VaultLayout.standardSubfolders() {
             let url = vaultRoot.appendingPathComponent(sub, isDirectory: true)
-            if !fm.fileExists(atPath: url.path) {
-                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: url.path) {
+                var isDir: ObjCBool = false
+                _ = fm.fileExists(atPath: url.path, isDirectory: &isDir)
+                if !isDir.boolValue {
+                    throw VaultError.ioFailed(
+                        "Vault path \"\(sub)\" exists but is not a folder. Remove or rename the conflicting item."
+                    )
+                }
+            } else {
+                do {
+                    try fm.createDirectory(at: url, withIntermediateDirectories: true)
+                } catch {
+                    throw VaultError.ioFailed(VaultPathIOHints.structureFailure(for: error, path: sub))
+                }
             }
         }
     }
@@ -70,8 +82,12 @@ public final class VaultLocalFolderBackend: VaultFolderBackend, @unchecked Senda
     public func write(relativePath: String, data: Data) async throws {
         let url = try Self.resolveVaultURL(vaultRoot: vaultRoot, relativePath: relativePath)
         let parent = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            throw VaultError.ioFailed(VaultPathIOHints.writeFailure(for: error, relativePath: relativePath))
+        }
     }
 
     public func remove(relativePath: String) async throws {
@@ -105,6 +121,38 @@ public final class VaultLocalFolderBackend: VaultFolderBackend, @unchecked Senda
         return vaultRoot.appendingPathComponent(norm)
     }
 
+}
+
+private enum VaultPathIOHints {
+    static func writeFailure(for error: Error, relativePath: String) -> String {
+        let base = error.localizedDescription
+        #if os(macOS)
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain, ns.code == 513 { // NSFileWriteNoPermissionError
+            return """
+\(base)
+
+If the vault uses “Choose folder…” and that folder lives inside Google Drive in Finder, the Google Drive sync client often blocks normal app writes. Use “New Google Drive vault” instead (syncs via Google’s API—the same approach as iPhone). You can also try making files in that Drive folder “available offline” in Google Drive’s settings.
+"""
+        }
+        #endif
+        return base
+    }
+
+    static func structureFailure(for error: Error, path: String) -> String {
+        let base = error.localizedDescription
+        #if os(macOS)
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain, ns.code == 513 { // NSFileWriteNoPermissionError
+            return """
+\(base)
+
+Could not create “\(path)”. If this vault points at a folder inside Google Drive on your Mac, use “New Google Drive vault” instead of “Choose folder…”, or pick a folder outside Google Drive’s synced directory.
+"""
+        }
+        #endif
+        return base
+    }
 }
 
 // MARK: - External (security-scoped bookmark)
@@ -178,8 +226,12 @@ public final class VaultExternalFolderBackend: VaultFolderBackend, @unchecked Se
             try self.withSecurityScope {
                 let url = try VaultLocalFolderBackend.resolveVaultURL(vaultRoot: self.vaultRoot, relativePath: relativePath)
                 let parent = url.deletingLastPathComponent()
-                try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
+                do {
+                    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                } catch {
+                    throw VaultError.ioFailed(VaultPathIOHints.writeFailure(for: error, relativePath: relativePath))
+                }
             }
         }.value
     }

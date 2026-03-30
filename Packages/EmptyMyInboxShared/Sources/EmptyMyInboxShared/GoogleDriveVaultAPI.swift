@@ -95,6 +95,12 @@ public enum GoogleDriveVaultAPI {
         let nextPageToken: String?
     }
 
+    private struct RemoteManifestCandidate {
+        let folderId: String
+        let folderName: String
+        let manifestFileId: String
+    }
+
     private static func listChildren(folderId: String, accessToken: String, session: URLSession) async throws -> [DriveListItem] {
         var all: [DriveListItem] = []
         var pageToken: String?
@@ -123,6 +129,60 @@ public enum GoogleDriveVaultAPI {
         } while pageToken != nil
 
         return all
+    }
+
+    public static func discoverVaultsInRoot(
+        accessToken: String,
+        connectedAccountEmail: String,
+        session: URLSession = .shared
+    ) async throws -> [DiscoveredRemoteGoogleDriveVaultSummary] {
+        let rootFolders = try await listChildren(folderId: "root", accessToken: accessToken, session: session)
+            .filter { $0.mimeType == "application/vnd.google-apps.folder" }
+
+        var candidates: [RemoteManifestCandidate] = []
+        for folder in rootFolders {
+            let children = try await listChildren(folderId: folder.id, accessToken: accessToken, session: session)
+            if let manifest = children.first(where: {
+                $0.name == VaultLayout.manifestFileName && $0.mimeType != "application/vnd.google-apps.folder"
+            }) {
+                candidates.append(RemoteManifestCandidate(
+                    folderId: folder.id,
+                    folderName: folder.name,
+                    manifestFileId: manifest.id
+                ))
+            }
+        }
+
+        var discovered: [DiscoveredRemoteGoogleDriveVaultSummary] = []
+        for candidate in candidates {
+            guard let manifest = try await loadRemoteVaultManifest(
+                manifestFileId: candidate.manifestFileId,
+                accessToken: accessToken,
+                session: session
+            ) else { continue }
+            guard manifest.backendKind == .googleDrive else { continue }
+            discovered.append(DiscoveredRemoteGoogleDriveVaultSummary(
+                vaultId: manifest.vaultId,
+                driveRootFolderId: candidate.folderId,
+                displayName: manifest.displayName ?? candidate.folderName,
+                connectedAccountEmail: connectedAccountEmail
+            ))
+        }
+
+        return discovered.sorted {
+            let a = $0.displayName ?? $0.vaultId
+            let b = $1.displayName ?? $1.vaultId
+            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
+    }
+
+    private static func loadRemoteVaultManifest(
+        manifestFileId: String,
+        accessToken: String,
+        session: URLSession
+    ) async throws -> VaultManifest? {
+        let data = try await downloadMedia(fileId: manifestFileId, accessToken: accessToken, session: session)
+        return try? VaultJSON.decoder().decode(VaultManifest.self, from: data)
     }
 
     // MARK: - Download / upload / update / delete

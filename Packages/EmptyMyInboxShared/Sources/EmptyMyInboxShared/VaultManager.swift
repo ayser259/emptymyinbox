@@ -99,15 +99,7 @@ public final class VaultManager: ObservableObject {
 
     /// Call after `GmailAPIService.requestGoogleDriveFileScope` succeeds. Creates a Drive folder and local mirror.
     public func createGoogleDriveVaultAfterScopeGranted(displayName: String?, accountEmail: String?) async throws {
-        let account: GmailAccount
-        if let email = accountEmail, let a = GmailAPIService.shared.getAccount(byEmail: email) {
-            account = a
-        } else if let first = GmailAPIService.shared.getAllAccounts().first {
-            account = first
-        } else {
-            throw VaultError.noGoogleAccount
-        }
-
+        let account = try resolveGoogleDriveAccount(preferredEmail: accountEmail)
         let token = try await GmailAPIService.shared.getValidAccessToken(for: account)
         let rootId = try await GoogleDriveVaultAPI.createFolder(
             name: displayName ?? "Empty My Inbox Vault",
@@ -136,15 +128,142 @@ public final class VaultManager: ObservableObject {
         NotificationCenter.default.post(name: .vaultDidSync, object: nil)
     }
 
+    public func discoverRemoteGoogleDriveVaults(accountEmail: String? = nil) async throws -> [DiscoveredRemoteGoogleDriveVaultSummary] {
+        await GmailAPIService.shared.restoreGoogleSignInSessionIfNeeded()
+        let account = try resolveGoogleDriveAccount(preferredEmail: accountEmail)
+        let token = try await GmailAPIService.shared.getValidAccessToken(for: account)
+        return try await GoogleDriveVaultAPI.discoverVaultsInRoot(
+            accessToken: token,
+            connectedAccountEmail: account.email
+        )
+    }
+
     public func switchToLocalVault(vaultId: String, displayName: String? = nil) async throws {
         let config = VaultActiveConfiguration(vaultId: vaultId, backend: .local, displayName: displayName)
         let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: vaultId))
         try await backend.ensureStructure()
         try await VaultBootstrap.ensureManifestIfMissing(folderBackend: backend, configuration: config)
+        try await VaultBootstrap.mergeManifestMetadataFromConfiguration(folderBackend: backend, configuration: config)
         await VaultSettingsStore.shared.setActiveConfiguration(config)
         folderBackend = backend
         activeConfiguration = config
         try await runMigrationIfPossible()
+    }
+
+    /// Vaults stored under Application Support `Vaults/` (on-device local and Google Drive mirrors).
+    public func discoverLocalMirrorVaults() -> [DiscoveredVaultSummary] {
+        VaultDiscovery.discoverLocalMirrorVaults()
+    }
+
+    /// Activates a discovered mirror vault. Only `.local` and `.googleDrive` are supported; external folders must use the folder picker again.
+    public func openDiscoveredVault(_ summary: DiscoveredVaultSummary) async throws {
+        switch summary.backendKind {
+        case .local:
+            try await switchToLocalVault(vaultId: summary.vaultId, displayName: summary.displayName)
+            await performLifecycleSync()
+        case .googleDrive:
+            try await switchToGoogleDriveVault(
+                vaultId: summary.vaultId,
+                displayName: summary.displayName,
+                driveRootFolderId: summary.driveRootFolderId,
+                driveAccountEmail: summary.driveAccountEmail
+            )
+            await performLifecycleSync()
+        case .externalFolder:
+            throw VaultError.cannotOpenDriveVault
+        }
+    }
+
+    public func openRemoteGoogleDriveVault(_ summary: DiscoveredRemoteGoogleDriveVaultSummary) async throws {
+        try await switchToGoogleDriveVault(
+            vaultId: summary.vaultId,
+            displayName: summary.displayName,
+            driveRootFolderId: summary.driveRootFolderId,
+            driveAccountEmail: summary.connectedAccountEmail
+        )
+        await performLifecycleSync()
+    }
+
+    private func switchToGoogleDriveVault(
+        vaultId: String,
+        displayName: String?,
+        driveRootFolderId: String?,
+        driveAccountEmail: String?
+    ) async throws {
+        guard let rootId = driveRootFolderId, let email = driveAccountEmail else {
+            throw VaultError.cannotOpenDriveVault
+        }
+        guard GmailAPIService.shared.getAccount(byEmail: email) != nil else {
+            throw VaultError.noGoogleAccount
+        }
+        let config = VaultActiveConfiguration(
+            vaultId: vaultId,
+            backend: .googleDrive,
+            displayName: displayName,
+            driveRootFolderId: rootId,
+            driveAccountEmail: email
+        )
+        let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: vaultId))
+        try await backend.ensureStructure()
+        try await VaultBootstrap.ensureManifestIfMissing(folderBackend: backend, configuration: config)
+        try await VaultBootstrap.mergeManifestMetadataFromConfiguration(folderBackend: backend, configuration: config)
+        await VaultSettingsStore.shared.setActiveConfiguration(config)
+        folderBackend = backend
+        activeConfiguration = config
+        try await runMigrationIfPossible()
+    }
+
+    private func resolveGoogleDriveAccount(preferredEmail: String?) throws -> GmailAccount {
+        if let email = preferredEmail, let account = GmailAPIService.shared.getAccount(byEmail: email) {
+            return account
+        }
+        if let first = GmailAPIService.shared.getAllAccounts().first {
+            return first
+        }
+        throw VaultError.noGoogleAccount
+    }
+
+    /// Removes a vault mirror under `Vaults/<vaultId>/`, or disconnects an external-folder vault from the app (does not delete the user’s files).
+    /// - Parameter deleteRemoteDriveFolder: When true, attempts to trash the Drive root folder after the local mirror is removed (requires a signed-in Gmail account).
+    public func deleteVault(vaultId: String, deleteRemoteDriveFolder: Bool = false) async throws {
+        if activeConfiguration?.vaultId == vaultId, activeConfiguration?.backend == .externalFolder {
+            await VaultSettingsStore.shared.clearActiveConfiguration()
+            await reloadFromPreferences()
+            return
+        }
+
+        let root = VaultLocalFolderBackend.localRoot(forVaultId: vaultId)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else {
+            throw VaultError.vaultNotFound
+        }
+
+        let manifestURL = root.appendingPathComponent(VaultLayout.manifestFileName)
+        let manifestData = try? Data(contentsOf: manifestURL)
+        let manifest = manifestData.flatMap { try? VaultJSON.decoder().decode(VaultManifest.self, from: $0) }
+
+        let wasActive = activeConfiguration?.vaultId == vaultId
+        try fm.removeItem(at: root)
+
+        if wasActive {
+            await VaultSettingsStore.shared.clearActiveConfiguration()
+            await reloadFromPreferences()
+        }
+
+        if deleteRemoteDriveFolder,
+           manifest?.backendKind == .googleDrive,
+           let folderId = manifest?.driveRootFolderId,
+           let email = manifest?.driveAccountEmail,
+           let account = GmailAPIService.shared.getAccount(byEmail: email) {
+            do {
+                let token = try await GmailAPIService.shared.getValidAccessToken(for: account)
+                try await GoogleDriveVaultAPI.deleteFile(fileId: folderId, accessToken: token)
+            } catch {
+                throw VaultError.ioFailed(
+                    "Removed from this device, but Google Drive could not delete the folder: \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     // MARK: - Sync
