@@ -223,7 +223,8 @@ public class GmailAPIService {
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
             "https://www.googleapis.com/auth/gmail.settings.basic",
-            "https://www.googleapis.com/auth/gmail.send"
+            "https://www.googleapis.com/auth/gmail.send",
+            Self.googleCalendarReadonlyScope
         ]
         
         guard let result = try? await GIDSignIn.sharedInstance.signIn(
@@ -312,7 +313,8 @@ public class GmailAPIService {
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
             "https://www.googleapis.com/auth/gmail.settings.basic",
-            "https://www.googleapis.com/auth/gmail.send"
+            "https://www.googleapis.com/auth/gmail.send",
+            Self.googleCalendarReadonlyScope
         ]
         
         guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
@@ -429,6 +431,9 @@ public class GmailAPIService {
     // MARK: - Google Drive (vault)
 
     public static let googleDriveFileScope = "https://www.googleapis.com/auth/drive.file"
+
+    /// Read-only access to calendars and events (Google Calendar API).
+    public static let googleCalendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
 
     #if canImport(UIKit)
     @MainActor

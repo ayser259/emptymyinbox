@@ -116,6 +116,23 @@ struct MenuView: View {
                 } footer: {
                     Text("Store Calendar and Action Items as files in Inbox, Calendar, and Action Items folders—locally, in a synced folder, or on Google Drive.")
                 }
+
+                Section {
+                    NavigationLink {
+                        CalendarVisibilitySettingsView()
+                            .primaryBackground()
+                    } label: {
+                        HStack {
+                            Image(systemName: "eye.slash.circle")
+                                .foregroundColor(AppTheme.accent)
+                            Text("Calendar visibility")
+                        }
+                    }
+                } header: {
+                    Text("Calendar")
+                } footer: {
+                    Text("Choose which connected accounts and Google calendars appear in the Calendar tab.")
+                }
                 
                 // Account actions section
                 Section {
