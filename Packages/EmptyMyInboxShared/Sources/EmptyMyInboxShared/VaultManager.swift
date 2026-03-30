@@ -256,17 +256,10 @@ public final class VaultManager: ObservableObject {
     }
 
     public func loadActionItem(id: String) async throws -> VaultActionItemRecord {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let activePath = actionItemActivePath(id: id)
-        if let data = try? await backend.read(relativePath: activePath),
-           let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data) {
-            return env.payload
-        }
-        let completedPath = actionItemCompletedPath(id: id)
-        if let data = try? await backend.read(relativePath: completedPath),
-           let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data) {
-            return env.payload
-        }
+        let active = try await loadActiveActionItemsUnsorted()
+        if let found = active.first(where: { $0.id == id }) { return found }
+        let completed = try await loadCompletedActionItemsUnsorted()
+        if let found = completed.first(where: { $0.id == id }) { return found }
         throw VaultError.actionItemNotFound(id)
     }
 
@@ -307,136 +300,195 @@ public final class VaultManager: ObservableObject {
     }
 
     public func upsertActionItem(_ item: VaultActionItemRecord) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        guard folderBackend != nil else { throw VaultError.notConfigured }
         var normalized = item
         if let p = normalized.priority {
             normalized.priority = min(3, max(0, p))
         }
-        if normalized.numericId <= 0 {
-            normalized.numericId = try await allocateNextNumericId()
+        if normalized.id.isEmpty {
+            normalized.id = ULID.generate()
         }
-        let activePath = actionItemActivePath(id: normalized.id)
-        let completedPath = actionItemCompletedPath(id: normalized.id)
-        let activeData = try? await backend.read(relativePath: activePath)
-        let completedData = try? await backend.read(relativePath: completedPath)
-        let existingForToken = activeData ?? completedData
-        if existingForToken == nil, normalized.createdAt == nil {
+        let (activeItems, activeData) = try await readActiveAggregateRaw()
+        let (completedItems, completedData) = try await readCompletedAggregateRaw()
+        let hadExisting = activeItems.contains(where: { $0.id == normalized.id })
+            || completedItems.contains(where: { $0.id == normalized.id })
+        if !hadExisting, normalized.createdAt == nil {
             normalized.createdAt = Date()
         }
         normalized.updatedAt = Date()
-        let targetPath = normalized.isDone ? completedPath : activePath
-        let token = VaultLWWHelpers.nextWriteToken(existingData: existingForToken)
-        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: normalized)
-        let data = try VaultJSON.encoder().encode(envelope)
-        try await backend.write(relativePath: targetPath, data: data)
-        if normalized.isDone, activeData != nil {
-            try await backend.remove(relativePath: activePath)
+        var active = activeItems.filter { $0.id != normalized.id }
+        var completed = completedItems.filter { $0.id != normalized.id }
+        if normalized.isDone {
+            completed.append(normalized)
+        } else {
+            active.append(normalized)
         }
-        if !normalized.isDone, completedData != nil {
-            try await backend.remove(relativePath: completedPath)
-        }
+        try await writeActiveAggregate(active, previousData: activeData)
+        try await writeCompletedAggregate(completed, previousData: completedData)
     }
 
     public func deleteActionItem(id: String) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let activePath = actionItemActivePath(id: id)
-        let completedPath = actionItemCompletedPath(id: id)
-        if (try? await backend.read(relativePath: activePath)) != nil {
-            try await backend.remove(relativePath: activePath)
-            return
-        }
-        if (try? await backend.read(relativePath: completedPath)) != nil {
-            try await backend.remove(relativePath: completedPath)
-        }
+        let (activeItems, activeData) = try await readActiveAggregateRaw()
+        let (completedItems, completedData) = try await readCompletedAggregateRaw()
+        let active = activeItems.filter { $0.id != id }
+        let completed = completedItems.filter { $0.id != id }
+        try await writeActiveAggregate(active, previousData: activeData)
+        try await writeCompletedAggregate(completed, previousData: completedData)
     }
 
     /// Deletes completed items whose `completedAt` is older than `days`.
     public func purgeCompletedActionItemsOlderThan(days: Int = 30, referenceDate: Date = Date()) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: referenceDate) ?? referenceDate
-        let completed = try await loadCompletedActionItemsUnsorted()
-        for item in completed {
-            guard let completedAt = item.completedAt, completedAt < cutoff else { continue }
-            try await backend.remove(relativePath: actionItemCompletedPath(id: item.id))
+        let (completedItems, completedData) = try await readCompletedAggregateRaw()
+        let kept = completedItems.filter { item in
+            guard let completedAt = item.completedAt else { return true }
+            return completedAt >= cutoff
         }
+        try await writeCompletedAggregate(kept, previousData: completedData)
     }
 
-    // MARK: - Context & type definitions
+    // MARK: - Context & type definitions (aggregate files)
 
     public func listContextDefinitions() async throws -> [VaultContextDefinition] {
-        try await loadDefinitions(subfolder: VaultLayout.actionItemsContextsSubfolder) { data in
-            try VaultJSON.decoder().decode(VaultFileEnvelope<VaultContextDefinition>.self, from: data).payload
-        }
+        let (defs, _) = try await readContextDefinitionsAggregateRaw()
+        return defs.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
     }
 
     public func upsertContextDefinition(_ def: VaultContextDefinition) async throws {
-        try await writeDefinition(
-            def,
-            subfolder: VaultLayout.actionItemsContextsSubfolder,
-            id: def.id
-        ) { d in
-            var x = d
-            let now = Date()
-            if x.createdAt == nil { x.createdAt = now }
-            x.updatedAt = now
-            return x
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        var (defs, existingData) = try await readContextDefinitionsAggregateRaw()
+        var updated = def
+        let now = Date()
+        if updated.createdAt == nil { updated.createdAt = now }
+        updated.updatedAt = now
+        if let i = defs.firstIndex(where: { $0.id == updated.id }) {
+            defs[i] = updated
+        } else {
+            defs.append(updated)
         }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultContextDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsContextsAggregatePath, data: data)
     }
 
     public func deleteContextDefinition(id: String) async throws {
         guard let backend = folderBackend else { throw VaultError.notConfigured }
-        try await backend.remove(relativePath: contextDefinitionPath(id: id))
+        let (defs, existingData) = try await readContextDefinitionsAggregateRaw()
+        let filtered = defs.filter { $0.id != id }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultContextDefinitionsFilePayload(definitions: filtered)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsContextsAggregatePath, data: data)
     }
 
     public func listActionTypeDefinitions() async throws -> [VaultActionTypeDefinition] {
-        try await loadDefinitions(subfolder: VaultLayout.actionItemsTypesSubfolder) { data in
-            try VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionTypeDefinition>.self, from: data).payload
-        }
+        let (defs, _) = try await readActionTypeDefinitionsAggregateRaw()
+        return defs.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
     }
 
     public func upsertActionTypeDefinition(_ def: VaultActionTypeDefinition) async throws {
-        try await writeDefinition(
-            def,
-            subfolder: VaultLayout.actionItemsTypesSubfolder,
-            id: def.id
-        ) { d in
-            var x = d
-            let now = Date()
-            if x.createdAt == nil { x.createdAt = now }
-            x.updatedAt = now
-            return x
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        var (defs, existingData) = try await readActionTypeDefinitionsAggregateRaw()
+        var updated = def
+        let now = Date()
+        if updated.createdAt == nil { updated.createdAt = now }
+        updated.updatedAt = now
+        if let i = defs.firstIndex(where: { $0.id == updated.id }) {
+            defs[i] = updated
+        } else {
+            defs.append(updated)
         }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultActionTypeDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsTypesAggregatePath, data: data)
     }
 
     public func deleteActionTypeDefinition(id: String) async throws {
         guard let backend = folderBackend else { throw VaultError.notConfigured }
-        try await backend.remove(relativePath: actionTypeDefinitionPath(id: id))
+        let (defs, existingData) = try await readActionTypeDefinitionsAggregateRaw()
+        let filtered = defs.filter { $0.id != id }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultActionTypeDefinitionsFilePayload(definitions: filtered)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsTypesAggregatePath, data: data)
     }
 
-    // MARK: - Action item paths & loading
+    // MARK: - Action item aggregate I/O
 
-    private func actionItemActivePath(id: String) -> String {
-        "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/\(id).json"
+    private func readActiveAggregateRaw() async throws -> (items: [VaultActionItemRecord], data: Data?) {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.actionItemsActiveAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemsFilePayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.items, data)
     }
 
-    private func actionItemCompletedPath(id: String) -> String {
-        "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsCompletedSubfolder)/\(id).json"
+    private func readCompletedAggregateRaw() async throws -> (items: [VaultActionItemRecord], data: Data?) {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.actionItemsCompletedAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemsFilePayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.items, data)
     }
 
-    private func contextDefinitionPath(id: String) -> String {
-        "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsContextsSubfolder)/\(id).json"
+    private func writeActiveAggregate(_ items: [VaultActionItemRecord], previousData: Data?) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: previousData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultActionItemsFilePayload(items: items)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsActiveAggregatePath, data: data)
     }
 
-    private func actionTypeDefinitionPath(id: String) -> String {
-        "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsTypesSubfolder)/\(id).json"
+    private func writeCompletedAggregate(_ items: [VaultActionItemRecord], previousData: Data?) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: previousData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultActionItemsFilePayload(items: items)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsCompletedAggregatePath, data: data)
     }
 
     private func loadActiveActionItemsUnsorted() async throws -> [VaultActionItemRecord] {
-        try await loadActionItemsFromFolder(subfolder: VaultLayout.actionItemsSubfolder)
+        let (items, _) = try await readActiveAggregateRaw()
+        return items
     }
 
     private func loadCompletedActionItemsUnsorted() async throws -> [VaultActionItemRecord] {
-        try await loadActionItemsFromFolder(subfolder: VaultLayout.actionItemsCompletedSubfolder)
+        let (items, _) = try await readCompletedAggregateRaw()
+        return items
     }
 
     private func loadAllActionItemsFromBothFoldersUnsorted() async throws -> [VaultActionItemRecord] {
@@ -445,162 +497,187 @@ public final class VaultManager: ObservableObject {
         return a + b
     }
 
-    private func loadActionItemsFromFolder(subfolder: String) async throws -> [VaultActionItemRecord] {
+    private func readContextDefinitionsAggregateRaw() async throws -> ([VaultContextDefinition], Data?) {
         guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let prefix = "\(VaultLayout.actionItemsFolder)/\(subfolder)/"
-        let paths = try await backend.listRelativeFilePaths()
-            .filter { $0.hasPrefix(prefix) && $0.lowercased().hasSuffix(".json") }
-        var out: [VaultActionItemRecord] = []
-        for p in paths {
-            guard let data = try? await backend.read(relativePath: p),
-                  let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
-            else { continue }
-            out.append(env.payload)
+        let path = VaultLayout.actionItemsContextsAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
         }
-        return out
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultContextDefinitionsFilePayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.definitions, data)
     }
 
-    private func loadDefinitions<T>(
-        subfolder: String,
-        decode: (Data) throws -> T
-    ) async throws -> [T] {
+    private func readActionTypeDefinitionsAggregateRaw() async throws -> ([VaultActionTypeDefinition], Data?) {
         guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let prefix = "\(VaultLayout.actionItemsFolder)/\(subfolder)/"
-        let paths = try await backend.listRelativeFilePaths()
-            .filter { $0.hasPrefix(prefix) && $0.lowercased().hasSuffix(".json") }
-        var out: [T] = []
-        for p in paths {
-            guard let data = try? await backend.read(relativePath: p),
-                  let item = try? decode(data) else { continue }
+        let path = VaultLayout.actionItemsTypesAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionTypeDefinitionsFilePayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.definitions, data)
+    }
+
+    // MARK: - Migration (legacy per-item / per-definition files → aggregates)
+
+    private func migrateActionItemsLayoutIfNeeded() async throws {
+        guard let backend = folderBackend else { return }
+        try await backend.ensureStructure()
+
+        let activeAggregatePath = VaultLayout.actionItemsActiveAggregatePath
+        let completedAggregatePath = VaultLayout.actionItemsCompletedAggregatePath
+        let hasActiveFile = (try? await backend.read(relativePath: activeAggregatePath)) != nil
+        let hasCompletedFile = (try? await backend.read(relativePath: completedAggregatePath)) != nil
+        let hasAggregates = hasActiveFile || hasCompletedFile
+
+        if !hasAggregates {
+            var active: [VaultActionItemRecord] = []
+            var completed: [VaultActionItemRecord] = []
+            let legacyItemsPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyItemsSubfolder)/"
+            let legacyCompletedPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyCompletedSubfolder)/"
+            for p in try await backend.listRelativeFilePaths()
+                .filter({ $0.hasPrefix(legacyItemsPrefix) && $0.lowercased().hasSuffix(".json") }) {
+                guard let data = try? await backend.read(relativePath: p),
+                      let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
+                else { continue }
+                if env.payload.isDone {
+                    completed.append(env.payload)
+                } else {
+                    active.append(env.payload)
+                }
+            }
+            for p in try await backend.listRelativeFilePaths()
+                .filter({ $0.hasPrefix(legacyCompletedPrefix) && $0.lowercased().hasSuffix(".json") }) {
+                guard let data = try? await backend.read(relativePath: p),
+                      let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
+                else { continue }
+                completed.append(env.payload)
+            }
+            active = dedupeActionItemsById(active)
+            completed = dedupeActionItemsById(completed)
+            try await writeActiveAggregate(active, previousData: nil)
+            try await writeCompletedAggregate(completed, previousData: nil)
+            try await deleteLegacyActionItemPerItemFiles()
+        }
+
+        try await deleteLegacySequenceFileIfPresent()
+
+        let typesAggregateMissing = (try? await backend.read(relativePath: VaultLayout.actionItemsTypesAggregatePath)) == nil
+        let contextsAggregateMissing = (try? await backend.read(relativePath: VaultLayout.actionItemsContextsAggregatePath)) == nil
+
+        if contextsAggregateMissing {
+            var defs: [VaultContextDefinition] = []
+            let legacyPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyContextsSubfolder)/"
+            for p in try await backend.listRelativeFilePaths()
+                .filter({ $0.hasPrefix(legacyPrefix) && $0.lowercased().hasSuffix(".json") }) {
+                guard let data = try? await backend.read(relativePath: p),
+                      let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultContextDefinition>.self, from: data)
+                else { continue }
+                defs.append(env.payload)
+            }
+            defs = dedupeById(defs)
+            try await writeContextDefinitionsAggregate(defs, previousData: nil)
+            try await deleteLegacyContextDefinitionFiles()
+        }
+
+        if typesAggregateMissing {
+            var defs: [VaultActionTypeDefinition] = []
+            let legacyPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyTypesSubfolder)/"
+            for p in try await backend.listRelativeFilePaths()
+                .filter({ $0.hasPrefix(legacyPrefix) && $0.lowercased().hasSuffix(".json") }) {
+                guard let data = try? await backend.read(relativePath: p),
+                      let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionTypeDefinition>.self, from: data)
+                else { continue }
+                defs.append(env.payload)
+            }
+            defs = dedupeById(defs)
+            try await writeActionTypeDefinitionsAggregate(defs, previousData: nil)
+            try await deleteLegacyTypeDefinitionFiles()
+        }
+    }
+
+    private func writeContextDefinitionsAggregate(_ defs: [VaultContextDefinition], previousData: Data?) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: previousData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultContextDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsContextsAggregatePath, data: data)
+    }
+
+    private func writeActionTypeDefinitionsAggregate(_ defs: [VaultActionTypeDefinition], previousData: Data?) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: previousData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultActionTypeDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsTypesAggregatePath, data: data)
+    }
+
+    private func dedupeActionItemsById(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        var seen = Set<String>()
+        var out: [VaultActionItemRecord] = []
+        for item in items {
+            if seen.contains(item.id) { continue }
+            seen.insert(item.id)
             out.append(item)
         }
         return out
     }
 
-    private func writeDefinition<T: Codable>(
-        _ def: T,
-        subfolder: String,
-        id: String,
-        touch: (T) -> T
-    ) async throws {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let path: String
-        switch subfolder {
-        case VaultLayout.actionItemsContextsSubfolder:
-            path = contextDefinitionPath(id: id)
-        case VaultLayout.actionItemsTypesSubfolder:
-            path = actionTypeDefinitionPath(id: id)
-        default:
-            path = "\(VaultLayout.actionItemsFolder)/\(subfolder)/\(id).json"
+    private func dedupeById<T: Identifiable>(_ items: [T]) -> [T] where T.ID: Hashable {
+        var seen = Set<T.ID>()
+        var out: [T] = []
+        for item in items {
+            if seen.contains(item.id) { continue }
+            seen.insert(item.id)
+            out.append(item)
         }
-        let updated = touch(def)
-        let existing = try? await backend.read(relativePath: path)
-        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
-        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: updated)
-        let data = try VaultJSON.encoder().encode(envelope)
-        try await backend.write(relativePath: path, data: data)
+        return out
     }
 
-    private func allocateNextNumericId() async throws -> Int {
-        guard let backend = folderBackend else { throw VaultError.notConfigured }
-        let path = VaultLayout.actionItemSequenceRelativePath
-        let existing = try? await backend.read(relativePath: path)
-        var state: VaultActionItemSequenceState
-        if let existing,
-           let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemSequenceState>.self, from: existing) {
-            state = env.payload
-        } else {
-            state = VaultActionItemSequenceState(nextNumericId: 1)
-        }
-        let assigned = state.nextNumericId
-        state.nextNumericId += 1
-        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
-        let out = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: state)
-        let data = try VaultJSON.encoder().encode(out)
-        try await backend.write(relativePath: path, data: data)
-        return assigned
-    }
-
-    /// Ensures sequence counter is at least `max(existing numeric ids) + 1`.
-    private func reconcileNumericIdSequenceWithVault() async throws {
+    private func deleteLegacyActionItemPerItemFiles() async throws {
         guard let backend = folderBackend else { return }
-        let all = try await loadAllActionItemsFromBothFoldersUnsorted()
-        let maxId = all.map(\.numericId).max() ?? 0
-        let path = VaultLayout.actionItemSequenceRelativePath
-        let existing = try? await backend.read(relativePath: path)
-        var state: VaultActionItemSequenceState
-        if let existing,
-           let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemSequenceState>.self, from: existing) {
-            state = env.payload
-        } else {
-            state = VaultActionItemSequenceState(nextNumericId: max(1, maxId + 1))
-        }
-        if state.nextNumericId <= maxId {
-            state.nextNumericId = maxId + 1
-            let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
-            let out = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: state)
-            let data = try VaultJSON.encoder().encode(out)
-            try await backend.write(relativePath: path, data: data)
+        let legacyItemsPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyItemsSubfolder)/"
+        let legacyCompletedPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyCompletedSubfolder)/"
+        for p in try await backend.listRelativeFilePaths()
+            .filter({ ($0.hasPrefix(legacyItemsPrefix) || $0.hasPrefix(legacyCompletedPrefix)) && $0.lowercased().hasSuffix(".json") }) {
+            try? await backend.remove(relativePath: p)
         }
     }
 
-    private func migrateActionItemsLayoutIfNeeded() async throws {
+    private func deleteLegacySequenceFileIfPresent() async throws {
         guard let backend = folderBackend else { return }
-        try await backend.ensureStructure()
-        let itemsPrefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/"
-        let paths = try await backend.listRelativeFilePaths()
-            .filter { $0.hasPrefix(itemsPrefix) && $0.lowercased().hasSuffix(".json") }
-        for p in paths {
-            guard let data = try? await backend.read(relativePath: p),
-                  let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
-            else { continue }
-            guard env.payload.isDone else { continue }
-            let id = env.payload.id
-            let completedPath = actionItemCompletedPath(id: id)
-            let completedExisting = try? await backend.read(relativePath: completedPath)
-            let token = VaultLWWHelpers.nextWriteToken(existingData: completedExisting ?? data)
-            let newEnv = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: env.payload)
-            let out = try VaultJSON.encoder().encode(newEnv)
-            try await backend.write(relativePath: completedPath, data: out)
-            try await backend.remove(relativePath: p)
+        let legacy = "\(VaultLayout.actionItemsFolder)/meta/action_item_sequence.json"
+        if (try? await backend.read(relativePath: legacy)) != nil {
+            try? await backend.remove(relativePath: legacy)
         }
-        try await backfillMissingNumericIds()
-        try await reconcileNumericIdSequenceWithVault()
     }
 
-    private func backfillMissingNumericIds() async throws {
+    private func deleteLegacyContextDefinitionFiles() async throws {
         guard let backend = folderBackend else { return }
-        let prefixes = [
-            "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsSubfolder)/",
-            "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsCompletedSubfolder)/"
-        ]
-        var paths: [String] = []
-        for pre in prefixes {
-            let found = try await backend.listRelativeFilePaths()
-                .filter { $0.hasPrefix(pre) && $0.lowercased().hasSuffix(".json") }
-            paths.append(contentsOf: found)
+        let prefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyContextsSubfolder)/"
+        for p in try await backend.listRelativeFilePaths()
+            .filter({ $0.hasPrefix(prefix) && $0.lowercased().hasSuffix(".json") }) {
+            try? await backend.remove(relativePath: p)
         }
-        var maxId = 0
-        var payloads: [(path: String, payload: VaultActionItemRecord, data: Data)] = []
-        for p in paths {
-            guard let data = try? await backend.read(relativePath: p),
-                  let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
-            else { continue }
-            if env.payload.numericId > maxId {
-                maxId = env.payload.numericId
-            }
-            payloads.append((p, env.payload, data))
-        }
-        var next = maxId + 1
-        for i in payloads.indices where payloads[i].payload.numericId <= 0 {
-            var item = payloads[i].payload
-            item.numericId = next
-            next += 1
-            let existingData = payloads[i].data
-            let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
-            let newEnv = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: item)
-            let out = try VaultJSON.encoder().encode(newEnv)
-            try await backend.write(relativePath: payloads[i].path, data: out)
+    }
+
+    private func deleteLegacyTypeDefinitionFiles() async throws {
+        guard let backend = folderBackend else { return }
+        let prefix = "\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsLegacyTypesSubfolder)/"
+        for p in try await backend.listRelativeFilePaths()
+            .filter({ $0.hasPrefix(prefix) && $0.lowercased().hasSuffix(".json") }) {
+            try? await backend.remove(relativePath: p)
         }
     }
 

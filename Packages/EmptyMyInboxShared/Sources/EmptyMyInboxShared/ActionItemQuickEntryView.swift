@@ -108,7 +108,6 @@ public struct ActionItemQuickEntryView: View {
             headerRow
             titleBlock
             chipRows
-            iosAccessoryRow
             footerRow
         }
         .padding(SharedAppTheme.spacingMedium)
@@ -216,10 +215,14 @@ public struct ActionItemQuickEntryView: View {
             }
             if let onManageTags {
                 Divider()
-                Button("Manage contexts…") { onManageTags() }
+                Button("Manage labels…") { onManageTags() }
             }
         } label: {
-            chipLabel(icon: "tag", text: draft.subjectLabel ?? "Labels", accent: draft.contextId != nil)
+            chipLabel(
+                icon: "tag",
+                text: ActionItemsFeatureModel.normalizedSubjectKey(draft.subjectLabel),
+                accent: draft.contextId != nil
+            )
         }
         .buttonStyle(.plain)
     }
@@ -291,49 +294,14 @@ public struct ActionItemQuickEntryView: View {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var iosAccessoryRow: some View {
-        HStack {
-            Menu {
-                Button("Inbox (uncategorized)") {
-                    draft.contextId = nil
-                    draft.subjectLabel = "Inbox"
-                }
-                ForEach(sortedContexts) { c in
-                    Button(c.name) {
-                        draft.contextId = c.id
-                        draft.subjectLabel = c.name
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "tray.fill")
-                    Text(draft.subjectLabel ?? "Inbox")
-                        .font(SharedAppTheme.caption)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                }
-                .foregroundStyle(SharedAppTheme.secondaryText)
-            }
-            Spacer()
-            Circle()
-                .fill(Color(red: 0.89, green: 0.36, blue: 0.36))
-                .frame(width: 44, height: 44)
-                .overlay {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(.white)
-                }
-                .opacity(0.35)
-        }
-    }
-
     private var footerRow: some View {
         VStack(spacing: 12) {
             Divider().opacity(0.3)
             HStack {
                 Menu {
-                    Button("Inbox (uncategorized)") {
+                    Button(ActionItemsFeatureModel.unspecifiedSubjectKey) {
                         draft.contextId = nil
-                        draft.subjectLabel = "Inbox"
+                        draft.subjectLabel = nil
                     }
                     ForEach(sortedContexts) { c in
                         Button(c.name) {
@@ -344,7 +312,7 @@ public struct ActionItemQuickEntryView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "tray.fill")
-                        Text(draft.subjectLabel ?? "Inbox")
+                        Text(ActionItemsFeatureModel.normalizedSubjectKey(draft.subjectLabel))
                             .font(SharedAppTheme.subheadline)
                         Image(systemName: "chevron.down")
                             .font(.caption2)

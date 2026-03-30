@@ -158,7 +158,7 @@ struct MacVaultActionItemsTab: View {
                     Button {
                         showTagLibrary = true
                     } label: {
-                        Label("Tags", systemImage: "tag")
+                        Label("Labels", systemImage: "tag")
                     }
                 }
                 Section {
@@ -202,7 +202,7 @@ struct MacVaultActionItemsTab: View {
                         Button {
                             showTagLibrary = true
                         } label: {
-                            Label("Tags", systemImage: "tag")
+                            Label("Labels", systemImage: "tag")
                         }
                     }
                 }
@@ -396,11 +396,6 @@ struct MacVaultActionItemsTab: View {
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        if item.numericId > 0 {
-                            Text("#\(item.numericId)")
-                                .font(.caption2)
-                                .foregroundStyle(MacAppTheme.accent)
-                        }
                         Text(item.title)
                             .strikethrough(item.isDone)
                             .foregroundStyle(MacAppTheme.primaryText)
@@ -459,7 +454,7 @@ struct MacVaultActionItemsTab: View {
         case .today:
             draft.startDate = todayStart
         case .context:
-            if let key = selectedSubject, key != "Uncategorized" {
+            if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
                 draft.subjectLabel = key
             }
         case .calendar:

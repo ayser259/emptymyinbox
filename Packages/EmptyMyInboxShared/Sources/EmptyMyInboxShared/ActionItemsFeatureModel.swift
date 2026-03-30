@@ -8,14 +8,20 @@
 import Foundation
 
 /// Filtering, grouping, and sorting for vault-backed action items.
-/// Call sites should pass **active** items from `VaultManager.listActionItems()` (completed items live under `ActionItems/completed/`).
+/// Call sites should pass **active** items from `VaultManager.listActionItems()` (completed items are in `ActionItems/completed_items.json`).
 public enum ActionItemsFeatureModel {
     // MARK: - Subject / context
 
-    /// Display key for sidebar grouping; empty or whitespace → "Uncategorized".
+    /// Canonical bucket for items without a named context (sidebar grouping).
+    public static let unspecifiedSubjectKey = "Unspecified"
+
+    /// Display key for sidebar grouping; empty, legacy inbox/uncategorized → `unspecifiedSubjectKey`.
     public static func normalizedSubjectKey(_ label: String?) -> String {
         let t = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return t.isEmpty ? "Uncategorized" : t
+        if t.isEmpty { return unspecifiedSubjectKey }
+        let lower = t.lowercased()
+        if lower == "inbox" || lower == "uncategorized" { return unspecifiedSubjectKey }
+        return t
     }
 
     /// Sorted `(subjectKey, items)` for context/channel UI.

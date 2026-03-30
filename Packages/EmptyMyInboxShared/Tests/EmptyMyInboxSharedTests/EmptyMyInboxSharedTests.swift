@@ -89,44 +89,60 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(item.title, "Legacy task")
         XCTAssertTrue(item.isDone)
         XCTAssertEqual(item.notes, "hello")
-        XCTAssertEqual(item.numericId, 0)
         XCTAssertTrue(item.comments.isEmpty)
         XCTAssertNil(item.startDate)
         XCTAssertNil(item.priority)
         XCTAssertNil(item.taskDescription)
     }
 
-    func testVaultLayoutIncludesActionItemSubfolders() {
+    func testVaultLayoutIncludesActionItemsFolder() {
         let subs = VaultLayout.standardSubfolders()
-        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsCompletedSubfolder)"))
-        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsContextsSubfolder)"))
-        XCTAssertTrue(subs.contains("\(VaultLayout.actionItemsFolder)/\(VaultLayout.actionItemsTypesSubfolder)"))
+        XCTAssertTrue(subs.contains(VaultLayout.actionItemsFolder))
     }
 
-    func testVaultActionItemNumericAndIdsRoundTrip() throws {
+    /// Regression: iOS and macOS must use identical relative paths (shared `VaultManager` + Drive sync).
+    func testVaultActionItemAggregatePathsCrossPlatformContract() {
+        XCTAssertEqual(
+            VaultLayout.actionItemAggregateRelativePaths,
+            [
+                "ActionItems/active_items.json",
+                "ActionItems/completed_items.json",
+                "ActionItems/context_definitions.json",
+                "ActionItems/type_definitions.json"
+            ]
+        )
+    }
+
+    func testVaultActionItemIdsAndContextRoundTrip() throws {
         let original = VaultActionItemRecord(
-            numericId: 42,
+            id: "01HZX123456789ABCDEFGHJKLM",
             title: "T",
-            subjectLabel: "Inbox",
+            subjectLabel: "Work",
             contextId: "ctx-1",
             typeLabel: "Meeting",
             typeId: "type-1"
         )
         let data = try VaultJSON.encoder().encode(original)
         let back = try VaultJSON.decoder().decode(VaultActionItemRecord.self, from: data)
-        XCTAssertEqual(back.numericId, 42)
+        XCTAssertEqual(back.id, "01HZX123456789ABCDEFGHJKLM")
         XCTAssertEqual(back.contextId, "ctx-1")
         XCTAssertEqual(back.typeId, "type-1")
     }
 
-    func testVaultEnsureStructureCreatesActionItemCompletedFolder() async throws {
+    func testULIDGenerateFormat() {
+        let u = ULID.generate()
+        XCTAssertEqual(u.count, 26)
+        XCTAssertTrue(u.allSatisfy { $0.isASCII && $0.isLetter || $0.isNumber })
+    }
+
+    func testVaultEnsureStructureCreatesActionItemsFolder() async throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("vault_action_items_\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
         let backend = VaultLocalFolderBackend(vaultRoot: tmp)
         try await backend.ensureStructure()
-        let completed = tmp.appendingPathComponent("ActionItems/completed", isDirectory: true)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: completed.path))
+        let actionItems = tmp.appendingPathComponent("ActionItems", isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: actionItems.path))
     }
 
     func testVaultActionItemDescriptionCodingKeyRoundTrip() throws {
@@ -208,8 +224,8 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(groups.count, 2)
         let work = groups.first { $0.key == "Work" }
         XCTAssertEqual(work?.items.count, 2)
-        let unc = groups.first { $0.key == "Uncategorized" }
-        XCTAssertEqual(unc?.items.count, 1)
+        let unspecified = groups.first { $0.key == ActionItemsFeatureModel.unspecifiedSubjectKey }
+        XCTAssertEqual(unspecified?.items.count, 1)
     }
 
     func testActionItemsRangeFilter() {

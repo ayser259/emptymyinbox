@@ -9,6 +9,11 @@ import Foundation
 
 // MARK: - Layout constants
 
+/// Relative paths under the vault root (`vault_manifest.json` lives at the root next to `Inbox/`, `Calendar/`, `ActionItems/`).
+///
+/// **iOS and macOS** both use `EmptyMyInboxShared` only: there are no platform-specific filenames for vault data. The same `VaultLayout` strings are passed to `VaultFolderBackend` on every platform.
+///
+/// **Multiple devices** see the same logical files when they use the **same vault configuration**—for `.googleDrive`, the same Gmail account and `driveRootFolderId` so `VaultSyncCoordinator` pulls/pushes the same paths on Drive. Purely local vaults (`.local`) are per-machine unless you point both apps at the same folder via `.externalFolder` with a synced directory.
 public enum VaultLayout {
     public static let manifestFileName = "vault_manifest.json"
     public static let syncLogFileName = "vault_sync_log.json"
@@ -17,12 +22,17 @@ public enum VaultLayout {
     public static let actionItemsFolder = "ActionItems"
     public static let inboxThreadsSubfolder = "threads"
     public static let calendarEventsSubfolder = "events"
-    public static let actionItemsSubfolder = "items"
-    public static let actionItemsCompletedSubfolder = "completed"
-    public static let actionItemsMetaSubfolder = "meta"
-    public static let actionItemSequenceFileName = "action_item_sequence.json"
-    public static let actionItemsContextsSubfolder = "contexts"
-    public static let actionItemsTypesSubfolder = "types"
+
+    /// Legacy per-item layout (migration only).
+    public static let actionItemsLegacyItemsSubfolder = "items"
+    public static let actionItemsLegacyCompletedSubfolder = "completed"
+    public static let actionItemsLegacyContextsSubfolder = "contexts"
+    public static let actionItemsLegacyTypesSubfolder = "types"
+
+    public static let actionItemsActiveAggregateFileName = "active_items.json"
+    public static let actionItemsCompletedAggregateFileName = "completed_items.json"
+    public static let actionItemsContextsAggregateFileName = "context_definitions.json"
+    public static let actionItemsTypesAggregateFileName = "type_definitions.json"
 
     public static let currentSchemaVersion = 1
 
@@ -30,16 +40,34 @@ public enum VaultLayout {
         [
             "\(inboxFolder)/\(inboxThreadsSubfolder)",
             "\(calendarFolder)/\(calendarEventsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsCompletedSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsMetaSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsContextsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsTypesSubfolder)"
+            actionItemsFolder
         ]
     }
 
-    public static var actionItemSequenceRelativePath: String {
-        "\(actionItemsFolder)/\(actionItemsMetaSubfolder)/\(actionItemSequenceFileName)"
+    public static var actionItemsActiveAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsActiveAggregateFileName)"
+    }
+
+    public static var actionItemsCompletedAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsCompletedAggregateFileName)"
+    }
+
+    public static var actionItemsContextsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsContextsAggregateFileName)"
+    }
+
+    public static var actionItemsTypesAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsTypesAggregateFileName)"
+    }
+
+    /// All JSON blobs for action items, labels (context/type definitions), and their sync targets. Keep in sync with `VaultManager` read/write sites.
+    public static var actionItemAggregateRelativePaths: [String] {
+        [
+            actionItemsActiveAggregatePath,
+            actionItemsCompletedAggregatePath,
+            actionItemsContextsAggregatePath,
+            actionItemsTypesAggregatePath
+        ]
     }
 }
 
@@ -170,7 +198,7 @@ public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equ
     public var createdAt: Date
     public var text: String
 
-    public init(id: String = UUID().uuidString, createdAt: Date = Date(), text: String) {
+    public init(id: String = ULID.generate(), createdAt: Date = Date(), text: String) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
@@ -178,9 +206,8 @@ public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equ
 }
 
 public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable {
+    /// Stable identifier (ULID string for new items; legacy vault rows may still use UUID strings).
     public var id: String
-    /// Monotonic human-visible id (e.g. "#42"); persisted and unique across active + completed.
-    public var numericId: Int
     public var title: String
     public var isDone: Bool
     public var notes: String?
@@ -198,18 +225,18 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var parentTaskId: String?
     /// Context / channel / subject grouping.
     public var subjectLabel: String?
-    /// Optional link to a saved context definition (`ActionItems/contexts/*.json`).
+    /// Optional link to a saved context definition.
     public var contextId: String?
     /// Work type: learning block, time block, action item, meeting, etc.
     public var typeLabel: String?
-    /// Optional link to a saved type definition (`ActionItems/types/*.json`).
+    /// Optional link to a saved type definition.
     public var typeId: String?
     public var createdAt: Date?
     public var updatedAt: Date?
     public var completedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, numericId, title, isDone, notes
+        case id, title, isDone, notes
         case startDate, endDate, priority
         case taskDescription = "description"
         case contextNotes, comments
@@ -218,8 +245,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     }
 
     public init(
-        id: String = UUID().uuidString,
-        numericId: Int = 0,
+        id: String = ULID.generate(),
         title: String,
         isDone: Bool = false,
         notes: String? = nil,
@@ -239,7 +265,6 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         completedAt: Date? = nil
     ) {
         self.id = id
-        self.numericId = numericId
         self.title = title
         self.isDone = isDone
         self.notes = notes
@@ -262,7 +287,6 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        numericId = try c.decodeIfPresent(Int.self, forKey: .numericId) ?? 0
         title = try c.decode(String.self, forKey: .title)
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
@@ -285,7 +309,6 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(numericId, forKey: .numericId)
         try c.encode(title, forKey: .title)
         try c.encode(isDone, forKey: .isDone)
         try c.encodeIfPresent(notes, forKey: .notes)
@@ -306,14 +329,29 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     }
 }
 
-// MARK: - Action item sequence (numeric IDs)
+// MARK: - Action item aggregate files (one JSON per bucket)
 
-public struct VaultActionItemSequenceState: Codable, Sendable, Equatable {
-    /// Next value to assign when creating a new action item (`numericId`).
-    public var nextNumericId: Int
+public struct VaultActionItemsFilePayload: Codable, Sendable, Equatable {
+    public var items: [VaultActionItemRecord]
 
-    public init(nextNumericId: Int = 1) {
-        self.nextNumericId = nextNumericId
+    public init(items: [VaultActionItemRecord] = []) {
+        self.items = items
+    }
+}
+
+public struct VaultContextDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultContextDefinition]
+
+    public init(definitions: [VaultContextDefinition] = []) {
+        self.definitions = definitions
+    }
+}
+
+public struct VaultActionTypeDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultActionTypeDefinition]
+
+    public init(definitions: [VaultActionTypeDefinition] = []) {
+        self.definitions = definitions
     }
 }
 
@@ -330,7 +368,7 @@ public struct VaultContextDefinition: Codable, Sendable, Identifiable, Equatable
     public var updatedAt: Date?
 
     public init(
-        id: String = UUID().uuidString,
+        id: String = ULID.generate(),
         name: String,
         notes: String? = nil,
         accentColorHex: String? = nil,
@@ -361,7 +399,7 @@ public struct VaultActionTypeDefinition: Codable, Sendable, Identifiable, Equata
     public var updatedAt: Date?
 
     public init(
-        id: String = UUID().uuidString,
+        id: String = ULID.generate(),
         name: String,
         notes: String? = nil,
         accentColorHex: String? = nil,

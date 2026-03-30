@@ -39,7 +39,7 @@ public struct ActionItemTagLibraryView: View {
                 typeList
             }
         }
-        .navigationTitle("Tags")
+        .navigationTitle("Labels")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

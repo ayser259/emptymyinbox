@@ -340,7 +340,7 @@ struct ActionItemsSkeletonView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "tag")
-                        Text("Tags")
+                        Text("Labels")
                             .font(AppTheme.subheadline)
                     }
                     .foregroundColor(AppTheme.accent)
@@ -500,11 +500,6 @@ struct ActionItemsSkeletonView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        if item.numericId > 0 {
-                            Text("#\(item.numericId)")
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.accent)
-                        }
                         Text(item.title)
                             .font(AppTheme.body)
                             .strikethrough(item.isDone)
@@ -556,7 +551,7 @@ struct ActionItemsSkeletonView: View {
         case .today:
             draft.startDate = todayStart
         case .context:
-            if let key = selectedSubject, key != "Uncategorized" {
+            if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
                 draft.subjectLabel = key
             }
         case .calendar:
