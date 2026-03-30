@@ -12,4 +12,6 @@ public extension Notification.Name {
     static let cacheCleared = Notification.Name("CacheCleared")
     /// macOS toolbar refresh for Action Items tab (reload vault-backed lists).
     static let macActionItemsShouldReload = Notification.Name("MacActionItemsShouldReload")
+    /// Mail dashboard refreshed (first open, daily foreground, etc.); Calendar + Action Items sync to match.
+    static let companionVaultCalendarActionItemsRefresh = Notification.Name("CompanionVaultCalendarActionItemsRefresh")
 }

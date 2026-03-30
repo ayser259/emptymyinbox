@@ -70,9 +70,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
             showVaultSettings = true
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background {
                 Task { await AppLifecycleCloudSync.pushLocalStateOnly() }
+            }
+            if oldPhase != .active && newPhase == .active {
+                checkMacForegroundCompanionIfNeeded()
             }
         }
     }
@@ -126,6 +129,20 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
+            Task {
+                await calendarModel.refresh()
+                lastCalendarRefreshAt = Date()
+                NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
+                lastActionItemsRefreshAt = Date()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
+            Task {
+                await calendarModel.refresh()
+                NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
+            }
+        }
     }
 
     @ViewBuilder
@@ -142,6 +159,7 @@ struct ContentView: View {
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
                 await loadSnapshot()
+                NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
@@ -160,6 +178,7 @@ struct ContentView: View {
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
+        NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
 
     private func refreshCurrentTab() async {
@@ -183,6 +202,23 @@ struct ContentView: View {
         } catch {
             logError("Add account failed: \(error)", category: "Auth")
         }
+    }
+
+    /// Matches iOS `checkAndRefreshIfNeeded` day gate: first foreground of a new calendar day pulls Gmail and posts companion (Calendar + Action Items).
+    private func checkMacForegroundCompanionIfNeeded() {
+        guard case .authenticated = authManager.sessionState else { return }
+        let userDefaults = UserDefaults.standard
+        let lastAutoRefreshKey = "lastAutoRefreshDate"
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        if let lastRefreshDate = userDefaults.object(forKey: lastAutoRefreshKey) as? Date {
+            let lastRefreshDay = calendar.startOfDay(for: lastRefreshDate)
+            if calendar.isDate(today, inSameDayAs: lastRefreshDay) {
+                return
+            }
+        }
+        userDefaults.set(today, forKey: lastAutoRefreshKey)
+        Task { await refreshMailbox() }
     }
 }
 

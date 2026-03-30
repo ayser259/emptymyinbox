@@ -576,6 +576,7 @@ struct DashboardView: View {
         // This ensures we don't show stale counts
         logInfo("Initial load - syncing with Gmail...", category: "Dashboard")
         await refreshDashboard(shouldSync: true)
+        NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
     
     private func refreshDashboard(shouldSync: Bool) async {

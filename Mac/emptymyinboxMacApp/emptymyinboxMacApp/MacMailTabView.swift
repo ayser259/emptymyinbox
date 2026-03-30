@@ -199,14 +199,14 @@ private struct MacCatchUpLiteView: View {
                 }
             } else {
                 List {
-                    ForEach(loader.emailMetadata, id: \.id) { meta in
+                    ForEach(loader.emailMetadata) { meta in
                         Button {
                             navigationPath.append(meta.id)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(meta.subject.isEmpty ? "(No subject)" : meta.subject)
                                     .foregroundStyle(MacAppTheme.primaryText)
-                                Text(meta.sender ?? "")
+                                Text(meta.sender)
                                     .font(.caption)
                                     .foregroundStyle(MacAppTheme.secondaryText)
                             }
