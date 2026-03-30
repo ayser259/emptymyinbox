@@ -124,12 +124,12 @@ struct EmailDetailView: View {
                                 // Email body section
                                 VStack(alignment: .leading, spacing: 0) {
                                     if let bodyHtml = email.body_html, !bodyHtml.isEmpty {
-                                        HTMLWebView(htmlContent: bodyHtml, isDarkMode: false, onLoadComplete: nil)
+                                        EmailHTMLWebView(htmlContent: bodyHtml, isDarkMode: false, onLoadComplete: nil)
                                             .frame(minHeight: max(400, geometry.size.height - 250)) // Account for header and action bar
                                     } else if !email.body_text.isEmpty {
                                         // Check if body_text is actually HTML (fallback for cached emails)
                                         if looksLikeHTML(email.body_text) {
-                                            HTMLWebView(htmlContent: email.body_text, isDarkMode: false, onLoadComplete: nil)
+                                            EmailHTMLWebView(htmlContent: email.body_text, isDarkMode: false, onLoadComplete: nil)
                                                 .frame(minHeight: max(400, geometry.size.height - 250))
                                         } else {
                                             Text(email.body_text)

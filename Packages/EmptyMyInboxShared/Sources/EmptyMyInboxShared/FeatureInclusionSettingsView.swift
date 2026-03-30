@@ -1,11 +1,13 @@
 import SwiftUI
-import EmptyMyInboxShared
 
-struct FeatureInclusionSettingsView: View {
+/// Per-account toggles for Daily Briefing and Newsletter Insights.
+public struct FeatureInclusionSettingsView: View {
     @State private var inclusions: [FeatureAccountInclusion] = []
     @State private var isLoading = true
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         List {
             if isLoading {
                 HStack {
@@ -15,7 +17,7 @@ struct FeatureInclusionSettingsView: View {
                 }
             } else if inclusions.isEmpty {
                 Text("No connected accounts.")
-                    .secondaryText()
+                    .foregroundStyle(SharedAppTheme.secondaryText)
             } else {
                 ForEach(inclusions) { inclusion in
                     Section(inclusion.accountEmail) {
@@ -39,7 +41,7 @@ struct FeatureInclusionSettingsView: View {
                                 Spacer()
                                 if inclusion.isPrimaryNewsletterAddress {
                                     Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(AppTheme.accent)
+                                        .foregroundStyle(SharedAppTheme.accent)
                                 }
                             }
                         }
@@ -49,7 +51,9 @@ struct FeatureInclusionSettingsView: View {
             }
         }
         .navigationTitle("Feature Inclusions")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             await load()
         }

@@ -53,10 +53,13 @@ struct CalendarSkeletonView: View {
                             .primaryText()
                     }, onMenuTap: onMenuTap)
 
+                    calendarModeCarousel
+
                     GoogleCalendarTabContent(
                         model: calendarModel,
                         onOpenVisibility: { showVisibility = true },
-                        accentColor: AppTheme.accent
+                        accentColor: AppTheme.accent,
+                        showsBuiltInModePicker: false
                     )
                 }
             }
@@ -73,6 +76,51 @@ struct CalendarSkeletonView: View {
                         }
                     }
             }
+        }
+    }
+
+    private var calendarModeCarousel: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AppTheme.spacingMedium) {
+                ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+                    Button {
+                        calendarModel.mode = mode
+                    } label: {
+                        Text(mode.rawValue.capitalized)
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(calendarModel.mode == mode ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(calendarModel.mode == mode ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .stroke(AppTheme.accent.opacity(calendarModel.mode == mode ? 0.5 : 0.15), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    Task { await calendarModel.refresh() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                            .font(AppTheme.subheadline)
+                    }
+                    .foregroundColor(AppTheme.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.secondaryBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+            .padding(.vertical, AppTheme.spacingSmall)
         }
     }
 }
@@ -124,14 +172,7 @@ struct ActionItemsSkeletonView: View {
                                 .primaryText()
                         }, onMenuTap: onMenuTap)
 
-                        Picker("View", selection: $mode) {
-                            ForEach(ActionItemsChromeMode.allCases) { m in
-                                Text(m.title).tag(m)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .padding(.horizontal, AppTheme.spacingMedium)
-                        .padding(.bottom, AppTheme.spacingSmall)
+                        actionItemsModeCarousel
 
                         if let errorText {
                             Text(errorText)
@@ -191,6 +232,51 @@ struct ActionItemsSkeletonView: View {
                 )
             }
             .presentationDetents([.large])
+        }
+    }
+
+    private var actionItemsModeCarousel: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AppTheme.spacingMedium) {
+                ForEach(ActionItemsChromeMode.allCases) { m in
+                    Button {
+                        mode = m
+                    } label: {
+                        Text(m.title)
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(mode == m ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(mode == m ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .stroke(AppTheme.accent.opacity(mode == m ? 0.5 : 0.15), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    Task { await reload() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                            .font(AppTheme.subheadline)
+                    }
+                    .foregroundColor(AppTheme.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.secondaryBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, AppTheme.spacingMedium)
+            .padding(.bottom, AppTheme.spacingSmall)
         }
     }
 

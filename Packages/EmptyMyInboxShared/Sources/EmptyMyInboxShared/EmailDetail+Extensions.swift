@@ -35,4 +35,40 @@ public extension EmailDetail {
     }
 }
 
+// MARK: - Debug copy
+
+public extension EmailDetail {
+    var debugCopyContent: String {
+        """
+        === DEBUG EMAIL CONTENT ===
+
+        ID: \(id)
+        Gmail ID: \(gmail_id)
+        Thread ID: \(thread_id)
+        Account: \(account_email)
+
+        --- HEADERS ---
+        From: \(sender_name ?? "N/A") <\(sender)>
+        To: \(recipients_to ?? "N/A")
+        CC: \(recipients_cc ?? "N/A")
+        Subject: \(subject)
+        Date: \(received_at)
+        Is Read: \(is_read)
+        Is Starred: \(is_starred)
+        Labels: \(labels.joined(separator: ", "))
+
+        --- SNIPPET ---
+        \(snippet)
+
+        --- BODY TEXT ---
+        \(body_text.isEmpty ? "(empty)" : body_text)
+
+        --- BODY HTML ---
+        \(body_html ?? "(empty)")
+
+        === END DEBUG CONTENT ===
+        """
+    }
+}
+
 

@@ -5,20 +5,26 @@ public struct GoogleCalendarTabContent: View {
     @ObservedObject public var model: GoogleCalendarViewModel
     public var onOpenVisibility: () -> Void
     public var accentColor: Color
+    /// When `false`, hide the built-in segmented mode control (e.g. Mac sidebar or iOS carousel provides modes).
+    public var showsBuiltInModePicker: Bool
 
     public init(
         model: GoogleCalendarViewModel,
         onOpenVisibility: @escaping () -> Void,
-        accentColor: Color = .red
+        accentColor: Color = .red,
+        showsBuiltInModePicker: Bool = true
     ) {
         self.model = model
         self.onOpenVisibility = onOpenVisibility
         self.accentColor = accentColor
+        self.showsBuiltInModePicker = showsBuiltInModePicker
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            modePicker
+            if showsBuiltInModePicker {
+                modePicker
+            }
             dateChrome
             weekStrip
             Divider().opacity(0.25)

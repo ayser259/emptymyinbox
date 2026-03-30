@@ -7,16 +7,50 @@ import SwiftUI
 import EmptyMyInboxShared
 
 struct MacVaultCalendarTab: View {
-    @StateObject private var calendarModel = GoogleCalendarViewModel()
+    @ObservedObject var model: GoogleCalendarViewModel
+    var onOpenSettings: () -> Void
     @State private var showVisibility = false
 
     var body: some View {
-        GoogleCalendarTabContent(
-            model: calendarModel,
-            onOpenVisibility: { showVisibility = true },
-            accentColor: MacAppTheme.accent
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        NavigationSplitView {
+            List {
+                Section {
+                    ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+                        Button {
+                            model.mode = mode
+                        } label: {
+                            Label(modeTitle(mode), systemImage: icon(for: mode))
+                        }
+                    }
+                    Button {
+                        Task { await model.refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+                Section {
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240)
+            .scrollContentBackground(.hidden)
+        } detail: {
+            NavigationStack {
+                GoogleCalendarTabContent(
+                    model: model,
+                    onOpenVisibility: { showVisibility = true },
+                    accentColor: MacAppTheme.accent,
+                    showsBuiltInModePicker: false
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(MacAppTheme.primaryBackground)
+                .navigationTitle("Calendar")
+            }
+        }
         .background(MacAppTheme.primaryBackground)
         .sheet(isPresented: $showVisibility) {
             NavigationStack {
@@ -28,6 +62,19 @@ struct MacVaultCalendarTab: View {
                         }
                     }
             }
+        }
+    }
+
+    private func modeTitle(_ mode: GoogleCalendarViewModel.ViewMode) -> String {
+        mode.rawValue.capitalized
+    }
+
+    private func icon(for mode: GoogleCalendarViewModel.ViewMode) -> String {
+        switch mode {
+        case .events: return "list.bullet"
+        case .day: return "sun.max"
+        case .week: return "calendar.day.timeline.left"
+        case .month: return "calendar"
         }
     }
 }
@@ -46,9 +93,19 @@ private enum MacActionItemsMode: String, CaseIterable, Identifiable {
         case .calendar: return "Calendar"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .today: return "sun.max"
+        case .context: return "square.grid.2x2"
+        case .calendar: return "calendar"
+        }
+    }
 }
 
 struct MacVaultActionItemsTab: View {
+    var onOpenSettings: () -> Void
+
     @ObservedObject private var vaultManager = VaultManager.shared
     @State private var mode: MacActionItemsMode = .today
     @State private var allItems: [VaultActionItemRecord] = []
@@ -64,53 +121,79 @@ struct MacVaultActionItemsTab: View {
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Action Items")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(MacAppTheme.primaryText)
-                Spacer()
-                Picker("View", selection: $mode) {
+        NavigationSplitView {
+            List {
+                Section {
                     ForEach(MacActionItemsMode.allCases) { m in
-                        Text(m.title).tag(m)
+                        Button {
+                            mode = m
+                        } label: {
+                            Label(m.title, systemImage: m.systemImage)
+                        }
+                    }
+                    Button {
+                        Task { await reload() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
-                Button {
-                    presentAddSheet()
-                } label: {
-                    Label("Add", systemImage: "plus.circle.fill")
-                }
-                .labelStyle(.iconOnly)
-                .help("Add task")
-            }
-            .padding(MacAppTheme.spacingMedium)
-
-            if let errorText {
-                Text(errorText)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, MacAppTheme.spacingMedium)
-            }
-
-            Group {
-                switch mode {
-                case .today:
-                    macTodayList
-                case .context:
-                    macContextSplit
-                case .calendar:
-                    macCalendarList
+                Section {
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240)
+            .scrollContentBackground(.hidden)
+        } detail: {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Spacer()
+                        Button {
+                            presentAddSheet()
+                        } label: {
+                            Label("Add", systemImage: "plus.circle.fill")
+                        }
+                        .labelStyle(.iconOnly)
+                        .help("Add task")
+                        .padding(.trailing, MacAppTheme.spacingMedium)
+                        .padding(.top, MacAppTheme.spacingMedium)
+                    }
+
+                    if let errorText {
+                        Text(errorText)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, MacAppTheme.spacingMedium)
+                    }
+
+                    Group {
+                        switch mode {
+                        case .today:
+                            macTodayList
+                        case .context:
+                            macContextSplit
+                        case .calendar:
+                            macCalendarList
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .background(MacAppTheme.primaryBackground)
+                .navigationTitle("Action Items")
+            }
         }
         .background(MacAppTheme.primaryBackground)
         .task { await reload() }
         .onChange(of: mode) { _, _ in Task { await reload() } }
         .onChange(of: calendarMonth) { _, _ in Task { await reload() } }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task { await reload() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
             Task { await reload() }
         }
         .sheet(item: $editorPayload) { payload in
@@ -167,7 +250,6 @@ struct MacVaultActionItemsTab: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .navigationTitle("Contexts")
         } detail: {
             if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
                 List {
@@ -177,7 +259,6 @@ struct MacVaultActionItemsTab: View {
                     .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
                 }
                 .scrollContentBackground(.hidden)
-                .navigationTitle(key)
             } else {
                 ContentUnavailableView {
                     Label("Select a context", systemImage: "tray")
@@ -492,7 +573,7 @@ private struct MacActionItemFormPanel: View {
                             let t = subtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !t.isEmpty else { return }
                             Task {
-                                try? await vaultManager.createChildTask(fromParentId: item.id, title: t)
+                                _ = try? await vaultManager.createChildTask(fromParentId: item.id, title: t)
                                 subtaskTitle = ""
                                 await onSave()
                             }

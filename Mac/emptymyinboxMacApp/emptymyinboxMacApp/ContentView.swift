@@ -8,27 +8,6 @@
 import SwiftUI
 import EmptyMyInboxShared
 
-private enum MacMainSection: String, CaseIterable, Identifiable {
-    case dashboard
-    case accounts
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .dashboard: return "Dashboard"
-        case .accounts: return "Accounts"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .dashboard: return "gauge.with.dots.needle.33percent"
-        case .accounts: return "person.crop.circle"
-        }
-    }
-}
-
 private enum MacRootTab: Int, CaseIterable, Identifiable, Hashable {
     case mail
     case calendar
@@ -48,12 +27,16 @@ private enum MacRootTab: Int, CaseIterable, Identifiable, Hashable {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
+    @StateObject private var calendarModel = GoogleCalendarViewModel()
     @State private var rootTab: MacRootTab = .mail
-    @State private var selection: MacMainSection? = .dashboard
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
     @State private var refreshMessage: String?
     @State private var showVaultSettings = false
+    @State private var showAppSettings = false
+    @State private var isAddingGmailAccount = false
+    @State private var lastCalendarRefreshAt: Date?
+    @State private var lastActionItemsRefreshAt: Date?
 
     var body: some View {
         Group {
@@ -66,10 +49,23 @@ struct ContentView: View {
                 mainChrome
             }
         }
-        .frame(minWidth: 880, minHeight: 560)
+        .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
         .sheet(isPresented: $showVaultSettings) {
             MacVaultSettingsView()
+        }
+        .sheet(isPresented: $showAppSettings) {
+            NavigationStack {
+                AppSettingsMenuContent(
+                    vaultSettings: { MacVaultSettingsView() },
+                    isAddingAccount: $isAddingGmailAccount,
+                    onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
+                    onDismiss: { showAppSettings = false },
+                    accentColor: MacAppTheme.accent
+                )
+                .environmentObject(authManager)
+            }
+            .frame(minWidth: 520, minHeight: 640)
         }
         .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
             showVaultSettings = true
@@ -83,44 +79,33 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainChrome: some View {
-        VStack(spacing: 0) {
-            macRootTabBar
-
-            Group {
-                switch rootTab {
-                case .mail:
-                    mailSplitView
-                case .calendar:
-                    MacVaultCalendarTab()
-                case .actionItems:
-                    MacVaultActionItemsTab()
-                }
+        Group {
+            switch rootTab {
+            case .mail:
+                mailSplitView
+            case .calendar:
+                MacVaultCalendarTab(model: calendarModel, onOpenSettings: { showAppSettings = true })
+            case .actionItems:
+                MacVaultActionItemsTab(onOpenSettings: { showAppSettings = true })
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
-    }
-
-    private var macRootTabBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                LogoView(size: 26)
-                Text("Empty My Inbox")
-                    .font(.headline)
-                    .foregroundStyle(MacAppTheme.primaryText)
-            }
-            .frame(minWidth: 160, idealWidth: 200, maxWidth: 240, alignment: .leading)
-
-            Picker("Main section", selection: $rootTab) {
-                ForEach(MacRootTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker(selection: $rootTab) {
+                    ForEach(MacRootTab.allCases) { tab in
+                        Text(tab.title).tag(tab)
+                    }
+                } label: {
+                    Text("Primary navigation")
                 }
+                .labelsHidden()
+                .accessibilityLabel("Primary navigation")
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 460)
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 440)
-            .layoutPriority(1)
-
-            Group {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     showVaultSettings = true
                 } label: {
@@ -129,51 +114,38 @@ struct ContentView: View {
                 .labelStyle(.iconOnly)
                 .help("Vault storage settings")
 
-                if rootTab == .mail {
-                    Button {
-                        Task { await refreshMailbox() }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .labelStyle(.iconOnly)
-                    .disabled(isRefreshing)
-                    .help("Refresh mailbox (⌘R)")
-                    .keyboardShortcut("r", modifiers: .command)
+                Button {
+                    Task { await refreshCurrentTab() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .labelStyle(.iconOnly)
+                .disabled(isRefreshing)
+                .help("Refresh current tab (⌘R)")
+                .keyboardShortcut("r", modifiers: .command)
             }
-            .frame(minWidth: 160, idealWidth: 200, maxWidth: 240, alignment: .trailing)
         }
-        .padding(.horizontal, MacAppTheme.spacingMedium)
-        .padding(.vertical, 10)
-        .background(MacAppTheme.secondaryBackground.opacity(0.65))
+        .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
     }
 
     @ViewBuilder
     private var mailSplitView: some View {
-        NavigationSplitView {
-            List(MacMainSection.allCases, selection: $selection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
-            }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220)
-        } detail: {
-            switch selection ?? .dashboard {
-            case .dashboard:
-                MacDashboardDetailView(
-                    snapshot: snapshot,
-                    isRefreshing: isRefreshing,
-                    refreshMessage: refreshMessage,
-                    onRefresh: { Task { await refreshMailbox() } }
-                )
-            case .accounts:
-                MacAccountsListView(accounts: authManager.accounts)
-            }
-        }
+        MacMailTabView(
+            snapshot: $snapshot,
+            isRefreshing: $isRefreshing,
+            refreshMessage: $refreshMessage,
+            onRefreshMailbox: { Task { await refreshMailbox() } },
+            onOpenSettings: { showAppSettings = true }
+        )
+        .environmentObject(authManager)
         .background(MacAppTheme.primaryBackground)
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
                 await loadSnapshot()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
+            lastActionItemsRefreshAt = Date()
         }
     }
 
@@ -188,6 +160,29 @@ struct ContentView: View {
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
+    }
+
+    private func refreshCurrentTab() async {
+        switch rootTab {
+        case .mail:
+            await refreshMailbox()
+        case .calendar:
+            await calendarModel.refresh()
+            lastCalendarRefreshAt = Date()
+        case .actionItems:
+            NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
+            lastActionItemsRefreshAt = Date()
+        }
+    }
+
+    private func addGmailAccountFromSettings() async {
+        isAddingGmailAccount = true
+        defer { isAddingGmailAccount = false }
+        do {
+            try await authManager.signInWithGoogle()
+        } catch {
+            logError("Add account failed: \(error)", category: "Auth")
+        }
     }
 }
 
@@ -277,7 +272,7 @@ private func unreadCount(snapshot: DashboardDataSnapshot, accountEmail: String) 
     }.count
 }
 
-private struct MacDashboardDetailView: View {
+struct MacDashboardDetailView: View {
     let snapshot: DashboardDataSnapshot?
     let isRefreshing: Bool
     let refreshMessage: String?
@@ -288,13 +283,9 @@ private struct MacDashboardDetailView: View {
             if let snapshot {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        HStack {
-                            LogoView(size: 36)
-                            Text("Dashboard")
-                                .font(.title.bold())
-                                .foregroundStyle(MacAppTheme.primaryText)
-                            Spacer()
-                            if isRefreshing {
+                        if isRefreshing {
+                            HStack {
+                                Spacer(minLength: 0)
                                 ProgressView()
                                     .controlSize(.small)
                             }
@@ -350,7 +341,7 @@ private struct MacDashboardDetailView: View {
 
 // MARK: - Accounts
 
-private struct MacAccountsListView: View {
+struct MacAccountsListView: View {
     let accounts: [GmailAccount]
 
     var body: some View {

@@ -155,7 +155,6 @@ struct emptyMyInboxApp: App {
 extension Notification.Name {
     static let appShouldRefreshData = Notification.Name("AppShouldRefreshData")
     static let appShouldShowDailyBriefing = Notification.Name("AppShouldShowDailyBriefing")
-    static let cacheCleared = Notification.Name("CacheCleared")
 }
 
 struct SplashView: View {

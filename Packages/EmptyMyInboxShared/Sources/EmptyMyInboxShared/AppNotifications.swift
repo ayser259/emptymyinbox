@@ -8,4 +8,8 @@ public extension Notification.Name {
     static let vaultDidSync = Notification.Name("VaultDidSync")
     /// Posted when calendar account/calendar visibility settings change.
     static let calendarVisibilityDidChange = Notification.Name("CalendarVisibilityDidChange")
+    /// Local email / dashboard caches were cleared.
+    static let cacheCleared = Notification.Name("CacheCleared")
+    /// macOS toolbar refresh for Action Items tab (reload vault-backed lists).
+    static let macActionItemsShouldReload = Notification.Name("MacActionItemsShouldReload")
 }
