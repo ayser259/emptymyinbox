@@ -6,7 +6,7 @@
 //
 
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 import Foundation
 
 struct EmailCacheTests {

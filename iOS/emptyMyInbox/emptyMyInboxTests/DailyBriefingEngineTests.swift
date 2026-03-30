@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct DailyBriefingEngineTests {
     @Test("Daily briefing excludes newsletters and keeps urgent/calendar/direct items")

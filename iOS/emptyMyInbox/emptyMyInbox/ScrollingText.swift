@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct ScrollingText: View {
     let text: String

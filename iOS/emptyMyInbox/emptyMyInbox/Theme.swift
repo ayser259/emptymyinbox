@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 /// App-wide theme configuration
 struct AppTheme {

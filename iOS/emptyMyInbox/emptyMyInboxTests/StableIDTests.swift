@@ -4,7 +4,7 @@
 //
 
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct StableIDTests {
     @Test("StableID account IDs are deterministic and positive")

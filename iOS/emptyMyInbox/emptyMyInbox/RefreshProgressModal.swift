@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct RefreshProgressModal: View {
     @ObservedObject var progressTracker: RefreshProgressTracker

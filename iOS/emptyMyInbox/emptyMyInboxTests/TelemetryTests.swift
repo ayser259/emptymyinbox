@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct TelemetryTests {
     @Test("Telemetry sanitizes sensitive metadata keys")

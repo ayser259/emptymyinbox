@@ -8,6 +8,7 @@
 import SwiftUI
 import UIKit
 import AuthenticationServices
+import EmptyMyInboxShared
 
 struct AccountsView: View {
     @EnvironmentObject var authManager: AuthManager

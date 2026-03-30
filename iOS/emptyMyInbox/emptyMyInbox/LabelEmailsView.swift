@@ -6,9 +6,10 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct LabelEmailsView: View {
-    let label: Label
+    let label: GmailLabel
     @State private var emails: [EmailListItem] = []
     @State private var isLoading = false
     @State private var isRefreshing = false
@@ -157,10 +158,7 @@ struct LabelEmailsView: View {
 }
 
 #Preview {
-    LabelEmailsView(label: Label(
-        id: "INBOX",
-        name: "Inbox",
-        unread_count: 5
-    ))
+    let previewLabel = GmailLabel(id: "INBOX", name: "Inbox", unread_count: 5)
+    return LabelEmailsView(label: previewLabel)
 }
 

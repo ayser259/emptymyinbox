@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct CustomBackButton: View {
     @Environment(\.dismiss) var dismiss

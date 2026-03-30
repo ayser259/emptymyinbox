@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct ActionButton: View {
     let title: String

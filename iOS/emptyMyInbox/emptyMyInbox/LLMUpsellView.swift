@@ -1,4 +1,5 @@
 import SwiftUI
+import EmptyMyInboxShared
 
 struct LLMUpsellView: View {
     let title: String

@@ -1,4 +1,5 @@
 import SwiftUI
+import EmptyMyInboxShared
 
 struct DailyBriefingSheet: View {
     let payload: DailyBriefingPayload

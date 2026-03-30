@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct LogoView: View {
     let size: CGFloat

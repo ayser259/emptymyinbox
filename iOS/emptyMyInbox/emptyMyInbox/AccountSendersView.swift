@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct AccountSendersView: View {
     let accountEmail: String

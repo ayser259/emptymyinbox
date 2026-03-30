@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import EmptyMyInboxShared
 
 struct USStates {
     static let states = [

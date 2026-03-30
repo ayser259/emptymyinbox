@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import EmptyMyInboxShared
 
 struct DashboardView: View {
     private enum BriefingTrigger {
@@ -15,13 +16,13 @@ struct DashboardView: View {
     }
 
     @EnvironmentObject var authManager: AuthManager
+    @Binding var isMenuPresented: Bool
     @State private var navigationPath = NavigationPath()
-    @State private var showMenu = false
     @State private var accounts: [EmailAccount] = []
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
-    @State private var labels: [Label] = []
+    @State private var labels: [GmailLabel] = []
     @State private var isLoading = false
     @State private var isRefreshing = false
     @State private var lastRefreshTime: Date?
@@ -52,7 +53,7 @@ struct DashboardView: View {
                     FilteredEmailsView(filter: filter)
                 }
             }
-            .navigationDestination(for: Label.self) { label in
+            .navigationDestination(for: GmailLabel.self) { label in
                 FilteredEmailsView(filter: .category(label: label))
             }
             .navigationDestination(for: Int.self) { emailId in
@@ -96,10 +97,6 @@ struct DashboardView: View {
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
-        }
-        .sheet(isPresented: $showMenu) {
-            MenuView()
-                .environmentObject(authManager)
         }
         .task {
             await loadInitialData()
@@ -245,11 +242,7 @@ struct DashboardView: View {
     }
 
     private var topBarSection: some View {
-        HStack(alignment: .center) {
-            LogoView(size: 40)
-            
-            Spacer()
-            
+        MainAppTopBar(center: {
             Group {
                 if let firstAccount = authManager.accounts.first {
                     ScrollingText(
@@ -263,18 +256,9 @@ struct DashboardView: View {
                         .primaryText()
                 }
             }
-            
-            Button {
-                showMenu = true
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20))
-                    .primaryText()
-            }
-            .iconButton()
-        }
-        .padding(.horizontal, AppTheme.spacingMedium)
-        .padding(.vertical, AppTheme.spacingMedium)
+        }, onMenuTap: {
+            isMenuPresented = true
+        })
     }
 
     private var actionButtonsSection: some View {
@@ -818,6 +802,6 @@ struct DashboardView: View {
 }
 
 #Preview {
-    DashboardView()
+    DashboardView(isMenuPresented: .constant(false))
         .environmentObject(AuthManager())
 }

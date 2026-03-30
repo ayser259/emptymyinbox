@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 struct ScrollableEmailActionBar: View {
     let email: EmailDetail?

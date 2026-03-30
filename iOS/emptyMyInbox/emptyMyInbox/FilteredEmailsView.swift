@@ -6,10 +6,11 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 enum EmailFilter: Hashable {
     case sender(email: String, name: String)
-    case category(label: Label)
+    case category(label: GmailLabel)
     // Account-specific filters
     case accountAll(accountEmail: String)
     case accountUnread(accountEmail: String)
@@ -76,7 +77,7 @@ struct FilteredEmailsView: View {
         return false
     }
     
-    var categoryLabel: Label? {
+    var categoryLabel: GmailLabel? {
         if case .category(let label) = filter {
             return label
         }
@@ -358,7 +359,7 @@ struct FilteredEmailsView: View {
 
 struct FilterRulesBottomSheet: View {
     @Environment(\.dismiss) var dismiss
-    let label: Label
+    let label: GmailLabel
     @State private var filters: [GmailFilter] = []
     @State private var isLoading = false
     @State private var errorMessage: String?

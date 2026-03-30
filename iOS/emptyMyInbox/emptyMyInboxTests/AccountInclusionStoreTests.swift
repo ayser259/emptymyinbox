@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 struct AccountInclusionStoreTests {
     @Test("Unknown accounts default to included for daily briefing")

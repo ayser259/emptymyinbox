@@ -7,6 +7,7 @@
 
 import SwiftUI
 import WebKit
+import EmptyMyInboxShared
 
 struct EmailDetailView: View {
     let emailId: Int

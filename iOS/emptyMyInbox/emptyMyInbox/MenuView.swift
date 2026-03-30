@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 #if canImport(UIKit)
 import UIKit
+import EmptyMyInboxShared
 #endif
 
 struct MenuView: View {
@@ -98,6 +99,22 @@ struct MenuView: View {
                     Text("Local Storage")
                 } footer: {
                     Text("Email content is stored locally for fast access and offline viewing.")
+                }
+
+                Section {
+                    NavigationLink {
+                        VaultSettingsView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "shippingbox")
+                                .foregroundColor(AppTheme.accent)
+                            Text("Vault")
+                        }
+                    }
+                } header: {
+                    Text("Vault")
+                } footer: {
+                    Text("Store Calendar and Action Items as files in Inbox, Calendar, and Action Items folders—locally, in a synced folder, or on Google Drive.")
                 }
                 
                 // Account actions section

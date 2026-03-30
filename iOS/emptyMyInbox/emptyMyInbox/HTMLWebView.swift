@@ -8,6 +8,7 @@
 import SwiftUI
 import WebKit
 import UIKit
+import EmptyMyInboxShared
 
 struct HTMLWebView: UIViewRepresentable {
     let htmlContent: String

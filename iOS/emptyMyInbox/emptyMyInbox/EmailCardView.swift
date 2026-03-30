@@ -7,6 +7,7 @@
 
 import SwiftUI
 import WebKit
+import EmptyMyInboxShared
 
 struct EmailCardView: View {
     let email: EmailDetail

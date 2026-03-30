@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		AE09CE472ED911F6007A720C /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = AE09CE462ED911F6007A720C /* GoogleSignIn */; };
 		AE09CE492ED911F6007A720C /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AE09CE482ED911F6007A720C /* GoogleSignInSwift */; };
+		AEF000032EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */; };
+		AEF000042EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +61,7 @@
 			files = (
 				AE09CE472ED911F6007A720C /* GoogleSignIn in Frameworks */,
 				AE09CE492ED911F6007A720C /* GoogleSignInSwift in Frameworks */,
+				AEF000032EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AEF000042EBEF8FC001ACEAA /* EmptyMyInboxShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,6 +125,7 @@
 			packageProductDependencies = (
 				AE09CE462ED911F6007A720C /* GoogleSignIn */,
 				AE09CE482ED911F6007A720C /* GoogleSignInSwift */,
+				AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */,
 			);
 			productName = emptyMyInbox;
 			productReference = AECED5762EBEF8FA001ACEAA /* emptyMyInbox.app */;
@@ -144,6 +149,7 @@
 			);
 			name = emptyMyInboxTests;
 			packageProductDependencies = (
+				AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */,
 			);
 			productName = emptyMyInboxTests;
 			productReference = AECED5832EBEF8FC001ACEAA /* emptyMyInboxTests.xctest */;
@@ -206,6 +212,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AECED5772EBEF8FA001ACEAA /* Products */;
@@ -573,6 +580,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Packages/EmptyMyInboxShared;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -594,6 +608,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AE09CE452ED911F6007A720C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignInSwift;
+		};
+		AEF000022EBEF8FC001ACEAA /* EmptyMyInboxShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AEF000012EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/EmptyMyInboxShared" */;
+			productName = EmptyMyInboxShared;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

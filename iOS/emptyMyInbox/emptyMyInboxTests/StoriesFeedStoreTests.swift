@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import emptyMyInbox
+import EmptyMyInboxShared
 
 @Suite(.serialized)
 struct StoriesFeedStoreTests {
