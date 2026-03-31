@@ -244,7 +244,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var startDate: Date?
     /// Optional scheduled / tracked end.
     public var endDate: Date?
-    /// Optional priority on a 0...3 scale (3 = highest).
+    /// Optional priority on a 0...4 scale (`p0` = highest urgency, `p4` = lowest among set priorities).
     public var priority: Int?
     /// Longer documentation for the task (JSON key `"description"`).
     public var taskDescription: String?

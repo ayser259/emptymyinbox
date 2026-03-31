@@ -174,7 +174,7 @@ private struct ActionItemsCenteredColumn<Content: View>: View {
 struct ActionItemsSkeletonView: View {
     var onMenuTap: () -> Void
 
-    @ObservedObject private var vaultManager = VaultManager.shared
+    @ObservedObject private var vaultManager: VaultManager = .shared
     @State private var mode: ActionItemsChromeMode = .today
     @State private var allItems: [VaultActionItemRecord] = []
     @State private var scheduledToday: [VaultActionItemRecord] = []
@@ -189,68 +189,20 @@ struct ActionItemsSkeletonView: View {
     @State private var typeDefinitions: [VaultActionTypeDefinition] = []
     @State private var showTagLibrary = false
     @State private var checklistScale: [String: CGFloat] = [:]
+    @State private var priorityFilter: Int?
+    @State private var customHexSubjectKey: String?
+    @State private var customHexDraft = ""
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                AppTheme.primaryBackground
-                    .ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Action Items")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
-
-                    actionItemsModeCarousel
-
-                    if let errorText {
-                        Text(errorText)
-                            .font(AppTheme.caption)
-                            .foregroundColor(.orange)
-                            .padding(.horizontal)
-                    }
-
-                    ActionItemsCenteredColumn {
-                        Group {
-                            switch mode {
-                            case .today:
-                                todayContent
-                            case .context:
-                                contextContent
-                            case .calendar:
-                                calendarContent
-                            }
-                        }
-                    }
-                }
-
-                Button {
-                    presentAddSheet()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(Color.black)
-                        .frame(width: 62, height: 62)
-                        .background(
-                            Circle()
-                                .fill(AppTheme.accent)
-                                .shadow(color: AppTheme.accent.opacity(0.45), radius: 12, y: 4)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, AppTheme.spacingMedium)
-                .padding(.bottom, 56)
-                .accessibilityLabel("Add Action Item")
-            }
-            .navigationBarHidden(true)
+            actionItemsRootZStack
+                .navigationBarHidden(true)
         }
         .task {
-            await reload()
             await reloadTagDefinitions()
+            await reload()
         }
         .onChange(of: mode) { _, _ in
             Task { await reload() }
@@ -258,53 +210,28 @@ struct ActionItemsSkeletonView: View {
         .onChange(of: calendarMonth) { _, _ in
             Task { await reload() }
         }
+        .onChange(of: priorityFilter) { _, _ in
+            Task { await reload() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task {
-                await reload()
                 await reloadTagDefinitions()
+                await reload()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
             Task {
-                await reload()
                 await reloadTagDefinitions()
+                await reload()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
             Task {
-                await reload()
                 await reloadTagDefinitions()
+                await reload()
             }
         }
-        .sheet(item: $editorPayload) { payload in
-            NavigationStack {
-                ActionItemQuickEntryView(
-                    initial: payload.item,
-                    isNew: payload.isNew,
-                    contexts: contextDefinitions,
-                    types: typeDefinitions,
-                    typePresets: typePresets,
-                    allTasks: allItems,
-                    style: .iosSheet,
-                    vaultManager: vaultManager,
-                    onSave: {
-                        await reload()
-                        editorPayload = nil
-                    },
-                    onCancel: { editorPayload = nil },
-                    onManageTags: { showTagLibrary = true }
-                )
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        Text(payload.isNew ? "New action" : "Edit action")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }
-                }
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
+        .sheet(item: $editorPayload, content: editorSheet)
         .sheet(isPresented: $showTagLibrary) {
             NavigationStack {
                 ActionItemTagLibraryView()
@@ -316,11 +243,153 @@ struct ActionItemsSkeletonView: View {
                     }
             }
         }
+        .alert("Custom accent color", isPresented: customHexAlertPresented) {
+            TextField("#RRGGBB", text: $customHexDraft)
+            Button("Cancel", role: .cancel) {
+                customHexSubjectKey = nil
+            }
+            Button("Save") {
+                if let key = customHexSubjectKey,
+                   let hex = ContextAccentPalette.normalizeHex(customHexDraft) {
+                    Task {
+                        await setContextAccentHex(subjectKey: key, hex: hex)
+                        customHexSubjectKey = nil
+                    }
+                }
+            }
+        } message: {
+            Text("Enter a 6-digit hex color (e.g. #FF5500).")
+        }
+    }
+
+    private var customHexAlertPresented: Binding<Bool> {
+        Binding(
+            get: { customHexSubjectKey != nil },
+            set: { if !$0 { customHexSubjectKey = nil } }
+        )
+    }
+
+    private var actionItemsRootZStack: some View {
+        ZStack(alignment: .bottomTrailing) {
+            AppTheme.primaryBackground
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                MainAppTopBar(center: {
+                    Text("Action Items")
+                        .font(AppTheme.headline)
+                        .primaryText()
+                }, onMenuTap: onMenuTap)
+
+                actionItemsModeCarousel
+
+                if let errorText {
+                    Text(errorText)
+                        .font(AppTheme.caption)
+                        .foregroundColor(.orange)
+                        .padding(.horizontal)
+                }
+
+                ActionItemsCenteredColumn {
+                    Group {
+                        switch mode {
+                        case .today:
+                            todayContent
+                        case .context:
+                            contextContent
+                        case .calendar:
+                            calendarContent
+                        }
+                    }
+                }
+            }
+
+            Button {
+                presentAddSheet()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(Color.black)
+                    .frame(width: 62, height: 62)
+                    .background(
+                        Circle()
+                            .fill(AppTheme.accent)
+                            .shadow(color: AppTheme.accent.opacity(0.45), radius: 12, y: 4)
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, AppTheme.spacingMedium)
+            .padding(.bottom, 56)
+            .accessibilityLabel("Add Action Item")
+        }
+    }
+
+    @ViewBuilder
+    private func editorSheet(payload: ActionItemEditorPayload) -> some View {
+        NavigationStack {
+            ActionItemQuickEntryView(
+                initial: payload.item,
+                isNew: payload.isNew,
+                contexts: contextDefinitions,
+                types: typeDefinitions,
+                typePresets: typePresets,
+                allTasks: allItems,
+                style: .iosSheet,
+                vaultManager: vaultManager,
+                onSave: { _, isNew in
+                    await reload()
+                    await reloadTagDefinitions()
+                    if isNew {
+                        editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+                    } else {
+                        editorPayload = nil
+                    }
+                },
+                onCancel: { editorPayload = nil },
+                onManageTags: { showTagLibrary = true }
+            )
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(payload.isNew ? "New action" : "Edit action")
+                        .font(AppTheme.headline)
+                        .primaryText()
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     private func reloadTagDefinitions() async {
-        contextDefinitions = (try? await vaultManager.listContextDefinitions()) ?? []
-        typeDefinitions = (try? await vaultManager.listActionTypeDefinitions()) ?? []
+        let vault = VaultManager.shared
+        try? await vault.ensureDefaultContextDefinitions()
+        contextDefinitions = (try? await vault.listContextDefinitions()) ?? []
+        typeDefinitions = (try? await vault.listActionTypeDefinitions()) ?? []
+    }
+
+    private func applyPriorityFilter(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        guard let f = priorityFilter else { return items }
+        return items.filter { $0.priority == f }
+    }
+
+    private func contextAccentHex(forSubjectKey key: String) -> String {
+        if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+            return def.accentColorHex ?? ContextAccentPalette.defaultGreyHex
+        }
+        return ContextAccentPalette.defaultGreyHex
+    }
+
+    private func setContextAccentHex(subjectKey: String, hex: String) async {
+        if var existing = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: subjectKey, definitions: contextDefinitions) {
+            existing.accentColorHex = hex
+            try? await vaultManager.upsertContextDefinition(existing)
+        } else {
+            let order = (contextDefinitions.map(\.sortOrder).max() ?? 0) + 1
+            let neu = VaultContextDefinition(name: subjectKey, accentColorHex: hex, sortOrder: order)
+            try? await vaultManager.upsertContextDefinition(neu)
+        }
+        await reloadTagDefinitions()
+        await reload()
     }
 
     private var actionItemsModeCarousel: some View {
@@ -379,6 +448,50 @@ struct ActionItemsSkeletonView: View {
                         .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
                     }
                     .buttonStyle(.plain)
+
+                    Button {
+                        priorityFilter = nil
+                    } label: {
+                        Text("All P")
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(priorityFilter == nil ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(priorityFilter == nil ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .stroke(AppTheme.accent.opacity(priorityFilter == nil ? 0.5 : 0.15), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(0 ... 4, id: \.self) { p in
+                        Button {
+                            priorityFilter = p
+                        } label: {
+                            Text("P\(p)")
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(priorityFilter == p ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(priorityFilter == p ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(
+                                            (priorityFilter == p ? ActionItemPriorityColors.color(forStoredPriority: p) : AppTheme.accent)
+                                                .opacity(priorityFilter == p ? 0.55 : 0.15),
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, AppTheme.spacingMedium)
                 .padding(.bottom, AppTheme.spacingSmall)
@@ -417,39 +530,63 @@ struct ActionItemsSkeletonView: View {
 
     // MARK: - Context (sidebar channels)
 
-    @ViewBuilder
     private var contextContent: some View {
         NavigationSplitView {
-            List(selection: $selectedSubject) {
-                ForEach(subjectGroups, id: \.key) { group in
-                    HStack {
-                        Text(group.key)
-                            .primaryText()
-                        Spacer()
-                        Text("\(group.items.count)")
-                            .font(AppTheme.caption)
-                            .secondaryText()
+            contextSidebarList
+        } detail: {
+            contextDetailPane
+        }
+    }
+
+    private var contextSidebarList: some View {
+        List(selection: $selectedSubject) {
+            ForEach(subjectGroups, id: \.key) { group in
+                HStack(spacing: 8) {
+                    Text("#")
+                        .foregroundStyle(Color(hex: contextAccentHex(forSubjectKey: group.key)))
+                    Text(String(ActionItemsFeatureModel.displaySubjectHash(group.key).dropFirst()))
+                        .primaryText()
+                    Spacer()
+                    Text("\(group.items.count)")
+                        .font(AppTheme.caption)
+                        .secondaryText()
+                }
+                .tag(group.key as String?)
+                .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
+                .contextMenu {
+                    Menu("Accent color") {
+                        ForEach(ContextAccentPalette.presets) { preset in
+                            Button(preset.name) {
+                                Task { await setContextAccentHex(subjectKey: group.key, hex: preset.hex) }
+                            }
+                        }
+                        Divider()
+                        Button("Custom hex…") {
+                            customHexDraft = contextAccentHex(forSubjectKey: group.key)
+                            customHexSubjectKey = group.key
+                        }
                     }
-                    .tag(group.key as String?)
-                    .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
                 }
             }
+        }
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Contexts")
+    }
+
+    @ViewBuilder
+    private var contextDetailPane: some View {
+        if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
+            List {
+                ForEach(group.items) { item in
+                    actionRow(item)
+                }
+                .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
+            }
             .scrollContentBackground(.hidden)
-            .navigationTitle("Contexts")
-        } detail: {
-            if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
-                List {
-                    ForEach(group.items) { item in
-                        actionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
-                }
-                .scrollContentBackground(.hidden)
-                .navigationTitle(key)
-            } else {
-                ContentUnavailableView {
-                    Label("Select a context", systemImage: "tray")
-                }
+            .navigationTitle(ActionItemsFeatureModel.displaySubjectHash(key))
+        } else {
+            ContentUnavailableView {
+                Label("Select a context", systemImage: "tray")
             }
         }
     }
@@ -508,9 +645,21 @@ struct ActionItemsSkeletonView: View {
             Button {
                 Task { await toggleCompletion(for: item) }
             } label: {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? AppTheme.accent : AppTheme.secondaryText)
-                    .scaleEffect(checklistScale[item.id] ?? 1)
+                ZStack {
+                    if item.isDone {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AppTheme.accent)
+                    } else {
+                        Image(systemName: "circle")
+                            .foregroundStyle(AppTheme.secondaryText)
+                        if let p = item.priority {
+                            Circle()
+                                .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
+                                .frame(width: 18, height: 18)
+                        }
+                    }
+                }
+                .scaleEffect(checklistScale[item.id] ?? 1)
             }
             .buttonStyle(.plain)
 
@@ -527,7 +676,7 @@ struct ActionItemsSkeletonView: View {
                     if let p = item.priority {
                         Text("P\(p)")
                             .font(.caption2)
-                            .secondaryText()
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
                     }
                     if let s = item.startDate {
                         Text(s.formatted(date: .abbreviated, time: .shortened))
@@ -562,7 +711,7 @@ struct ActionItemsSkeletonView: View {
         await reload()
     }
 
-    private func presentAddSheet() {
+    private func templateDraftForNewItem() -> VaultActionItemRecord {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
         var draft = VaultActionItemRecord(title: "")
@@ -572,6 +721,9 @@ struct ActionItemsSkeletonView: View {
         case .context:
             if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
                 draft.subjectLabel = key
+                if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+                    draft.contextId = def.id
+                }
             }
         case .calendar:
             if cal.isDate(Date(), equalTo: calendarMonth, toGranularity: .month) {
@@ -582,7 +734,11 @@ struct ActionItemsSkeletonView: View {
                 draft.startDate = todayStart
             }
         }
-        editorPayload = ActionItemEditorPayload(item: draft, isNew: true)
+        return draft
+    }
+
+    private func presentAddSheet() {
+        editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
     }
 
     private func deleteFrom(_ list: [VaultActionItemRecord], offsets: IndexSet) {
@@ -596,20 +752,25 @@ struct ActionItemsSkeletonView: View {
 
     private func reload() async {
         errorText = nil
-        await vaultManager.performLifecycleSync(postNotification: false)
+        let vault = VaultManager.shared
+        await vault.performLifecycleSync(postNotification: false)
         do {
-            allItems = try await vaultManager.listActionItems()
-            let todayParts = ActionItemsFeatureModel.itemsForTodayList(allItems, referenceDay: Date(), calendar: .current)
+            allItems = try await vault.listActionItems()
+            let filtered = applyPriorityFilter(allItems)
+            let todayParts = ActionItemsFeatureModel.itemsForTodayList(filtered, referenceDay: Date(), calendar: .current)
             scheduledToday = todayParts.scheduled
             unscheduledToday = todayParts.unscheduled
-            subjectGroups = ActionItemsFeatureModel.groupedBySubject(allItems)
+            subjectGroups = ActionItemsFeatureModel.groupedBySubjectForSidebar(
+                definitions: contextDefinitions,
+                items: filtered
+            )
             if selectedSubject == nil {
                 selectedSubject = subjectGroups.first?.key
             }
             let cal = Calendar.current
             if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
                 let monthItems = ActionItemsFeatureModel.itemsIntersectingRange(
-                    allItems,
+                    filtered,
                     rangeStart: interval.start,
                     rangeEnd: interval.end,
                     calendar: cal
@@ -619,7 +780,7 @@ struct ActionItemsSkeletonView: View {
                     return cal.startOfDay(for: anchor)
                 }
                 calendarByDay = grouped.keys.sorted().map { day in
-                    (day, ActionItemsFeatureModel.defaultSortedForCalendar(grouped[day] ?? []))
+                    (day, ActionItemsFeatureModel.defaultSorted(grouped[day] ?? []))
                 }
             } else {
                 calendarByDay = []

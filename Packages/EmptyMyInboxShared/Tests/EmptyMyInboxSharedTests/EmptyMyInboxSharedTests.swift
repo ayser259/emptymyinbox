@@ -258,7 +258,42 @@ final class EmptyMyInboxSharedTests: XCTestCase {
             VaultActionItemRecord(title: "m", isDone: false, priority: 3)
         ]
         let sorted = ActionItemsFeatureModel.defaultSorted(items)
-        XCTAssertEqual(sorted.map(\.title), ["m", "z", "a"])
+        // Lower `priority` value = higher urgency (p0 first); tie-break by id.
+        XCTAssertEqual(sorted.map(\.title), ["z", "m", "a"])
+    }
+
+    func testActionItemsDefaultSortUsesIdTieBreak() {
+        let items = [
+            VaultActionItemRecord(id: "b", title: "t", isDone: false, priority: 1),
+            VaultActionItemRecord(id: "a", title: "t", isDone: false, priority: 1)
+        ]
+        let sorted = ActionItemsFeatureModel.defaultSorted(items)
+        XCTAssertEqual(sorted.map(\.id), ["a", "b"])
+    }
+
+    func testDisplaySubjectHash() {
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(nil), "#Unspecified")
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(" Work "), "#Work")
+    }
+
+    func testActionItemTitleParsingPriorityAndContext() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 #errands")
+        XCTAssertEqual(p.cleanedTitle, "Buy milk")
+        XCTAssertEqual(p.priority, 2)
+        XCTAssertEqual(p.contextName, "errands")
+    }
+
+    func testActionItemTitleParsingBangPriority() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Task !!!")
+        XCTAssertEqual(p.cleanedTitle, "Task")
+        XCTAssertEqual(p.priority, 2)
+    }
+
+    func testActiveHashSuffix() {
+        let s = "Hello #tra"
+        let r = ActionItemTitleParsing.activeHashSuffix(in: s)
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "tra")
     }
 
     /// Snapshot inheritance for subtasks (same fields `createChildTask` copies).

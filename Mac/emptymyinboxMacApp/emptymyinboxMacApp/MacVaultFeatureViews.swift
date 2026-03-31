@@ -139,12 +139,42 @@ struct MacVaultActionItemsTab: View {
     @State private var typeDefinitions: [VaultActionTypeDefinition] = []
     @State private var showTagLibrary = false
     @State private var checklistScale: [String: CGFloat] = [:]
+    @State private var priorityFilter: Int?
+    @State private var customHexSubjectKey: String?
+    @State private var customHexDraft = ""
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
     var body: some View {
         NavigationSplitView {
             List {
+                Section("Priority") {
+                    Button {
+                        priorityFilter = nil
+                    } label: {
+                        HStack {
+                            Text("All")
+                            Spacer()
+                            if priorityFilter == nil {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    ForEach(0 ... 4, id: \.self) { p in
+                        Button {
+                            priorityFilter = p
+                        } label: {
+                            HStack {
+                                Text("P\(p)")
+                                    .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
+                                Spacer()
+                                if priorityFilter == p {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
                 Section {
                     ForEach(MacActionItemsMode.allCases) { m in
                         Button {
@@ -213,15 +243,16 @@ struct MacVaultActionItemsTab: View {
         }
         .background(MacAppTheme.primaryBackground)
         .task {
-            await reload()
             await reloadTagDefinitions()
+            await reload()
         }
         .onChange(of: mode) { _, _ in Task { await reload() } }
         .onChange(of: calendarMonth) { _, _ in Task { await reload() } }
+        .onChange(of: priorityFilter) { _, _ in Task { await reload() } }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task {
-                await reload()
                 await reloadTagDefinitions()
+                await reload()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
@@ -238,11 +269,57 @@ struct MacVaultActionItemsTab: View {
                     }
             }
         }
+        .alert("Custom accent color", isPresented: Binding(
+            get: { customHexSubjectKey != nil },
+            set: { if !$0 { customHexSubjectKey = nil } }
+        )) {
+            TextField("#RRGGBB", text: $customHexDraft)
+            Button("Cancel", role: .cancel) {
+                customHexSubjectKey = nil
+            }
+            Button("Save") {
+                if let key = customHexSubjectKey,
+                   let hex = ContextAccentPalette.normalizeHex(customHexDraft) {
+                    Task {
+                        await setContextAccentHex(subjectKey: key, hex: hex)
+                        customHexSubjectKey = nil
+                    }
+                }
+            }
+        } message: {
+            Text("Enter a 6-digit hex color (e.g. #FF5500).")
+        }
     }
 
     private func reloadTagDefinitions() async {
+        try? await vaultManager.ensureDefaultContextDefinitions()
         contextDefinitions = (try? await vaultManager.listContextDefinitions()) ?? []
         typeDefinitions = (try? await vaultManager.listActionTypeDefinitions()) ?? []
+    }
+
+    private func applyPriorityFilter(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        guard let f = priorityFilter else { return items }
+        return items.filter { $0.priority == f }
+    }
+
+    private func contextAccentHex(forSubjectKey key: String) -> String {
+        if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+            return def.accentColorHex ?? ContextAccentPalette.defaultGreyHex
+        }
+        return ContextAccentPalette.defaultGreyHex
+    }
+
+    private func setContextAccentHex(subjectKey: String, hex: String) async {
+        if var existing = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: subjectKey, definitions: contextDefinitions) {
+            existing.accentColorHex = hex
+            try? await vaultManager.upsertContextDefinition(existing)
+        } else {
+            let order = (contextDefinitions.map(\.sortOrder).max() ?? 0) + 1
+            let neu = VaultContextDefinition(name: subjectKey, accentColorHex: hex, sortOrder: order)
+            try? await vaultManager.upsertContextDefinition(neu)
+        }
+        await reloadTagDefinitions()
+        await reload()
     }
 
     @ViewBuilder
@@ -280,9 +357,14 @@ struct MacVaultActionItemsTab: View {
                     allTasks: allItems,
                     style: .macCard,
                     vaultManager: vaultManager,
-                    onSave: {
+                    onSave: { _, isNew in
                         await reload()
-                        editorPayload = nil
+                        await reloadTagDefinitions()
+                        if isNew {
+                            editorPayload = MacActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+                        } else {
+                            editorPayload = nil
+                        }
                     },
                     onCancel: { editorPayload = nil },
                     onManageTags: { showTagLibrary = true }
@@ -309,8 +391,10 @@ struct MacVaultActionItemsTab: View {
         NavigationSplitView {
             List(selection: $selectedSubject) {
                 ForEach(subjectGroups, id: \.key) { group in
-                    HStack {
-                        Text(group.key)
+                    HStack(spacing: 8) {
+                        Text("#")
+                            .foregroundStyle(Color(hex: contextAccentHex(forSubjectKey: group.key)))
+                        Text(String(ActionItemsFeatureModel.displaySubjectHash(group.key).dropFirst()))
                             .foregroundStyle(MacAppTheme.primaryText)
                         Spacer()
                         Text("\(group.items.count)")
@@ -318,6 +402,20 @@ struct MacVaultActionItemsTab: View {
                             .foregroundStyle(MacAppTheme.secondaryText)
                     }
                     .tag(group.key as String?)
+                    .contextMenu {
+                        Menu("Accent color") {
+                            ForEach(ContextAccentPalette.presets) { preset in
+                                Button(preset.name) {
+                                    Task { await setContextAccentHex(subjectKey: group.key, hex: preset.hex) }
+                                }
+                            }
+                            Divider()
+                            Button("Custom hex…") {
+                                customHexDraft = contextAccentHex(forSubjectKey: group.key)
+                                customHexSubjectKey = group.key
+                            }
+                        }
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
@@ -388,9 +486,21 @@ struct MacVaultActionItemsTab: View {
             Button {
                 Task { await toggleCompletion(for: item) }
             } label: {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? MacAppTheme.accent : MacAppTheme.secondaryText)
-                    .scaleEffect(checklistScale[item.id] ?? 1)
+                ZStack {
+                    if item.isDone {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(MacAppTheme.accent)
+                    } else {
+                        Image(systemName: "circle")
+                            .foregroundStyle(MacAppTheme.secondaryText)
+                        if let p = item.priority {
+                            Circle()
+                                .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
+                                .frame(width: 18, height: 18)
+                        }
+                    }
+                }
+                .scaleEffect(checklistScale[item.id] ?? 1)
             }
             .buttonStyle(.plain)
 
@@ -406,7 +516,7 @@ struct MacVaultActionItemsTab: View {
                     if let p = item.priority {
                         Text("P\(p)")
                             .font(.caption2)
-                            .foregroundStyle(MacAppTheme.secondaryText)
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
                     }
                     if let s = item.startDate {
                         Text(s.formatted(date: .abbreviated, time: .shortened))
@@ -449,7 +559,7 @@ struct MacVaultActionItemsTab: View {
         }
     }
 
-    private func presentAddSheet() {
+    private func templateDraftForNewItem() -> VaultActionItemRecord {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
         var draft = VaultActionItemRecord(title: "")
@@ -459,6 +569,9 @@ struct MacVaultActionItemsTab: View {
         case .context:
             if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
                 draft.subjectLabel = key
+                if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+                    draft.contextId = def.id
+                }
             }
         case .calendar:
             if cal.isDate(Date(), equalTo: calendarMonth, toGranularity: .month) {
@@ -469,7 +582,11 @@ struct MacVaultActionItemsTab: View {
                 draft.startDate = todayStart
             }
         }
-        editorPayload = MacActionItemEditorPayload(item: draft, isNew: true)
+        return draft
+    }
+
+    private func presentAddSheet() {
+        editorPayload = MacActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
     }
 
     private func reload() async {
@@ -477,17 +594,21 @@ struct MacVaultActionItemsTab: View {
         await vaultManager.performLifecycleSync(postNotification: false)
         do {
             allItems = try await vaultManager.listActionItems()
-            let todayParts = ActionItemsFeatureModel.itemsForTodayList(allItems, referenceDay: Date(), calendar: .current)
+            let filtered = applyPriorityFilter(allItems)
+            let todayParts = ActionItemsFeatureModel.itemsForTodayList(filtered, referenceDay: Date(), calendar: .current)
             scheduledToday = todayParts.scheduled
             unscheduledToday = todayParts.unscheduled
-            subjectGroups = ActionItemsFeatureModel.groupedBySubject(allItems)
+            subjectGroups = ActionItemsFeatureModel.groupedBySubjectForSidebar(
+                definitions: contextDefinitions,
+                items: filtered
+            )
             if selectedSubject == nil {
                 selectedSubject = subjectGroups.first?.key
             }
             let cal = Calendar.current
             if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
                 let monthItems = ActionItemsFeatureModel.itemsIntersectingRange(
-                    allItems,
+                    filtered,
                     rangeStart: interval.start,
                     rangeEnd: interval.end,
                     calendar: cal
@@ -497,7 +618,7 @@ struct MacVaultActionItemsTab: View {
                     return cal.startOfDay(for: anchor)
                 }
                 calendarByDay = grouped.keys.sorted().map { day in
-                    (day, ActionItemsFeatureModel.defaultSortedForCalendar(grouped[day] ?? []))
+                    (day, ActionItemsFeatureModel.defaultSorted(grouped[day] ?? []))
                 }
             } else {
                 calendarByDay = []

@@ -422,7 +422,7 @@ public final class VaultManager: ObservableObject {
         guard folderBackend != nil else { throw VaultError.notConfigured }
         var normalized = item
         if let p = normalized.priority {
-            normalized.priority = min(3, max(0, p))
+            normalized.priority = min(4, max(0, p))
         }
         if normalized.id.isEmpty {
             normalized.id = ULID.generate()
@@ -471,6 +471,20 @@ public final class VaultManager: ObservableObject {
     public func listContextDefinitions() async throws -> [VaultContextDefinition] {
         let (defs, _) = try await readContextDefinitionsAggregateRaw()
         return defs.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+    }
+
+    /// Ensures a default `#Unspecified` context exists (grey accent) for new vaults.
+    public func ensureDefaultContextDefinitions() async throws {
+        let defs = try await listContextDefinitions()
+        let has = defs.contains { $0.name.caseInsensitiveCompare(ActionItemsFeatureModel.unspecifiedSubjectKey) == .orderedSame }
+        guard !has else { return }
+        try await upsertContextDefinition(
+            VaultContextDefinition(
+                name: ActionItemsFeatureModel.unspecifiedSubjectKey,
+                accentColorHex: ContextAccentPalette.defaultGreyHex,
+                sortOrder: -10_000
+            )
+        )
     }
 
     public func upsertContextDefinition(_ def: VaultContextDefinition) async throws {

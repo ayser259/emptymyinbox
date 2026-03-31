@@ -31,6 +31,43 @@ public enum ActionItemsFeatureModel {
             .map { key in (key, defaultSorted(dict[key] ?? [])) }
     }
 
+    /// Sidebar label: `#` + normalized subject (e.g. `#Unspecified`).
+    public static func displaySubjectHash(_ label: String?) -> String {
+        "#" + normalizedSubjectKey(label)
+    }
+
+    /// Lookup a saved context definition for a sidebar bucket key.
+    public static func contextDefinition(matchingSubjectKey key: String, definitions: [VaultContextDefinition]) -> VaultContextDefinition? {
+        definitions.first { normalizedSubjectKey($0.name) == key }
+    }
+
+    /// Context sidebar: `#Unspecified` first, then all definitions (by sort order), then any item-only buckets.
+    public static func groupedBySubjectForSidebar(
+        definitions: [VaultContextDefinition],
+        items: [VaultActionItemRecord]
+    ) -> [(key: String, items: [VaultActionItemRecord])] {
+        let dict = Dictionary(grouping: items) { normalizedSubjectKey($0.subjectLabel) }
+        let keys = orderedContextSidebarKeys(definitions: definitions, itemKeys: Array(dict.keys))
+        return keys.map { k in (k, defaultSorted(dict[k] ?? [])) }
+    }
+
+    private static func orderedContextSidebarKeys(
+        definitions: [VaultContextDefinition],
+        itemKeys: [String]
+    ) -> [String] {
+        var result: [String] = [unspecifiedSubjectKey]
+        let sortedDefs = definitions.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+        for d in sortedDefs {
+            let k = normalizedSubjectKey(d.name)
+            if k == unspecifiedSubjectKey { continue }
+            if !result.contains(k) { result.append(k) }
+        }
+        for k in itemKeys.sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }) {
+            if !result.contains(k) { result.append(k) }
+        }
+        return result
+    }
+
     // MARK: - Calendar day overlap (start/end model)
 
     /// Whether the item’s start/end window overlaps the given calendar day.
@@ -102,22 +139,19 @@ public enum ActionItemsFeatureModel {
             }
             return false
         }
-        return defaultSortedForCalendar(filtered, calendar: calendar)
+        return defaultSorted(filtered)
     }
 
     // MARK: - Sorting
 
-    /// Primary list sort: incomplete first, higher priority, earlier start, then title.
+    /// Primary list sort: incomplete first, then priority (`p0`…`p4`, lower number = higher urgency; no priority last), then stable `id`.
     public static func defaultSorted(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
         items.sorted { a, b in
             if a.isDone != b.isDone { return !a.isDone && b.isDone }
-            let pa = a.priority ?? -1
-            let pb = b.priority ?? -1
-            if pa != pb { return pa > pb }
-            let sa = a.startDate ?? .distantFuture
-            let sb = b.startDate ?? .distantFuture
-            if sa != sb { return sa < sb }
-            return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            let pa = a.priority.map { $0 } ?? 999
+            let pb = b.priority.map { $0 } ?? 999
+            if pa != pb { return pa < pb }
+            return a.id < b.id
         }
     }
 
