@@ -82,30 +82,6 @@ struct MacVaultCalendarTab: View {
     }
 }
 
-private enum MacActionItemsMode: String, CaseIterable, Identifiable {
-    case today
-    case context
-    case calendar
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .today: return "Today"
-        case .context: return "Context"
-        case .calendar: return "Calendar"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .today: return "sun.max"
-        case .context: return "square.grid.2x2"
-        case .calendar: return "calendar"
-        }
-    }
-}
-
 private let macActionItemsListMaxWidth: CGFloat = 620
 
 private struct MacActionItemsCenteredColumn<Content: View>: View {
@@ -125,81 +101,105 @@ struct MacVaultActionItemsTab: View {
     var onOpenSettings: () -> Void
 
     @ObservedObject private var vaultManager = VaultManager.shared
-    @State private var mode: MacActionItemsMode = .today
     @State private var allItems: [VaultActionItemRecord] = []
-    @State private var scheduledToday: [VaultActionItemRecord] = []
-    @State private var unscheduledToday: [VaultActionItemRecord] = []
     @State private var subjectGroups: [(key: String, items: [VaultActionItemRecord])] = []
-    @State private var selectedSubject: String?
-    @State private var calendarMonth: Date = Date()
-    @State private var calendarByDay: [(day: Date, items: [VaultActionItemRecord])] = []
+    @State private var projectGroups: [(key: String, items: [VaultActionItemRecord])] = []
+    @State private var selectedSubjectKey: String?
+    @State private var selectedProjectKey: String?
     @State private var errorText: String?
     @State private var editorPayload: MacActionItemEditorPayload?
     @State private var contextDefinitions: [VaultContextDefinition] = []
+    @State private var projectDefinitions: [VaultProjectDefinition] = []
     @State private var typeDefinitions: [VaultActionTypeDefinition] = []
     @State private var showTagLibrary = false
     @State private var checklistScale: [String: CGFloat] = [:]
     @State private var priorityFilter: Int?
+    @State private var urgencyFilter: Int?
     @State private var customHexSubjectKey: String?
     @State private var customHexDraft = ""
+    @State private var priorityExpanded = true
+    @State private var urgencyExpanded = true
+    @State private var contextsExpanded = true
+    @State private var projectsExpanded = true
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
     var body: some View {
         NavigationSplitView {
             List {
-                Section("Priority") {
-                    Button {
-                        priorityFilter = nil
-                    } label: {
-                        HStack {
-                            Text("All")
-                            Spacer()
-                            if priorityFilter == nil {
-                                Image(systemName: "checkmark")
+                Section {
+                    DisclosureGroup(isExpanded: $priorityExpanded) {
+                        Button { priorityFilter = nil } label: {
+                            rowLabel("All", isSelected: priorityFilter == nil)
+                        }
+                        ForEach(0 ... 4, id: \.self) { p in
+                            Button { priorityFilter = p } label: {
+                                rowLabel("P\(p)", isSelected: priorityFilter == p, tint: ActionItemPriorityColors.color(forStoredPriority: p))
                             }
                         }
+                    } label: {
+                        Label("Priority", systemImage: "chevron.right")
                     }
-                    ForEach(0 ... 4, id: \.self) { p in
-                        Button {
-                            priorityFilter = p
-                        } label: {
-                            HStack {
-                                Text("P\(p)")
-                                    .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
-                                Spacer()
-                                if priorityFilter == p {
-                                    Image(systemName: "checkmark")
+                    DisclosureGroup(isExpanded: $urgencyExpanded) {
+                        Button { urgencyFilter = nil } label: {
+                            rowLabel("All", isSelected: urgencyFilter == nil)
+                        }
+                        ForEach(0 ... 4, id: \.self) { u in
+                            Button { urgencyFilter = u } label: {
+                                rowLabel("U\(u)", isSelected: urgencyFilter == u, tint: ActionItemPriorityColors.color(forStoredPriority: u))
+                            }
+                        }
+                    } label: {
+                        Label("Urgency", systemImage: "chevron.right")
+                    }
+                    DisclosureGroup(isExpanded: $contextsExpanded) {
+                        ForEach(subjectGroups, id: \.key) { group in
+                            Button {
+                                selectedSubjectKey = selectedSubjectKey == group.key ? nil : group.key
+                            } label: {
+                                rowLabel(
+                                    ActionItemsFeatureModel.displaySubjectHash(group.key),
+                                    isSelected: selectedSubjectKey == group.key,
+                                    trailing: "\(group.items.count)"
+                                )
+                            }
+                            .contextMenu {
+                                Menu("Accent color") {
+                                    ForEach(ContextAccentPalette.presets) { preset in
+                                        Button(preset.name) {
+                                            Task { await setContextAccentHex(subjectKey: group.key, hex: preset.hex) }
+                                        }
+                                    }
+                                    Divider()
+                                    Button("Custom hex…") {
+                                        customHexDraft = contextAccentHex(forSubjectKey: group.key)
+                                        customHexSubjectKey = group.key
+                                    }
                                 }
                             }
                         }
+                    } label: {
+                        Label("Contexts", systemImage: "chevron.right")
                     }
-                }
-                Section {
-                    ForEach(MacActionItemsMode.allCases) { m in
-                        Button {
-                            mode = m
-                        } label: {
-                            Label(m.title, systemImage: m.systemImage)
+                    DisclosureGroup(isExpanded: $projectsExpanded) {
+                        ForEach(projectGroups, id: \.key) { group in
+                            Button {
+                                selectedProjectKey = selectedProjectKey == group.key ? nil : group.key
+                            } label: {
+                                rowLabel(
+                                    ActionItemsFeatureModel.displayProjectPath(group.key),
+                                    isSelected: selectedProjectKey == group.key,
+                                    trailing: "\(group.items.count)"
+                                )
+                            }
                         }
-                    }
-                    Button {
-                        Task { await reload() }
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    Button {
-                        showTagLibrary = true
-                    } label: {
-                        Label("Labels", systemImage: "tag")
+                        Label("Projects", systemImage: "chevron.right")
                     }
                 }
                 Section {
-                    Button {
-                        onOpenSettings()
-                    } label: {
-                        Label("Settings", systemImage: "gearshape.fill")
-                    }
+                    Button { onOpenSettings() } label: { Label("Settings", systemImage: "gearshape.fill") }
+                    Button { Task { await reload() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 240)
@@ -215,30 +215,19 @@ struct MacVaultActionItemsTab: View {
                     }
 
                     MacActionItemsCenteredColumn {
-                        Group {
-                            switch mode {
-                            case .today:
-                                macTodayList
-                            case .context:
-                                macContextSplit
-                            case .calendar:
-                                macCalendarList
+                        List {
+                            ForEach(filteredItems) { item in
+                                macActionRow(item)
                             }
+                            .onDelete { offsets in deleteFrom(filteredItems, offsets: offsets) }
+                            macAddOrEditorSection
                         }
+                        .scrollContentBackground(.hidden)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .background(MacAppTheme.primaryBackground)
                 .navigationTitle("Action Items")
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showTagLibrary = true
-                        } label: {
-                            Label("Labels", systemImage: "tag")
-                        }
-                    }
-                }
             }
         }
         .background(MacAppTheme.primaryBackground)
@@ -246,9 +235,8 @@ struct MacVaultActionItemsTab: View {
             await reloadTagDefinitions()
             await reload()
         }
-        .onChange(of: mode) { _, _ in Task { await reload() } }
-        .onChange(of: calendarMonth) { _, _ in Task { await reload() } }
         .onChange(of: priorityFilter) { _, _ in Task { await reload() } }
+        .onChange(of: urgencyFilter) { _, _ in Task { await reload() } }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task {
                 await reloadTagDefinitions()
@@ -293,13 +281,39 @@ struct MacVaultActionItemsTab: View {
 
     private func reloadTagDefinitions() async {
         try? await vaultManager.ensureDefaultContextDefinitions()
+        _ = try? await vaultManager.ensureGeneralProjectDefinition()
         contextDefinitions = (try? await vaultManager.listContextDefinitions()) ?? []
+        projectDefinitions = (try? await vaultManager.listProjectDefinitions()) ?? []
         typeDefinitions = (try? await vaultManager.listActionTypeDefinitions()) ?? []
     }
 
-    private func applyPriorityFilter(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
-        guard let f = priorityFilter else { return items }
-        return items.filter { $0.priority == f }
+    private func applyFilters(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        var filtered = items
+        if let p = priorityFilter {
+            filtered = filtered.filter { $0.priority == p }
+        }
+        if let u = urgencyFilter {
+            filtered = filtered.filter { $0.urgency == u }
+        }
+        if let selectedSubjectKey {
+            filtered = filtered.filter {
+                ActionItemsFeatureModel.normalizedSubjectKey($0.subjectLabel) == selectedSubjectKey
+            }
+        }
+        if let selectedProjectKey {
+            let projectById = Dictionary(uniqueKeysWithValues: projectDefinitions.map { ($0.id, $0) })
+            filtered = filtered.filter { item in
+                guard let pid = item.projectId, let def = projectById[pid] else {
+                    return selectedProjectKey == ActionItemsFeatureModel.generalProjectName
+                }
+                return ActionItemsFeatureModel.normalizedProjectKey(def.name) == selectedProjectKey
+            }
+        }
+        return filtered
+    }
+
+    private var filteredItems: [VaultActionItemRecord] {
+        ActionItemsFeatureModel.defaultSorted(applyFilters(allItems))
     }
 
     private func contextAccentHex(forSubjectKey key: String) -> String {
@@ -323,28 +337,6 @@ struct MacVaultActionItemsTab: View {
     }
 
     @ViewBuilder
-    private var macTodayList: some View {
-        List {
-            if !scheduledToday.isEmpty {
-                Section("Scheduled") {
-                    ForEach(scheduledToday) { item in
-                        macActionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(scheduledToday, offsets: offsets) }
-                }
-            }
-            Section("Unscheduled") {
-                ForEach(unscheduledToday) { item in
-                    macActionRow(item)
-                }
-                .onDelete { offsets in deleteFrom(unscheduledToday, offsets: offsets) }
-            }
-            macAddOrEditorSection
-        }
-        .scrollContentBackground(.hidden)
-    }
-
-    @ViewBuilder
     private var macAddOrEditorSection: some View {
         Section {
             if let payload = editorPayload {
@@ -352,6 +344,7 @@ struct MacVaultActionItemsTab: View {
                     initial: payload.item,
                     isNew: payload.isNew,
                     contexts: contextDefinitions,
+                    projects: projectDefinitions,
                     types: typeDefinitions,
                     typePresets: typePresets,
                     allTasks: allItems,
@@ -369,13 +362,14 @@ struct MacVaultActionItemsTab: View {
                     onCancel: { editorPayload = nil },
                     onManageTags: { showTagLibrary = true }
                 )
+                .id(payload.id)
             } else {
                 Button {
                     presentAddSheet()
                 } label: {
                     HStack {
                         Image(systemName: "plus.circle.fill")
-                            .foregroundStyle(MacAppTheme.accent)
+                            .foregroundStyle(.yellow)
                         Text("Add Action Item")
                             .foregroundStyle(MacAppTheme.primaryText)
                         Spacer()
@@ -383,100 +377,6 @@ struct MacVaultActionItemsTab: View {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var macContextSplit: some View {
-        NavigationSplitView {
-            List(selection: $selectedSubject) {
-                ForEach(subjectGroups, id: \.key) { group in
-                    HStack(spacing: 8) {
-                        Text("#")
-                            .foregroundStyle(Color(hex: contextAccentHex(forSubjectKey: group.key)))
-                        Text(String(ActionItemsFeatureModel.displaySubjectHash(group.key).dropFirst()))
-                            .foregroundStyle(MacAppTheme.primaryText)
-                        Spacer()
-                        Text("\(group.items.count)")
-                            .font(.caption)
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    }
-                    .tag(group.key as String?)
-                    .contextMenu {
-                        Menu("Accent color") {
-                            ForEach(ContextAccentPalette.presets) { preset in
-                                Button(preset.name) {
-                                    Task { await setContextAccentHex(subjectKey: group.key, hex: preset.hex) }
-                                }
-                            }
-                            Divider()
-                            Button("Custom hex…") {
-                                customHexDraft = contextAccentHex(forSubjectKey: group.key)
-                                customHexSubjectKey = group.key
-                            }
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-        } detail: {
-            if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
-                List {
-                    ForEach(group.items) { item in
-                        macActionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
-                    macAddOrEditorSection
-                }
-                .scrollContentBackground(.hidden)
-            } else {
-                ContentUnavailableView {
-                    Label("Select a context", systemImage: "tray")
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var macCalendarList: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: -1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                Spacer()
-                Text(calendarMonth.formatted(.dateTime.month(.wide).year()))
-                    .font(.headline)
-                    .foregroundStyle(MacAppTheme.primaryText)
-                Spacer()
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: 1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.right")
-                }
-            }
-            .padding(.horizontal, MacAppTheme.spacingMedium)
-            .padding(.vertical, 8)
-
-            List {
-                if calendarByDay.isEmpty {
-                    Text("No tasks with dates in this month")
-                        .foregroundStyle(MacAppTheme.secondaryText)
-                } else {
-                    ForEach(calendarByDay, id: \.day.timeIntervalSince1970) { section in
-                        Section(section.day.formatted(date: .abbreviated, time: .omitted)) {
-                            ForEach(section.items) { item in
-                                macActionRow(item)
-                            }
-                            .onDelete { offsets in deleteFrom(section.items, offsets: offsets) }
-                        }
-                    }
-                }
-                macAddOrEditorSection
-            }
-            .scrollContentBackground(.hidden)
         }
     }
 
@@ -490,14 +390,13 @@ struct MacVaultActionItemsTab: View {
                     if item.isDone {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(MacAppTheme.accent)
+                    } else if let p = item.priority {
+                        Circle()
+                            .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
+                            .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: "circle")
                             .foregroundStyle(MacAppTheme.secondaryText)
-                        if let p = item.priority {
-                            Circle()
-                                .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
-                                .frame(width: 18, height: 18)
-                        }
                     }
                 }
                 .scaleEffect(checklistScale[item.id] ?? 1)
@@ -518,11 +417,14 @@ struct MacVaultActionItemsTab: View {
                             .font(.caption2)
                             .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
                     }
-                    if let s = item.startDate {
-                        Text(s.formatted(date: .abbreviated, time: .shortened))
+                    if let u = item.urgency {
+                        Text("U\(u)")
                             .font(.caption2)
-                            .foregroundStyle(MacAppTheme.secondaryText)
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: u))
                     }
+                    Text(ActionItemsFeatureModel.displayProjectPath(projectName(forProjectId: item.projectId)))
+                        .font(.caption2)
+                        .foregroundStyle(MacAppTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -560,27 +462,23 @@ struct MacVaultActionItemsTab: View {
     }
 
     private func templateDraftForNewItem() -> VaultActionItemRecord {
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
         var draft = VaultActionItemRecord(title: "")
-        switch mode {
-        case .today:
-            draft.startDate = todayStart
-        case .context:
-            if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
-                draft.subjectLabel = key
-                if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
-                    draft.contextId = def.id
-                }
+        if let key = selectedSubjectKey, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
+            draft.subjectLabel = key
+            if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+                draft.contextId = def.id
             }
-        case .calendar:
-            if cal.isDate(Date(), equalTo: calendarMonth, toGranularity: .month) {
-                draft.startDate = todayStart
-            } else if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                draft.startDate = interval.start
-            } else {
-                draft.startDate = todayStart
+        }
+        if let selectedProjectKey {
+            if let project = projectDefinitions.first(where: {
+                ActionItemsFeatureModel.normalizedProjectKey($0.name) == selectedProjectKey
+            }) {
+                draft.projectId = project.id
             }
+        } else if let general = projectDefinitions.first(where: {
+            ActionItemsFeatureModel.normalizedProjectKey($0.name) == ActionItemsFeatureModel.generalProjectName
+        }) {
+            draft.projectId = general.id
         }
         return draft
     }
@@ -594,42 +492,41 @@ struct MacVaultActionItemsTab: View {
         await vaultManager.performLifecycleSync(postNotification: false)
         do {
             allItems = try await vaultManager.listActionItems()
-            let filtered = applyPriorityFilter(allItems)
-            let todayParts = ActionItemsFeatureModel.itemsForTodayList(filtered, referenceDay: Date(), calendar: .current)
-            scheduledToday = todayParts.scheduled
-            unscheduledToday = todayParts.unscheduled
+            let filtered = applyFilters(allItems)
             subjectGroups = ActionItemsFeatureModel.groupedBySubjectForSidebar(
                 definitions: contextDefinitions,
                 items: filtered
             )
-            if selectedSubject == nil {
-                selectedSubject = subjectGroups.first?.key
-            }
-            let cal = Calendar.current
-            if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                let monthItems = ActionItemsFeatureModel.itemsIntersectingRange(
-                    filtered,
-                    rangeStart: interval.start,
-                    rangeEnd: interval.end,
-                    calendar: cal
-                )
-                let grouped = Dictionary(grouping: monthItems) { item -> Date in
-                    let anchor = item.startDate ?? item.endDate ?? Date()
-                    return cal.startOfDay(for: anchor)
-                }
-                calendarByDay = grouped.keys.sorted().map { day in
-                    (day, ActionItemsFeatureModel.defaultSorted(grouped[day] ?? []))
-                }
-            } else {
-                calendarByDay = []
-            }
+            projectGroups = ActionItemsFeatureModel.groupedByProject(
+                definitions: projectDefinitions,
+                items: filtered
+            )
         } catch {
             errorText = error.localizedDescription
             allItems = []
-            scheduledToday = []
-            unscheduledToday = []
             subjectGroups = []
-            calendarByDay = []
+            projectGroups = []
+        }
+    }
+
+    private func projectName(forProjectId projectId: String?) -> String {
+        guard let projectId else { return ActionItemsFeatureModel.generalProjectName }
+        return projectDefinitions.first(where: { $0.id == projectId })?.name ?? ActionItemsFeatureModel.generalProjectName
+    }
+
+    private func rowLabel(_ title: String, isSelected: Bool, tint: Color? = nil, trailing: String? = nil) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(tint ?? MacAppTheme.primaryText)
+            Spacer()
+            if let trailing {
+                Text(trailing)
+                    .font(.caption)
+                    .foregroundStyle(MacAppTheme.secondaryText)
+            }
+            if isSelected {
+                Image(systemName: "checkmark")
+            }
         }
     }
 }

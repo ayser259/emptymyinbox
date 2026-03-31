@@ -90,8 +90,9 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertTrue(item.isDone)
         XCTAssertEqual(item.notes, "hello")
         XCTAssertTrue(item.comments.isEmpty)
-        XCTAssertNil(item.startDate)
         XCTAssertNil(item.priority)
+        XCTAssertNil(item.urgency)
+        XCTAssertNil(item.projectId)
         XCTAssertNil(item.taskDescription)
     }
 
@@ -108,7 +109,8 @@ final class EmptyMyInboxSharedTests: XCTestCase {
                 "ActionItems/active_items.json",
                 "ActionItems/completed_items.json",
                 "ActionItems/context_definitions.json",
-                "ActionItems/type_definitions.json"
+                "ActionItems/type_definitions.json",
+                "ActionItems/project_definitions.json"
             ]
         )
     }
@@ -167,51 +169,17 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     func testVaultActionItemEnvelopeRoundTrip() throws {
         let item = VaultActionItemRecord(
             title: "E",
-            startDate: Date(timeIntervalSince1970: 86_400),
-            endDate: Date(timeIntervalSince1970: 172_800)
+            priority: 2,
+            urgency: 1,
+            projectId: "proj-1"
         )
         let env = VaultFileEnvelope(writeToken: 7, payload: item)
         let data = try VaultJSON.encoder().encode(env)
         let decoded = try VaultJSON.decoder().decode(VaultFileEnvelope<VaultActionItemRecord>.self, from: data)
         XCTAssertEqual(decoded.payload.title, "E")
         XCTAssertEqual(decoded.writeToken, 7)
-        XCTAssertEqual(decoded.payload.startDate, item.startDate)
-    }
-
-    func testActionItemsOverlapsCalendarDay() {
-        let cal = Calendar(identifier: .gregorian)
-        var c = DateComponents()
-        c.year = 2025
-        c.month = 6
-        c.day = 10
-        let day = cal.date(from: c)!
-        let start = cal.date(from: DateComponents(year: 2025, month: 6, day: 10, hour: 22))!
-        let item = VaultActionItemRecord(title: "A", startDate: start, endDate: nil)
-        XCTAssertTrue(ActionItemsFeatureModel.overlapsCalendarDay(item, day: day, calendar: cal))
-    }
-
-    func testActionItemsTodayListIncludesUnscheduled() {
-        let cal = Calendar(identifier: .gregorian)
-        var c = DateComponents()
-        c.year = 2025
-        c.month = 6
-        c.day = 10
-        let ref = cal.date(from: c)!
-        let onDay = VaultActionItemRecord(
-            title: "On day",
-            startDate: cal.date(from: DateComponents(year: 2025, month: 6, day: 10, hour: 8))!
-        )
-        let unscheduled = VaultActionItemRecord(title: "No dates")
-        let otherDay = VaultActionItemRecord(
-            title: "Other",
-            startDate: cal.date(from: DateComponents(year: 2025, month: 6, day: 11, hour: 8))!
-        )
-        let items = [onDay, unscheduled, otherDay]
-        let result = ActionItemsFeatureModel.itemsForTodayList(items, referenceDay: ref, calendar: cal)
-        XCTAssertEqual(result.scheduled.count, 1)
-        XCTAssertEqual(result.scheduled.first?.title, "On day")
-        XCTAssertEqual(result.unscheduled.count, 1)
-        XCTAssertEqual(result.unscheduled.first?.title, "No dates")
+        XCTAssertEqual(decoded.payload.urgency, 1)
+        XCTAssertEqual(decoded.payload.projectId, "proj-1")
     }
 
     func testActionItemsGroupedBySubject() {
@@ -228,38 +196,14 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(unspecified?.items.count, 1)
     }
 
-    func testActionItemsRangeFilter() {
-        let cal = Calendar(identifier: .gregorian)
-        let r0 = cal.date(from: DateComponents(year: 2025, month: 3, day: 1))!
-        let r1 = cal.date(from: DateComponents(year: 2025, month: 3, day: 31))!
-        let inside = VaultActionItemRecord(
-            title: "i",
-            startDate: cal.date(from: DateComponents(year: 2025, month: 3, day: 15))!
-        )
-        let outside = VaultActionItemRecord(
-            title: "o",
-            startDate: cal.date(from: DateComponents(year: 2025, month: 4, day: 1))!
-        )
-        let noDates = VaultActionItemRecord(title: "n")
-        let out = ActionItemsFeatureModel.itemsIntersectingRange(
-            [inside, outside, noDates],
-            rangeStart: r0,
-            rangeEnd: r1,
-            calendar: cal
-        )
-        XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out.first?.title, "i")
-    }
-
     func testActionItemsDefaultSortPriorityAndDone() {
         let items = [
-            VaultActionItemRecord(title: "z", isDone: false, priority: 1),
+            VaultActionItemRecord(title: "z", isDone: false, priority: 1, urgency: 2),
             VaultActionItemRecord(title: "a", isDone: true, priority: 3),
-            VaultActionItemRecord(title: "m", isDone: false, priority: 3)
+            VaultActionItemRecord(title: "m", isDone: false, priority: 3, urgency: 1)
         ]
         let sorted = ActionItemsFeatureModel.defaultSorted(items)
-        // Lower `priority` value = higher urgency (p0 first); tie-break by id.
-        XCTAssertEqual(sorted.map(\.title), ["z", "m", "a"])
+        XCTAssertEqual(sorted.map(\.title), ["m", "z", "a"])
     }
 
     func testActionItemsDefaultSortUsesIdTieBreak() {
@@ -277,10 +221,12 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     }
 
     func testActionItemTitleParsingPriorityAndContext() {
-        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 #errands")
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 u1 #errands /Home")
         XCTAssertEqual(p.cleanedTitle, "Buy milk")
         XCTAssertEqual(p.priority, 2)
+        XCTAssertEqual(p.urgency, 1)
         XCTAssertEqual(p.contextName, "errands")
+        XCTAssertEqual(p.projectName, "Home")
     }
 
     func testActionItemTitleParsingBangPriority() {
@@ -301,23 +247,25 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         let parent = VaultActionItemRecord(
             title: "Parent",
             priority: 2,
+            urgency: 1,
             taskDescription: "Desc",
             contextNotes: "Ctx",
             subjectLabel: "Team",
-            typeLabel: "Meeting"
+            typeLabel: "Meeting",
+            projectId: "p1"
         )
         let now = Date()
         let child = VaultActionItemRecord(
             title: "Child",
-            startDate: nil,
-            endDate: nil,
             priority: parent.priority,
+            urgency: parent.urgency,
             taskDescription: parent.taskDescription,
             contextNotes: parent.contextNotes,
             comments: [],
             parentTaskId: parent.id,
             subjectLabel: parent.subjectLabel,
             typeLabel: parent.typeLabel,
+            projectId: parent.projectId,
             createdAt: now,
             updatedAt: now,
             completedAt: nil
@@ -325,10 +273,36 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(child.subjectLabel, parent.subjectLabel)
         XCTAssertEqual(child.typeLabel, parent.typeLabel)
         XCTAssertEqual(child.priority, parent.priority)
+        XCTAssertEqual(child.urgency, parent.urgency)
         XCTAssertEqual(child.taskDescription, parent.taskDescription)
         XCTAssertEqual(child.contextNotes, parent.contextNotes)
-        XCTAssertNil(child.startDate)
+        XCTAssertEqual(child.projectId, parent.projectId)
         XCTAssertEqual(child.parentTaskId, parent.id)
+    }
+
+    func testDedupedContextPickerEntries() {
+        let defs = [
+            VaultContextDefinition(id: "1", name: "Unspecified", sortOrder: 0),
+            VaultContextDefinition(id: "2", name: "Inbox", sortOrder: 1),
+            VaultContextDefinition(id: "3", name: "Work", sortOrder: 2)
+        ]
+        let entries = ActionItemsFeatureModel.dedupedContextPickerEntries(definitions: defs)
+        XCTAssertEqual(entries.first?.key, ActionItemsFeatureModel.unspecifiedSubjectKey)
+        XCTAssertEqual(entries.filter { $0.key == ActionItemsFeatureModel.unspecifiedSubjectKey }.count, 1)
+        XCTAssertTrue(entries.contains(where: { $0.key == "Work" }))
+    }
+
+    func testGroupedByProjectHasGeneralFallback() {
+        let defs = [
+            VaultProjectDefinition(id: "p1", name: "Home", sortOrder: 0)
+        ]
+        let items = [
+            VaultActionItemRecord(title: "A", projectId: nil),
+            VaultActionItemRecord(title: "B", projectId: "p1")
+        ]
+        let groups = ActionItemsFeatureModel.groupedByProject(definitions: defs, items: items)
+        XCTAssertTrue(groups.contains(where: { $0.key == ActionItemsFeatureModel.generalProjectName }))
+        XCTAssertTrue(groups.contains(where: { $0.key == "Home" }))
     }
 
     // MARK: - Vault manifest & discovery

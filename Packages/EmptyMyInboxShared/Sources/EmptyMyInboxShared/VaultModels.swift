@@ -33,6 +33,7 @@ public enum VaultLayout {
     public static let actionItemsCompletedAggregateFileName = "completed_items.json"
     public static let actionItemsContextsAggregateFileName = "context_definitions.json"
     public static let actionItemsTypesAggregateFileName = "type_definitions.json"
+    public static let actionItemsProjectsAggregateFileName = "project_definitions.json"
 
     public static let currentSchemaVersion = 1
 
@@ -60,13 +61,18 @@ public enum VaultLayout {
         "\(actionItemsFolder)/\(actionItemsTypesAggregateFileName)"
     }
 
+    public static var actionItemsProjectsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsProjectsAggregateFileName)"
+    }
+
     /// All JSON blobs for action items, labels (context/type definitions), and their sync targets. Keep in sync with `VaultManager` read/write sites.
     public static var actionItemAggregateRelativePaths: [String] {
         [
             actionItemsActiveAggregatePath,
             actionItemsCompletedAggregatePath,
             actionItemsContextsAggregatePath,
-            actionItemsTypesAggregatePath
+            actionItemsTypesAggregatePath,
+            actionItemsProjectsAggregatePath
         ]
     }
 }
@@ -240,12 +246,10 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var title: String
     public var isDone: Bool
     public var notes: String?
-    /// Optional scheduled / tracked start (used for Today and Calendar views).
-    public var startDate: Date?
-    /// Optional scheduled / tracked end.
-    public var endDate: Date?
     /// Optional priority on a 0...4 scale (`p0` = highest urgency, `p4` = lowest among set priorities).
     public var priority: Int?
+    /// Optional urgency on a 0...4 scale (`u0` = most urgent, `u4` = least urgent among set urgencies).
+    public var urgency: Int?
     /// Longer documentation for the task (JSON key `"description"`).
     public var taskDescription: String?
     /// Extra structured-ish context (tags, freeform).
@@ -260,16 +264,18 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var typeLabel: String?
     /// Optional link to a saved type definition.
     public var typeId: String?
+    /// Optional link to a project definition.
+    public var projectId: String?
     public var createdAt: Date?
     public var updatedAt: Date?
     public var completedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, title, isDone, notes
-        case startDate, endDate, priority
+        case priority, urgency
         case taskDescription = "description"
         case contextNotes, comments
-        case parentTaskId, subjectLabel, contextId, typeLabel, typeId
+        case parentTaskId, subjectLabel, contextId, typeLabel, typeId, projectId
         case createdAt, updatedAt, completedAt
     }
 
@@ -278,9 +284,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         title: String,
         isDone: Bool = false,
         notes: String? = nil,
-        startDate: Date? = nil,
-        endDate: Date? = nil,
         priority: Int? = nil,
+        urgency: Int? = nil,
         taskDescription: String? = nil,
         contextNotes: String? = nil,
         comments: [VaultActionItemCommentRecord] = [],
@@ -289,6 +294,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         contextId: String? = nil,
         typeLabel: String? = nil,
         typeId: String? = nil,
+        projectId: String? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
         completedAt: Date? = nil
@@ -297,9 +303,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         self.title = title
         self.isDone = isDone
         self.notes = notes
-        self.startDate = startDate
-        self.endDate = endDate
         self.priority = priority
+        self.urgency = urgency
         self.taskDescription = taskDescription
         self.contextNotes = contextNotes
         self.comments = comments
@@ -308,6 +313,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         self.contextId = contextId
         self.typeLabel = typeLabel
         self.typeId = typeId
+        self.projectId = projectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.completedAt = completedAt
@@ -319,9 +325,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         title = try c.decode(String.self, forKey: .title)
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
-        startDate = try c.decodeIfPresent(Date.self, forKey: .startDate)
-        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate)
         priority = try c.decodeIfPresent(Int.self, forKey: .priority)
+        urgency = try c.decodeIfPresent(Int.self, forKey: .urgency)
         taskDescription = try c.decodeIfPresent(String.self, forKey: .taskDescription)
         contextNotes = try c.decodeIfPresent(String.self, forKey: .contextNotes)
         comments = try c.decodeIfPresent([VaultActionItemCommentRecord].self, forKey: .comments) ?? []
@@ -330,6 +335,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         contextId = try c.decodeIfPresent(String.self, forKey: .contextId)
         typeLabel = try c.decodeIfPresent(String.self, forKey: .typeLabel)
         typeId = try c.decodeIfPresent(String.self, forKey: .typeId)
+        projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
@@ -341,9 +347,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         try c.encode(title, forKey: .title)
         try c.encode(isDone, forKey: .isDone)
         try c.encodeIfPresent(notes, forKey: .notes)
-        try c.encodeIfPresent(startDate, forKey: .startDate)
-        try c.encodeIfPresent(endDate, forKey: .endDate)
         try c.encodeIfPresent(priority, forKey: .priority)
+        try c.encodeIfPresent(urgency, forKey: .urgency)
         try c.encodeIfPresent(taskDescription, forKey: .taskDescription)
         try c.encodeIfPresent(contextNotes, forKey: .contextNotes)
         try c.encode(comments, forKey: .comments)
@@ -352,6 +357,7 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         try c.encodeIfPresent(contextId, forKey: .contextId)
         try c.encodeIfPresent(typeLabel, forKey: .typeLabel)
         try c.encodeIfPresent(typeId, forKey: .typeId)
+        try c.encodeIfPresent(projectId, forKey: .projectId)
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
@@ -380,6 +386,14 @@ public struct VaultActionTypeDefinitionsFilePayload: Codable, Sendable, Equatabl
     public var definitions: [VaultActionTypeDefinition]
 
     public init(definitions: [VaultActionTypeDefinition] = []) {
+        self.definitions = definitions
+    }
+}
+
+public struct VaultProjectDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultProjectDefinition]
+
+    public init(definitions: [VaultProjectDefinition] = []) {
         self.definitions = definitions
     }
 }
@@ -443,6 +457,40 @@ public struct VaultActionTypeDefinition: Codable, Sendable, Identifiable, Equata
         self.accentColorHex = accentColorHex
         self.symbolName = symbolName
         self.sortOrder = sortOrder
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct VaultProjectDefinition: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var notes: String?
+    public var accentColorHex: String?
+    public var symbolName: String?
+    public var sortOrder: Int
+    public var parentProjectId: String?
+    public var createdAt: Date?
+    public var updatedAt: Date?
+
+    public init(
+        id: String = ULID.generate(),
+        name: String,
+        notes: String? = nil,
+        accentColorHex: String? = nil,
+        symbolName: String? = nil,
+        sortOrder: Int = 0,
+        parentProjectId: String? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.notes = notes
+        self.accentColorHex = accentColorHex
+        self.symbolName = symbolName
+        self.sortOrder = sortOrder
+        self.parentProjectId = parentProjectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

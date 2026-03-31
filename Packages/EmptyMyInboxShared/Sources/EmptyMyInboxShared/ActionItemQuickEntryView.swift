@@ -15,6 +15,7 @@ public struct ActionItemQuickEntryView: View {
     @State private var draft: VaultActionItemRecord
     let isNew: Bool
     let contexts: [VaultContextDefinition]
+    let projects: [VaultProjectDefinition]
     let types: [VaultActionTypeDefinition]
     let typePresets: [String]
     let allTasks: [VaultActionItemRecord]
@@ -25,16 +26,17 @@ public struct ActionItemQuickEntryView: View {
     let onCancel: () -> Void
     let onManageTags: (() -> Void)?
 
-    @State private var hasStart: Bool
     @FocusState private var focusedField: Field?
     @State private var hashHighlightedIndex: Int = 0
+    @State private var projectHighlightedIndex: Int = 0
 
-    private enum Field: Hashable { case title, description }
+    private enum Field: Hashable { case title, description, priority, urgency, context, project }
 
     public init(
         initial: VaultActionItemRecord,
         isNew: Bool,
         contexts: [VaultContextDefinition],
+        projects: [VaultProjectDefinition],
         types: [VaultActionTypeDefinition],
         typePresets: [String],
         allTasks: [VaultActionItemRecord],
@@ -47,6 +49,7 @@ public struct ActionItemQuickEntryView: View {
         _draft = State(initialValue: initial)
         self.isNew = isNew
         self.contexts = contexts
+        self.projects = projects
         self.types = types
         self.typePresets = typePresets
         self.allTasks = allTasks
@@ -55,7 +58,6 @@ public struct ActionItemQuickEntryView: View {
         self.onSave = onSave
         self.onCancel = onCancel
         self.onManageTags = onManageTags
-        _hasStart = State(initialValue: initial.startDate != nil)
     }
 
     public var body: some View {
@@ -68,18 +70,22 @@ public struct ActionItemQuickEntryView: View {
                     .background(SharedAppTheme.primaryBackground)
             }
         }
-        .onAppear {
-            if style == .iosSheet {
-                focusedField = .title
-            }
-        }
+        .onAppear { focusedField = .title }
         .onChange(of: draft.title) { _, _ in
             if !hashFilteredContexts.isEmpty {
                 hashHighlightedIndex = min(max(0, hashHighlightedIndex), hashFilteredContexts.count - 1)
             } else {
                 hashHighlightedIndex = 0
             }
+            if !projectFilteredDefinitions.isEmpty {
+                projectHighlightedIndex = min(max(0, projectHighlightedIndex), projectFilteredDefinitions.count - 1)
+            } else {
+                projectHighlightedIndex = 0
+            }
         }
+#if os(macOS)
+        .onMoveCommand(perform: handleMoveCommand)
+#endif
     }
 
     private var macCardBody: some View {
@@ -103,6 +109,11 @@ public struct ActionItemQuickEntryView: View {
             count: hashFilteredContexts.count,
             highlightedIndex: $hashHighlightedIndex
         ))
+        .modifier(HashKeyPressModifier(
+            isActive: projectMenuOpen,
+            count: projectFilteredDefinitions.count,
+            highlightedIndex: $projectHighlightedIndex
+        ))
     }
 
     private var iosSheetBody: some View {
@@ -119,15 +130,54 @@ public struct ActionItemQuickEntryView: View {
             count: hashFilteredContexts.count,
             highlightedIndex: $hashHighlightedIndex
         ))
+        .modifier(HashKeyPressModifier(
+            isActive: projectMenuOpen,
+            count: projectFilteredDefinitions.count,
+            highlightedIndex: $projectHighlightedIndex
+        ))
     }
 
     private var hashMenuOpen: Bool {
         ActionItemTitleParsing.activeHashSuffix(in: draft.title) != nil && !hashFilteredContexts.isEmpty
     }
 
+    private var projectMenuOpen: Bool {
+        ActionItemTitleParsing.activeProjectSuffix(in: draft.title) != nil && !projectFilteredDefinitions.isEmpty
+    }
+
+    private enum CompletionMode {
+        case hash
+        case project
+    }
+
+    private var activeCompletionMode: CompletionMode? {
+        let hashRange = ActionItemTitleParsing.activeHashSuffix(in: draft.title)?.fullTokenRange
+        let projectRange = ActionItemTitleParsing.activeProjectSuffix(in: draft.title)?.fullTokenRange
+        switch (hashRange, projectRange) {
+        case (nil, nil):
+            return nil
+        case (.some, nil):
+            return hashMenuOpen ? .hash : nil
+        case (nil, .some):
+            return projectMenuOpen ? .project : nil
+        case let (h?, p?):
+            if h.lowerBound > p.lowerBound {
+                return hashMenuOpen ? .hash : nil
+            }
+            return projectMenuOpen ? .project : nil
+        }
+    }
+
     private var hashFilteredContexts: [VaultContextDefinition] {
         guard let (_, q) = ActionItemTitleParsing.activeHashSuffix(in: draft.title) else { return [] }
-        let sorted = sortedContexts
+        let sorted = dedupedContextDefinitions
+        if q.isEmpty { return sorted }
+        return sorted.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
+
+    private var projectFilteredDefinitions: [VaultProjectDefinition] {
+        guard let (_, q) = ActionItemTitleParsing.activeProjectSuffix(in: draft.title) else { return [] }
+        let sorted = sortedProjects
         if q.isEmpty { return sorted }
         return sorted.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
@@ -146,6 +196,9 @@ public struct ActionItemQuickEntryView: View {
 
                 if hashMenuOpen {
                     hashSuggestionOverlay
+                        .padding(.top, 36)
+                } else if projectMenuOpen {
+                    projectSuggestionOverlay
                         .padding(.top, 36)
                 }
             }
@@ -195,6 +248,41 @@ public struct ActionItemQuickEntryView: View {
         .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
     }
 
+    private var projectSuggestionOverlay: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(projectFilteredDefinitions.enumerated()), id: \.element.id) { idx, p in
+                    Button {
+                        draft.title = ActionItemTitleParsing.applyProjectSelection(title: draft.title, projectName: p.name)
+                        projectHighlightedIndex = 0
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("/")
+                                .foregroundStyle(SharedAppTheme.accent)
+                            Text(p.name)
+                                .foregroundStyle(SharedAppTheme.primaryText)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(idx == projectHighlightedIndex ? Color.white.opacity(0.12) : Color.clear)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxHeight: 220)
+        .background(
+            RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusSmall)
+                .fill(SharedAppTheme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusSmall)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+    }
+
     private var inlineHashChips: some View {
         let tags = ActionItemTitleParsing.hashTagNames(in: draft.title)
         guard !tags.isEmpty else { return AnyView(EmptyView()) }
@@ -222,8 +310,9 @@ public struct ActionItemQuickEntryView: View {
     private var chipRows: some View {
         chipScrollRow {
             priorityChip
-            todayChip
-            labelsChip
+            urgencyChip
+            contextChip
+            projectChip
         }
     }
 
@@ -250,36 +339,44 @@ public struct ActionItemQuickEntryView: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(true)
+        .focused($focusedField, equals: .priority)
     }
 
-    private var todayChip: some View {
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
-        let isToday = draft.startDate.map { cal.isDate($0, inSameDayAs: Date()) } ?? false
-        return Button {
-            if isToday {
-                draft.startDate = nil
-                hasStart = false
-            } else {
-                draft.startDate = todayStart
-                hasStart = true
+    private var urgencyChip: some View {
+        Menu {
+            Button("None") { draft.urgency = nil }
+            ForEach(0 ... 4, id: \.self) { u in
+                Button("Urgency \(u)") { draft.urgency = u }
             }
         } label: {
-            chipLabel(icon: "calendar", text: "Today", accent: isToday)
+            chipLabel(
+                icon: "bolt.fill",
+                text: draft.urgency.map { "U\($0)" } ?? "Urgency",
+                accent: false,
+                tint: draft.urgency.map { ActionItemPriorityColors.color(forStoredPriority: $0) }
+            )
         }
         .buttonStyle(.plain)
+        .focusable(true)
+        .focused($focusedField, equals: .urgency)
     }
 
-    private var labelsChip: some View {
+    private var contextChip: some View {
         Menu {
-            Button("None") {
+            Button(ActionItemsFeatureModel.unspecifiedSubjectKey) {
                 draft.contextId = nil
                 draft.subjectLabel = nil
             }
-            ForEach(sortedContexts) { c in
-                Button(c.name) {
-                    draft.contextId = c.id
-                    draft.subjectLabel = c.name
+            ForEach(contextPickerEntries, id: \.key) { entry in
+                Button(entry.key) {
+                    if let c = entry.context {
+                        draft.contextId = c.id
+                        draft.subjectLabel = c.name
+                    } else {
+                        draft.contextId = nil
+                        draft.subjectLabel = nil
+                    }
                 }
             }
             if let onManageTags {
@@ -294,6 +391,31 @@ public struct ActionItemQuickEntryView: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(true)
+        .focused($focusedField, equals: .context)
+    }
+
+    private var projectChip: some View {
+        Menu {
+            Button("/\(ActionItemsFeatureModel.generalProjectName)") {
+                draft.projectId = nil
+            }
+            ForEach(sortedProjects) { project in
+                Button("/\(project.name)") {
+                    draft.projectId = project.id
+                }
+            }
+        } label: {
+            let projectName = projectNameForCurrentDraft
+            chipLabel(
+                icon: "folder",
+                text: ActionItemsFeatureModel.displayProjectPath(projectName),
+                accent: projectName != nil
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(true)
+        .focused($focusedField, equals: .project)
     }
 
     private func chipLabel(icon: String, text: String, accent: Bool, tint: Color? = nil) -> some View {
@@ -318,6 +440,23 @@ public struct ActionItemQuickEntryView: View {
         contexts.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
     }
 
+    private var sortedProjects: [VaultProjectDefinition] {
+        projects.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+    }
+
+    private var contextPickerEntries: [ActionItemsFeatureModel.ContextPickerEntry] {
+        ActionItemsFeatureModel.dedupedContextPickerEntries(definitions: contexts)
+    }
+
+    private var dedupedContextDefinitions: [VaultContextDefinition] {
+        contextPickerEntries.compactMap(\.context)
+    }
+
+    private var projectNameForCurrentDraft: String? {
+        guard let projectId = draft.projectId else { return nil }
+        return projects.first(where: { $0.id == projectId })?.name
+    }
+
     private var canSaveDraft: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -326,27 +465,6 @@ public struct ActionItemQuickEntryView: View {
         VStack(spacing: 12) {
             Divider().opacity(0.3)
             HStack {
-                Menu {
-                    Button(ActionItemsFeatureModel.unspecifiedSubjectKey) {
-                        draft.contextId = nil
-                        draft.subjectLabel = nil
-                    }
-                    ForEach(sortedContexts) { c in
-                        Button(c.name) {
-                            draft.contextId = c.id
-                            draft.subjectLabel = c.name
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "tray.fill")
-                        Text(ActionItemsFeatureModel.displaySubjectHash(draft.subjectLabel))
-                            .font(SharedAppTheme.subheadline)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(SharedAppTheme.primaryText)
-                }
                 Spacer()
                 Button("Cancel", action: onCancel)
                     .foregroundStyle(SharedAppTheme.secondaryText)
@@ -354,7 +472,7 @@ public struct ActionItemQuickEntryView: View {
                     Task { await submitDraft() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(SharedAppTheme.accent)
+                .tint(.yellow)
                 .disabled(!canSaveDraft)
                 .opacity(canSaveDraft ? 1 : 0.45)
             }
@@ -363,27 +481,32 @@ public struct ActionItemQuickEntryView: View {
 
     private func submitDraft() async {
         guard canSaveDraft else { return }
-        if hashMenuOpen {
+        if activeCompletionMode == .hash {
             let i = min(max(0, hashHighlightedIndex), hashFilteredContexts.count - 1)
             let c = hashFilteredContexts[i]
             draft.title = ActionItemTitleParsing.applyHashSelection(title: draft.title, contextName: c.name)
+            return
+        }
+        if activeCompletionMode == .project {
+            let i = min(max(0, projectHighlightedIndex), projectFilteredDefinitions.count - 1)
+            let p = projectFilteredDefinitions[i]
+            draft.title = ActionItemTitleParsing.applyProjectSelection(title: draft.title, projectName: p.name)
             return
         }
         await persist()
     }
 
     private func persist() async {
-        if !hasStart { draft.startDate = nil }
-
         let parsed = ActionItemTitleParsing.parseShortcuts(from: draft.title)
         var toSave = draft
         toSave.title = parsed.cleanedTitle
         toSave.priority = parsed.priority ?? draft.priority
+        toSave.urgency = parsed.urgency ?? draft.urgency
 
         if let ctxName = parsed.contextName {
             let trimmed = ctxName.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                if let existing = contexts.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                if let existing = dedupedContextDefinitions.first(where: { ActionItemsFeatureModel.normalizedSubjectKey($0.name) == ActionItemsFeatureModel.normalizedSubjectKey(trimmed) }) {
                     toSave.contextId = existing.id
                     toSave.subjectLabel = existing.name
                 } else {
@@ -404,10 +527,55 @@ public struct ActionItemQuickEntryView: View {
             }
         }
 
+        if let parsedProject = parsed.projectName {
+            let trimmed = parsedProject.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if let existing = sortedProjects.first(where: {
+                    ActionItemsFeatureModel.normalizedProjectKey($0.name).lowercased() == ActionItemsFeatureModel.normalizedProjectKey(trimmed).lowercased()
+                }) {
+                    toSave.projectId = existing.id
+                } else {
+                    let order = sortedProjects.map(\.sortOrder).max() ?? 0
+                    let newDef = VaultProjectDefinition(name: trimmed, sortOrder: order + 1)
+                    do {
+                        try await vaultManager.upsertProjectDefinition(newDef)
+                        toSave.projectId = newDef.id
+                    } catch {
+                        return
+                    }
+                }
+            }
+        }
+
         do {
             try await vaultManager.upsertActionItem(toSave)
             await onSave(toSave, isNew)
         } catch {}
+    }
+
+    #if os(macOS)
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard activeCompletionMode == nil else { return }
+        switch direction {
+        case .up:
+            moveFocus(up: true)
+        case .down:
+            moveFocus(up: false)
+        default:
+            break
+        }
+    }
+    #endif
+
+    private func moveFocus(up: Bool) {
+        let order: [Field] = [.title, .description, .priority, .urgency, .context, .project]
+        let current = focusedField ?? .title
+        guard let idx = order.firstIndex(of: current) else {
+            focusedField = .title
+            return
+        }
+        let next = up ? max(0, idx - 1) : min(order.count - 1, idx + 1)
+        focusedField = order[next]
     }
 }
 

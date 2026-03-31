@@ -175,23 +175,20 @@ struct ActionItemsSkeletonView: View {
     var onMenuTap: () -> Void
 
     @ObservedObject private var vaultManager: VaultManager = .shared
-    @State private var mode: ActionItemsChromeMode = .today
     @State private var allItems: [VaultActionItemRecord] = []
-    @State private var scheduledToday: [VaultActionItemRecord] = []
-    @State private var unscheduledToday: [VaultActionItemRecord] = []
     @State private var subjectGroups: [(key: String, items: [VaultActionItemRecord])] = []
-    @State private var selectedSubject: String?
-    @State private var calendarMonth: Date = Date()
-    @State private var calendarByDay: [(day: Date, items: [VaultActionItemRecord])] = []
+    @State private var projectGroups: [(key: String, items: [VaultActionItemRecord])] = []
+    @State private var selectedSubjectKey: String?
+    @State private var selectedProjectKey: String?
     @State private var errorText: String?
     @State private var editorPayload: ActionItemEditorPayload?
     @State private var contextDefinitions: [VaultContextDefinition] = []
+    @State private var projectDefinitions: [VaultProjectDefinition] = []
     @State private var typeDefinitions: [VaultActionTypeDefinition] = []
     @State private var showTagLibrary = false
     @State private var checklistScale: [String: CGFloat] = [:]
     @State private var priorityFilter: Int?
-    @State private var customHexSubjectKey: String?
-    @State private var customHexDraft = ""
+    @State private var urgencyFilter: Int?
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
@@ -204,13 +201,10 @@ struct ActionItemsSkeletonView: View {
             await reloadTagDefinitions()
             await reload()
         }
-        .onChange(of: mode) { _, _ in
-            Task { await reload() }
-        }
-        .onChange(of: calendarMonth) { _, _ in
-            Task { await reload() }
-        }
         .onChange(of: priorityFilter) { _, _ in
+            Task { await reload() }
+        }
+        .onChange(of: urgencyFilter) { _, _ in
             Task { await reload() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
@@ -243,30 +237,6 @@ struct ActionItemsSkeletonView: View {
                     }
             }
         }
-        .alert("Custom accent color", isPresented: customHexAlertPresented) {
-            TextField("#RRGGBB", text: $customHexDraft)
-            Button("Cancel", role: .cancel) {
-                customHexSubjectKey = nil
-            }
-            Button("Save") {
-                if let key = customHexSubjectKey,
-                   let hex = ContextAccentPalette.normalizeHex(customHexDraft) {
-                    Task {
-                        await setContextAccentHex(subjectKey: key, hex: hex)
-                        customHexSubjectKey = nil
-                    }
-                }
-            }
-        } message: {
-            Text("Enter a 6-digit hex color (e.g. #FF5500).")
-        }
-    }
-
-    private var customHexAlertPresented: Binding<Bool> {
-        Binding(
-            get: { customHexSubjectKey != nil },
-            set: { if !$0 { customHexSubjectKey = nil } }
-        )
     }
 
     private var actionItemsRootZStack: some View {
@@ -281,7 +251,7 @@ struct ActionItemsSkeletonView: View {
                         .primaryText()
                 }, onMenuTap: onMenuTap)
 
-                actionItemsModeCarousel
+                actionItemsFilterCarousel
 
                 if let errorText {
                     Text(errorText)
@@ -291,16 +261,7 @@ struct ActionItemsSkeletonView: View {
                 }
 
                 ActionItemsCenteredColumn {
-                    Group {
-                        switch mode {
-                        case .today:
-                            todayContent
-                        case .context:
-                            contextContent
-                        case .calendar:
-                            calendarContent
-                        }
-                    }
+                    listContent
                 }
             }
 
@@ -331,6 +292,7 @@ struct ActionItemsSkeletonView: View {
                 initial: payload.item,
                 isNew: payload.isNew,
                 contexts: contextDefinitions,
+                projects: projectDefinitions,
                 types: typeDefinitions,
                 typePresets: typePresets,
                 allTasks: allItems,
@@ -348,6 +310,7 @@ struct ActionItemsSkeletonView: View {
                 onCancel: { editorPayload = nil },
                 onManageTags: { showTagLibrary = true }
             )
+            .id(payload.id)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text(payload.isNew ? "New action" : "Edit action")
@@ -363,75 +326,96 @@ struct ActionItemsSkeletonView: View {
     private func reloadTagDefinitions() async {
         let vault = VaultManager.shared
         try? await vault.ensureDefaultContextDefinitions()
+        _ = try? await vault.ensureGeneralProjectDefinition()
         contextDefinitions = (try? await vault.listContextDefinitions()) ?? []
+        projectDefinitions = (try? await vault.listProjectDefinitions()) ?? []
         typeDefinitions = (try? await vault.listActionTypeDefinitions()) ?? []
     }
 
-    private func applyPriorityFilter(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
-        guard let f = priorityFilter else { return items }
-        return items.filter { $0.priority == f }
-    }
-
-    private func contextAccentHex(forSubjectKey key: String) -> String {
-        if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
-            return def.accentColorHex ?? ContextAccentPalette.defaultGreyHex
+    private func applyFilters(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        var filtered = items
+        if let p = priorityFilter {
+            filtered = filtered.filter { $0.priority == p }
         }
-        return ContextAccentPalette.defaultGreyHex
-    }
-
-    private func setContextAccentHex(subjectKey: String, hex: String) async {
-        if var existing = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: subjectKey, definitions: contextDefinitions) {
-            existing.accentColorHex = hex
-            try? await vaultManager.upsertContextDefinition(existing)
-        } else {
-            let order = (contextDefinitions.map(\.sortOrder).max() ?? 0) + 1
-            let neu = VaultContextDefinition(name: subjectKey, accentColorHex: hex, sortOrder: order)
-            try? await vaultManager.upsertContextDefinition(neu)
+        if let u = urgencyFilter {
+            filtered = filtered.filter { $0.urgency == u }
         }
-        await reloadTagDefinitions()
-        await reload()
+        if let selectedSubjectKey {
+            filtered = filtered.filter {
+                ActionItemsFeatureModel.normalizedSubjectKey($0.subjectLabel) == selectedSubjectKey
+            }
+        }
+        if let selectedProjectKey {
+            let projectById = Dictionary(uniqueKeysWithValues: projectDefinitions.map { ($0.id, $0) })
+            filtered = filtered.filter { item in
+                guard let pid = item.projectId, let def = projectById[pid] else {
+                    return selectedProjectKey == ActionItemsFeatureModel.generalProjectName
+                }
+                return ActionItemsFeatureModel.normalizedProjectKey(def.name) == selectedProjectKey
+            }
+        }
+        return filtered
     }
 
-    private var actionItemsModeCarousel: some View {
+    private var filteredItems: [VaultActionItemRecord] {
+        ActionItemsFeatureModel.defaultSorted(applyFilters(allItems))
+    }
+
+    private var actionItemsFilterCarousel: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: AppTheme.spacingMedium) {
-                    ForEach(ActionItemsChromeMode.allCases) { m in
+                    Button {
+                        selectedSubjectKey = nil
+                        selectedProjectKey = nil
+                    } label: {
+                        Text("All")
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(selectedSubjectKey == nil && selectedProjectKey == nil ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(selectedSubjectKey == nil && selectedProjectKey == nil ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(subjectGroups, id: \.key) { group in
                         Button {
-                            mode = m
+                            selectedSubjectKey = selectedSubjectKey == group.key ? nil : group.key
+                            if selectedSubjectKey != nil { selectedProjectKey = nil }
                         } label: {
-                            Text(m.title)
+                            Text(ActionItemsFeatureModel.displaySubjectHash(group.key))
                                 .font(AppTheme.subheadline)
-                                .foregroundColor(mode == m ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .foregroundColor(selectedSubjectKey == group.key ? AppTheme.primaryText : AppTheme.secondaryText)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
                                 .background(
                                     RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                        .fill(mode == m ? AppTheme.secondaryBackground : Color.clear)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                        .stroke(AppTheme.accent.opacity(mode == m ? 0.5 : 0.15), lineWidth: 1)
+                                        .fill(selectedSubjectKey == group.key ? AppTheme.secondaryBackground : Color.clear)
                                 )
                         }
                         .buttonStyle(.plain)
                     }
 
-                    Button {
-                        showTagLibrary = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "tag")
-                            Text("Labels")
+                    ForEach(projectGroups, id: \.key) { group in
+                        Button {
+                            selectedProjectKey = selectedProjectKey == group.key ? nil : group.key
+                            if selectedProjectKey != nil { selectedSubjectKey = nil }
+                        } label: {
+                            Text(ActionItemsFeatureModel.displayProjectPath(group.key))
                                 .font(AppTheme.subheadline)
+                                .foregroundColor(selectedProjectKey == group.key ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(selectedProjectKey == group.key ? AppTheme.secondaryBackground : Color.clear)
+                                )
                         }
-                        .foregroundColor(AppTheme.accent)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(AppTheme.secondaryBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
 
                     Button {
                         Task { await reload() }
@@ -450,21 +434,15 @@ struct ActionItemsSkeletonView: View {
                     .buttonStyle(.plain)
 
                     Button {
-                        priorityFilter = nil
+                        showTagLibrary = true
                     } label: {
-                        Text("All P")
+                        Text("Contexts")
                             .font(AppTheme.subheadline)
-                            .foregroundColor(priorityFilter == nil ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .foregroundColor(AppTheme.accent)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .fill(priorityFilter == nil ? AppTheme.secondaryBackground : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .stroke(AppTheme.accent.opacity(priorityFilter == nil ? 0.5 : 0.15), lineWidth: 1)
-                            )
+                            .background(AppTheme.secondaryBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
                     }
                     .buttonStyle(.plain)
 
@@ -492,6 +470,46 @@ struct ActionItemsSkeletonView: View {
                         }
                         .buttonStyle(.plain)
                     }
+
+                    Button {
+                        urgencyFilter = nil
+                    } label: {
+                        Text("All U")
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(urgencyFilter == nil ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(urgencyFilter == nil ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(0 ... 4, id: \.self) { u in
+                        Button {
+                            urgencyFilter = u
+                        } label: {
+                            Text("U\(u)")
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(urgencyFilter == u ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(urgencyFilter == u ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(
+                                            (urgencyFilter == u ? ActionItemPriorityColors.color(forStoredPriority: u) : AppTheme.accent)
+                                                .opacity(urgencyFilter == u ? 0.55 : 0.15),
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, AppTheme.spacingMedium)
                 .padding(.bottom, AppTheme.spacingSmall)
@@ -504,139 +522,16 @@ struct ActionItemsSkeletonView: View {
         }
     }
 
-    // MARK: - Today
-
     @ViewBuilder
-    private var todayContent: some View {
+    private var listContent: some View {
         List {
-            if !scheduledToday.isEmpty {
-                Section("Scheduled") {
-                    ForEach(scheduledToday) { item in
-                        actionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(scheduledToday, offsets: offsets) }
-                }
+            ForEach(filteredItems) { item in
+                actionRow(item)
             }
-            Section("Unscheduled") {
-                ForEach(unscheduledToday) { item in
-                    actionRow(item)
-                }
-                .onDelete { offsets in deleteFrom(unscheduledToday, offsets: offsets) }
-            }
+            .onDelete { offsets in deleteFrom(filteredItems, offsets: offsets) }
         }
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-    }
-
-    // MARK: - Context (sidebar channels)
-
-    private var contextContent: some View {
-        NavigationSplitView {
-            contextSidebarList
-        } detail: {
-            contextDetailPane
-        }
-    }
-
-    private var contextSidebarList: some View {
-        List(selection: $selectedSubject) {
-            ForEach(subjectGroups, id: \.key) { group in
-                HStack(spacing: 8) {
-                    Text("#")
-                        .foregroundStyle(Color(hex: contextAccentHex(forSubjectKey: group.key)))
-                    Text(String(ActionItemsFeatureModel.displaySubjectHash(group.key).dropFirst()))
-                        .primaryText()
-                    Spacer()
-                    Text("\(group.items.count)")
-                        .font(AppTheme.caption)
-                        .secondaryText()
-                }
-                .tag(group.key as String?)
-                .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
-                .contextMenu {
-                    Menu("Accent color") {
-                        ForEach(ContextAccentPalette.presets) { preset in
-                            Button(preset.name) {
-                                Task { await setContextAccentHex(subjectKey: group.key, hex: preset.hex) }
-                            }
-                        }
-                        Divider()
-                        Button("Custom hex…") {
-                            customHexDraft = contextAccentHex(forSubjectKey: group.key)
-                            customHexSubjectKey = group.key
-                        }
-                    }
-                }
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .navigationTitle("Contexts")
-    }
-
-    @ViewBuilder
-    private var contextDetailPane: some View {
-        if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
-            List {
-                ForEach(group.items) { item in
-                    actionRow(item)
-                }
-                .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
-            }
-            .scrollContentBackground(.hidden)
-            .navigationTitle(ActionItemsFeatureModel.displaySubjectHash(key))
-        } else {
-            ContentUnavailableView {
-                Label("Select a context", systemImage: "tray")
-            }
-        }
-    }
-
-    // MARK: - Calendar (month sections by day)
-
-    @ViewBuilder
-    private var calendarContent: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: -1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                Spacer()
-                Text(calendarMonth.formatted(.dateTime.month(.wide).year()))
-                    .font(AppTheme.headline)
-                    .primaryText()
-                Spacer()
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: 1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.right")
-                }
-            }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.vertical, AppTheme.spacingSmall)
-
-            List {
-                if calendarByDay.isEmpty {
-                    Section {
-                        Text("No tasks with dates in this month")
-                            .font(AppTheme.caption)
-                            .secondaryText()
-                    }
-                } else {
-                    ForEach(calendarByDay, id: \.day.timeIntervalSince1970) { section in
-                        Section(section.day.formatted(date: .abbreviated, time: .omitted)) {
-                            ForEach(section.items) { item in
-                                actionRow(item)
-                            }
-                            .onDelete { offsets in deleteFrom(section.items, offsets: offsets) }
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .listStyle(.plain)
-        }
     }
 
     @ViewBuilder
@@ -650,12 +545,13 @@ struct ActionItemsSkeletonView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(AppTheme.accent)
                     } else {
-                        Image(systemName: "circle")
-                            .foregroundStyle(AppTheme.secondaryText)
                         if let p = item.priority {
                             Circle()
                                 .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
-                                .frame(width: 18, height: 18)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "circle")
+                                .foregroundStyle(AppTheme.secondaryText)
                         }
                     }
                 }
@@ -678,10 +574,10 @@ struct ActionItemsSkeletonView: View {
                             .font(.caption2)
                             .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
                     }
-                    if let s = item.startDate {
-                        Text(s.formatted(date: .abbreviated, time: .shortened))
+                    if let u = item.urgency {
+                        Text("U\(u)")
                             .font(.caption2)
-                            .secondaryText()
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: u))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -712,27 +608,16 @@ struct ActionItemsSkeletonView: View {
     }
 
     private func templateDraftForNewItem() -> VaultActionItemRecord {
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
         var draft = VaultActionItemRecord(title: "")
-        switch mode {
-        case .today:
-            draft.startDate = todayStart
-        case .context:
-            if let key = selectedSubject, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
-                draft.subjectLabel = key
-                if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
-                    draft.contextId = def.id
-                }
+        if let key = selectedSubjectKey, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
+            draft.subjectLabel = key
+            if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
+                draft.contextId = def.id
             }
-        case .calendar:
-            if cal.isDate(Date(), equalTo: calendarMonth, toGranularity: .month) {
-                draft.startDate = todayStart
-            } else if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                draft.startDate = interval.start
-            } else {
-                draft.startDate = todayStart
-            }
+        }
+        if let selectedProjectKey,
+           let project = projectDefinitions.first(where: { ActionItemsFeatureModel.normalizedProjectKey($0.name) == selectedProjectKey }) {
+            draft.projectId = project.id
         }
         return draft
     }
@@ -756,42 +641,17 @@ struct ActionItemsSkeletonView: View {
         await vault.performLifecycleSync(postNotification: false)
         do {
             allItems = try await vault.listActionItems()
-            let filtered = applyPriorityFilter(allItems)
-            let todayParts = ActionItemsFeatureModel.itemsForTodayList(filtered, referenceDay: Date(), calendar: .current)
-            scheduledToday = todayParts.scheduled
-            unscheduledToday = todayParts.unscheduled
+            let filtered = applyFilters(allItems)
             subjectGroups = ActionItemsFeatureModel.groupedBySubjectForSidebar(
                 definitions: contextDefinitions,
                 items: filtered
             )
-            if selectedSubject == nil {
-                selectedSubject = subjectGroups.first?.key
-            }
-            let cal = Calendar.current
-            if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                let monthItems = ActionItemsFeatureModel.itemsIntersectingRange(
-                    filtered,
-                    rangeStart: interval.start,
-                    rangeEnd: interval.end,
-                    calendar: cal
-                )
-                let grouped = Dictionary(grouping: monthItems) { item -> Date in
-                    let anchor = item.startDate ?? item.endDate ?? Date()
-                    return cal.startOfDay(for: anchor)
-                }
-                calendarByDay = grouped.keys.sorted().map { day in
-                    (day, ActionItemsFeatureModel.defaultSorted(grouped[day] ?? []))
-                }
-            } else {
-                calendarByDay = []
-            }
+            projectGroups = ActionItemsFeatureModel.groupedByProject(definitions: projectDefinitions, items: filtered)
         } catch {
             errorText = error.localizedDescription
             allItems = []
-            scheduledToday = []
-            unscheduledToday = []
             subjectGroups = []
-            calendarByDay = []
+            projectGroups = []
         }
     }
 }

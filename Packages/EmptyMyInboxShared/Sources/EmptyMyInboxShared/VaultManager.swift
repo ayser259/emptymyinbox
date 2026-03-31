@@ -346,13 +346,15 @@ public final class VaultManager: ObservableObject {
         return raw.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
     }
 
-    /// Scheduled for the given day (start/end overlap) plus unscheduled items (no start/end).
+    /// Time-based scheduling is disabled for action items; all active items are treated as unscheduled.
     public func listActionItemsForToday(
         referenceDay: Date = Date(),
         calendar: Calendar = .current
     ) async throws -> (scheduled: [VaultActionItemRecord], unscheduled: [VaultActionItemRecord]) {
-        let all = try await loadActiveActionItemsUnsorted()
-        return ActionItemsFeatureModel.itemsForTodayList(all, referenceDay: referenceDay, calendar: calendar)
+        _ = referenceDay
+        _ = calendar
+        let all = try await listActionItems()
+        return ([], all)
     }
 
     public func listActionItemsBySubject(_ subjectKey: String) async throws -> [VaultActionItemRecord] {
@@ -370,8 +372,10 @@ public final class VaultManager: ObservableObject {
         end: Date,
         calendar: Calendar = .current
     ) async throws -> [VaultActionItemRecord] {
-        let all = try await loadActiveActionItemsUnsorted()
-        return ActionItemsFeatureModel.itemsIntersectingRange(all, rangeStart: start, rangeEnd: end, calendar: calendar)
+        _ = start
+        _ = end
+        _ = calendar
+        return []
     }
 
     public func loadActionItem(id: String) async throws -> VaultActionItemRecord {
@@ -392,9 +396,8 @@ public final class VaultManager: ObservableObject {
         let child = VaultActionItemRecord(
             title: title,
             notes: nil,
-            startDate: nil,
-            endDate: nil,
             priority: parent.priority,
+            urgency: parent.urgency,
             taskDescription: parent.taskDescription,
             contextNotes: parent.contextNotes,
             comments: [],
@@ -403,6 +406,7 @@ public final class VaultManager: ObservableObject {
             contextId: parent.contextId,
             typeLabel: parent.typeLabel,
             typeId: parent.typeId,
+            projectId: parent.projectId,
             createdAt: now,
             updatedAt: now,
             completedAt: nil
@@ -423,6 +427,13 @@ public final class VaultManager: ObservableObject {
         var normalized = item
         if let p = normalized.priority {
             normalized.priority = min(4, max(0, p))
+        }
+        if let u = normalized.urgency {
+            normalized.urgency = min(4, max(0, u))
+        }
+        if normalized.projectId == nil {
+            let general = try await ensureGeneralProjectDefinition()
+            normalized.projectId = general.id
         }
         if normalized.id.isEmpty {
             normalized.id = ULID.generate()
@@ -476,7 +487,10 @@ public final class VaultManager: ObservableObject {
     /// Ensures a default `#Unspecified` context exists (grey accent) for new vaults.
     public func ensureDefaultContextDefinitions() async throws {
         let defs = try await listContextDefinitions()
-        let has = defs.contains { $0.name.caseInsensitiveCompare(ActionItemsFeatureModel.unspecifiedSubjectKey) == .orderedSame }
+        let has = defs.contains {
+            ActionItemsFeatureModel.normalizedSubjectKey($0.name).lowercased()
+                == ActionItemsFeatureModel.unspecifiedSubjectKey.lowercased()
+        }
         guard !has else { return }
         try await upsertContextDefinition(
             VaultContextDefinition(
@@ -494,7 +508,16 @@ public final class VaultManager: ObservableObject {
         let now = Date()
         if updated.createdAt == nil { updated.createdAt = now }
         updated.updatedAt = now
+        let normalizedName = ActionItemsFeatureModel.normalizedSubjectKey(updated.name).lowercased()
         if let i = defs.firstIndex(where: { $0.id == updated.id }) {
+            defs[i] = updated
+        } else if let i = defs.firstIndex(where: {
+            ActionItemsFeatureModel.normalizedSubjectKey($0.name).lowercased() == normalizedName
+        }) {
+            updated.id = defs[i].id
+            if updated.createdAt == nil {
+                updated.createdAt = defs[i].createdAt
+            }
             defs[i] = updated
         } else {
             defs.append(updated)
@@ -507,6 +530,74 @@ public final class VaultManager: ObservableObject {
         )
         let data = try VaultJSON.encoder().encode(envelope)
         try await backend.write(relativePath: VaultLayout.actionItemsContextsAggregatePath, data: data)
+    }
+
+    public func listProjectDefinitions() async throws -> [VaultProjectDefinition] {
+        let (defs, _) = try await readProjectDefinitionsAggregateRaw()
+        return defs.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+    }
+
+    @discardableResult
+    public func ensureGeneralProjectDefinition() async throws -> VaultProjectDefinition {
+        let defs = try await listProjectDefinitions()
+        if let existing = defs.first(where: {
+            ActionItemsFeatureModel.normalizedProjectKey($0.name).lowercased()
+                == ActionItemsFeatureModel.generalProjectName.lowercased()
+        }) {
+            return existing
+        }
+        let general = VaultProjectDefinition(
+            name: ActionItemsFeatureModel.generalProjectName,
+            accentColorHex: ContextAccentPalette.defaultGreyHex,
+            sortOrder: -10_000
+        )
+        try await upsertProjectDefinition(general)
+        return general
+    }
+
+    public func upsertProjectDefinition(_ def: VaultProjectDefinition) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        var (defs, existingData) = try await readProjectDefinitionsAggregateRaw()
+        var updated = def
+        let now = Date()
+        if updated.createdAt == nil { updated.createdAt = now }
+        updated.updatedAt = now
+        let normalizedName = ActionItemsFeatureModel.normalizedProjectKey(updated.name).lowercased()
+        if let i = defs.firstIndex(where: { $0.id == updated.id }) {
+            defs[i] = updated
+        } else if let i = defs.firstIndex(where: {
+            ActionItemsFeatureModel.normalizedProjectKey($0.name).lowercased() == normalizedName
+        }) {
+            updated.id = defs[i].id
+            if updated.createdAt == nil {
+                updated.createdAt = defs[i].createdAt
+            }
+            defs[i] = updated
+        } else {
+            defs.append(updated)
+        }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultProjectDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsProjectsAggregatePath, data: data)
+    }
+
+    public func deleteProjectDefinition(id: String) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let (defs, existingData) = try await readProjectDefinitionsAggregateRaw()
+        let filtered = defs.filter { $0.id != id }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultProjectDefinitionsFilePayload(definitions: filtered)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsProjectsAggregatePath, data: data)
     }
 
     public func deleteContextDefinition(id: String) async throws {
@@ -654,6 +745,18 @@ public final class VaultManager: ObservableObject {
         return (env.payload.definitions, data)
     }
 
+    private func readProjectDefinitionsAggregateRaw() async throws -> ([VaultProjectDefinition], Data?) {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.actionItemsProjectsAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultProjectDefinitionsFilePayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.definitions, data)
+    }
+
     // MARK: - Migration (legacy per-item / per-definition files → aggregates)
 
     private func migrateActionItemsLayoutIfNeeded() async throws {
@@ -700,6 +803,7 @@ public final class VaultManager: ObservableObject {
 
         let typesAggregateMissing = (try? await backend.read(relativePath: VaultLayout.actionItemsTypesAggregatePath)) == nil
         let contextsAggregateMissing = (try? await backend.read(relativePath: VaultLayout.actionItemsContextsAggregatePath)) == nil
+        let projectsAggregateMissing = (try? await backend.read(relativePath: VaultLayout.actionItemsProjectsAggregatePath)) == nil
 
         if contextsAggregateMissing {
             var defs: [VaultContextDefinition] = []
@@ -730,6 +834,17 @@ public final class VaultManager: ObservableObject {
             try await writeActionTypeDefinitionsAggregate(defs, previousData: nil)
             try await deleteLegacyTypeDefinitionFiles()
         }
+
+        if projectsAggregateMissing {
+            let defs: [VaultProjectDefinition] = [
+                VaultProjectDefinition(
+                    name: ActionItemsFeatureModel.generalProjectName,
+                    accentColorHex: ContextAccentPalette.defaultGreyHex,
+                    sortOrder: -10_000
+                )
+            ]
+            try await writeProjectDefinitionsAggregate(defs, previousData: nil)
+        }
     }
 
     private func writeContextDefinitionsAggregate(_ defs: [VaultContextDefinition], previousData: Data?) async throws {
@@ -756,6 +871,18 @@ public final class VaultManager: ObservableObject {
         try await backend.write(relativePath: VaultLayout.actionItemsTypesAggregatePath, data: data)
     }
 
+    private func writeProjectDefinitionsAggregate(_ defs: [VaultProjectDefinition], previousData: Data?) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let token = VaultLWWHelpers.nextWriteToken(existingData: previousData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultProjectDefinitionsFilePayload(definitions: defs)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsProjectsAggregatePath, data: data)
+    }
+
     private func dedupeActionItemsById(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
         var seen = Set<String>()
         var out: [VaultActionItemRecord] = []
@@ -776,6 +903,69 @@ public final class VaultManager: ObservableObject {
             out.append(item)
         }
         return out
+    }
+
+    private func dedupeContextDefinitionsByNormalizedName() async throws {
+        let (defs, defsData) = try await readContextDefinitionsAggregateRaw()
+        guard !defs.isEmpty else { return }
+        var canonicalByKey: [String: VaultContextDefinition] = [:]
+        var idRemap: [String: String] = [:]
+        for def in defs.sorted(by: { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }) {
+            let key = ActionItemsFeatureModel.normalizedSubjectKey(def.name).lowercased()
+            if let canonical = canonicalByKey[key] {
+                idRemap[def.id] = canonical.id
+            } else {
+                canonicalByKey[key] = def
+                idRemap[def.id] = def.id
+            }
+        }
+        let deduped = Array(canonicalByKey.values).sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+        if deduped.count != defs.count {
+            try await writeContextDefinitionsAggregate(deduped, previousData: defsData)
+            let (activeItems, activeData) = try await readActiveAggregateRaw()
+            let (completedItems, completedData) = try await readCompletedAggregateRaw()
+            let rewrittenActive = activeItems.map { item in
+                var out = item
+                if let cid = item.contextId, let mapped = idRemap[cid], mapped != cid {
+                    out.contextId = mapped
+                }
+                return out
+            }
+            let rewrittenCompleted = completedItems.map { item in
+                var out = item
+                if let cid = item.contextId, let mapped = idRemap[cid], mapped != cid {
+                    out.contextId = mapped
+                }
+                return out
+            }
+            try await writeActiveAggregate(rewrittenActive, previousData: activeData)
+            try await writeCompletedAggregate(rewrittenCompleted, previousData: completedData)
+        }
+    }
+
+    private func migrateActionItemsToGeneralProjectIfNeeded() async throws {
+        let general = try await ensureGeneralProjectDefinition()
+        let (activeItems, activeData) = try await readActiveAggregateRaw()
+        let (completedItems, completedData) = try await readCompletedAggregateRaw()
+        let activeNeedsMigration = activeItems.contains(where: { $0.projectId == nil })
+        let completedNeedsMigration = completedItems.contains(where: { $0.projectId == nil })
+        guard activeNeedsMigration || completedNeedsMigration else { return }
+        let migratedActive = activeItems.map { item -> VaultActionItemRecord in
+            var out = item
+            if out.projectId == nil {
+                out.projectId = general.id
+            }
+            return out
+        }
+        let migratedCompleted = completedItems.map { item -> VaultActionItemRecord in
+            var out = item
+            if out.projectId == nil {
+                out.projectId = general.id
+            }
+            return out
+        }
+        try await writeActiveAggregate(migratedActive, previousData: activeData)
+        try await writeCompletedAggregate(migratedCompleted, previousData: completedData)
     }
 
     private func deleteLegacyActionItemPerItemFiles() async throws {
@@ -820,5 +1010,7 @@ public final class VaultManager: ObservableObject {
         guard let backend = folderBackend else { return }
         try await VaultMigrationImporter.importInterestProfileOnce(folderBackend: backend)
         try await migrateActionItemsLayoutIfNeeded()
+        try await dedupeContextDefinitionsByNormalizedName()
+        try await migrateActionItemsToGeneralProjectIfNeeded()
     }
 }
