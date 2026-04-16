@@ -94,6 +94,14 @@ public actor StoriesFeedStore {
         didLoad = false
     }
 
+    /// Removes persisted stories feed (e.g. full sign-out).
+    public func clear() async {
+        let url = appSupportURL().appendingPathComponent(fileName)
+        try? FileManager.default.removeItem(at: url)
+        state = StoriesFeedState(schemaVersion: Self.schemaVersion, stories: [], promptStates: [:])
+        didLoad = false
+    }
+
     private func ensureLoaded() async {
         guard !didLoad else { return }
         didLoad = true

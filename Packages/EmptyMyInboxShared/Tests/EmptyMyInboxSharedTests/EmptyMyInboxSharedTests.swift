@@ -94,6 +94,15 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertNil(item.urgency)
         XCTAssertNil(item.projectId)
         XCTAssertNil(item.taskDescription)
+        XCTAssertNil(item.scheduledDate)
+        XCTAssertFalse(item.isStarred)
+    }
+
+    func testVaultActionItemStarredRoundTrip() throws {
+        let original = VaultActionItemRecord(id: "s1", title: "Star me", isStarred: true)
+        let data = try VaultJSON.encoder().encode(original)
+        let decoded = try VaultJSON.decoder().decode(VaultActionItemRecord.self, from: data)
+        XCTAssertTrue(decoded.isStarred)
     }
 
     func testVaultLayoutIncludesActionItemsFolder() {
@@ -110,7 +119,8 @@ final class EmptyMyInboxSharedTests: XCTestCase {
                 "ActionItems/completed_items.json",
                 "ActionItems/context_definitions.json",
                 "ActionItems/type_definitions.json",
-                "ActionItems/project_definitions.json"
+                "ActionItems/project_definitions.json",
+                "ActionItems/starred_channels.json"
             ]
         )
     }
@@ -216,12 +226,58 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     }
 
     func testDisplaySubjectHash() {
-        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(nil), "#Unspecified")
-        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(" Work "), "#Work")
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(nil), "# Unspecified")
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(" Work "), "# Work")
+    }
+
+    func testDisplayProjectPathUsesUnderscorePrefixes() {
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(nil), "_ General")
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath("Home"), "_ Home")
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(" Client / Q1 "), "_ Client _ Q1")
+    }
+
+    func testItemsScheduledForCalendarDayFiltersByDate() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: today)!
+        let items = [
+            VaultActionItemRecord(id: "a", title: "today", scheduledDate: today),
+            VaultActionItemRecord(id: "b", title: "tomorrow", scheduledDate: tomorrow),
+            VaultActionItemRecord(id: "c", title: "none", scheduledDate: nil)
+        ]
+        let todayItems = ActionItemsFeatureModel.itemsScheduledForCalendarDay(
+            referenceDay: today,
+            calendar: cal,
+            items: items
+        )
+        XCTAssertEqual(todayItems.map(\.id), ["a"])
+    }
+
+    func testVaultActionItemScheduledDateRoundTrip() throws {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: Date())
+        let original = VaultActionItemRecord(id: "sched-1", title: "Due", scheduledDate: day)
+        let data = try VaultJSON.encoder().encode(original)
+        let decoded = try VaultJSON.decoder().decode(VaultActionItemRecord.self, from: data)
+        XCTAssertNotNil(decoded.scheduledDate)
+        XCTAssertTrue(cal.isDate(decoded.scheduledDate!, inSameDayAs: day))
+    }
+
+    func testItemsWithoutNamedProjectIsGeneralBucket() {
+        let general = VaultProjectDefinition(id: "g", name: "General", sortOrder: 0)
+        let work = VaultProjectDefinition(id: "w", name: "Work", sortOrder: 1)
+        let defs = [general, work]
+        let items = [
+            VaultActionItemRecord(id: "1", title: "on general", projectId: "g"),
+            VaultActionItemRecord(id: "2", title: "on work", projectId: "w"),
+            VaultActionItemRecord(id: "3", title: "orphan project id", projectId: nil)
+        ]
+        let unassigned = ActionItemsFeatureModel.itemsWithoutNamedProject(definitions: defs, items: items)
+        XCTAssertEqual(Set(unassigned.map(\.id)), Set(["1", "3"]))
     }
 
     func testActionItemTitleParsingPriorityAndContext() {
-        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 u1 #errands /Home")
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 u1 #errands _Home")
         XCTAssertEqual(p.cleanedTitle, "Buy milk")
         XCTAssertEqual(p.priority, 2)
         XCTAssertEqual(p.urgency, 1)
@@ -232,7 +288,13 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     func testActionItemTitleParsingBangPriority() {
         let p = ActionItemTitleParsing.parseShortcuts(from: "Task !!!")
         XCTAssertEqual(p.cleanedTitle, "Task")
-        XCTAssertEqual(p.priority, 2)
+        XCTAssertEqual(p.priority, 3)
+    }
+
+    func testActionItemTitleParsingSingleBangIsPriorityOne() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Task !")
+        XCTAssertEqual(p.cleanedTitle, "Task")
+        XCTAssertEqual(p.priority, 1)
     }
 
     func testActiveHashSuffix() {
@@ -240,6 +302,82 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         let r = ActionItemTitleParsing.activeHashSuffix(in: s)
         XCTAssertNotNil(r)
         XCTAssertEqual(r?.query, "tra")
+    }
+
+    func testActiveHashSuffixEmptyQuery() {
+        let r = ActionItemTitleParsing.activeHashSuffix(in: "Note #")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "")
+    }
+
+    func testActiveHashSuffixPartialAtEnd() {
+        let r = ActionItemTitleParsing.activeHashSuffix(in: "x #ab")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "ab")
+    }
+
+    func testActiveProjectSuffixAllowsTrailingWhitespace() {
+        let r = ActionItemTitleParsing.activeProjectSuffix(in: "Task _Work ")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "Work")
+    }
+
+    func testActiveProjectSuffixStillAcceptsLegacySlashPrefix() {
+        let r = ActionItemTitleParsing.activeProjectSuffix(in: "Task /Work ")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "Work")
+    }
+
+    func testParseShortcutsStripsLegacySlashProjectToken() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy _New /Legacy")
+        XCTAssertEqual(p.cleanedTitle, "Buy")
+        XCTAssertEqual(p.projectName, "Legacy")
+    }
+
+    func testActiveHashSuffixAllowsTrailingWhitespace() {
+        let r = ActionItemTitleParsing.activeHashSuffix(in: "Note #label ")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "label")
+    }
+
+    func testParseShortcutsMultipleHashTagsLastWinsContext() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Do #home #work p1")
+        XCTAssertEqual(p.cleanedTitle, "Do")
+        XCTAssertEqual(p.contextName, "work")
+        XCTAssertEqual(p.priority, 1)
+    }
+
+    func testParseShortcutsPriorityWordAndBangMergedMin() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Task p2 !!")
+        XCTAssertEqual(p.cleanedTitle, "Task")
+        XCTAssertEqual(p.priority, 2)
+    }
+
+    func testParseShortcutsWhitespaceOnlyAfterStrip() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "   p0   #x   ")
+        XCTAssertEqual(p.cleanedTitle, "")
+        XCTAssertEqual(p.priority, 0)
+        XCTAssertEqual(p.contextName, "x")
+    }
+
+    func testContextBucketKeyUsesDefinitionNameWhenIdMatches() {
+        let defs = [VaultContextDefinition(id: "ctx-1", name: "Work", sortOrder: 0)]
+        let item = VaultActionItemRecord(title: "t", subjectLabel: "Legacy", contextId: "ctx-1")
+        XCTAssertEqual(ActionItemsFeatureModel.contextBucketKey(for: item, definitions: defs), "Work")
+        let groups = ActionItemsFeatureModel.groupedBySubject([item], definitions: defs)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.key, "Work")
+    }
+
+    func testResolvedContextDisplayNameUsesContextIdWhenSubjectLabelNil() {
+        let defs = [VaultContextDefinition(id: "ctx-1", name: "Work", sortOrder: 0)]
+        let item = VaultActionItemRecord(title: "Task", subjectLabel: nil, contextId: "ctx-1")
+        XCTAssertEqual(ActionItemsFeatureModel.resolvedContextDisplayName(for: item, definitions: defs), "Work")
+    }
+
+    func testResolvedContextDisplayNameNilWhenNoNamedContext() {
+        let item = VaultActionItemRecord(title: "Task", subjectLabel: nil, contextId: nil)
+        XCTAssertNil(ActionItemsFeatureModel.resolvedContextDisplayName(for: item, definitions: []))
     }
 
     /// Snapshot inheritance for subtasks (same fields `createChildTask` copies).

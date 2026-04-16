@@ -40,7 +40,7 @@ struct GCalEventsListResponse: Codable {
 
 // MARK: - App models
 
-public struct GoogleCalendarListItem: Identifiable, Hashable, Sendable {
+public struct GoogleCalendarListItem: Identifiable, Hashable, Codable, Sendable {
     public let id: String
     public let summary: String
     public let backgroundColor: String?
@@ -54,7 +54,7 @@ public struct GoogleCalendarListItem: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct GoogleCalendarDisplayEvent: Identifiable, Hashable, Sendable {
+public struct GoogleCalendarDisplayEvent: Identifiable, Hashable, Codable, Sendable {
     public let compositeId: String
     public let eventId: String
     public let calendarId: String

@@ -5,7 +5,10 @@
 
 import Foundation
 
-/// Parses inline shortcuts from action item titles: `#context`, `p0`...`p4`, `u0`...`u4`, `/project`, and `!`...`!!!!!`.
+/// Parses inline shortcuts from action item titles: `#context`, `p0`...`p4`, `u0`...`u4`, `_project` (legacy `/project` still stripped), and `!` runs for priority.
+///
+/// **Tokens must be separate “words”** (whitespace or punctuation boundaries): `p2 u1` works; `fooP2` does not.
+/// Priority from `!`: each `!` bumps priority (1–4), e.g. `!` → P1, `!!` → P2, … `!!!!` → P4 (longer runs cap at P4).
 public enum ActionItemTitleParsing {
     public struct ParsedShortcuts: Sendable, Equatable {
         public var cleanedTitle: String
@@ -17,30 +20,31 @@ public enum ActionItemTitleParsing {
 
     // MARK: - Active # token (for autocomplete)
 
-    /// If the title ends with an incomplete `#token`, returns the substring range to replace and the filter query.
-    public static func activeHashSuffix(in title: String) -> (fullTokenRange: Range<String.Index>, query: String)? {
-        guard let range = title.range(of: "#([^\\s#]*)$", options: .regularExpression) else { return nil }
-        let afterHash = title.index(after: range.lowerBound)
-        let query: String
-        if afterHash < range.upperBound {
-            query = String(title[afterHash..<range.upperBound])
-        } else {
-            query = ""
-        }
-        return (range, query)
+    /// Trailing `#…` or `_…` / legacy `/…` token at end of title, allowing optional whitespace before end-of-string (so `#ab ` still matches).
+    private static func matchTrailingToken(
+        in title: String,
+        pattern: String
+    ) -> (fullMatch: Range<String.Index>, query: String)? {
+        let ns = title as NSString
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        guard let match = regex.firstMatch(in: title, options: [], range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges >= 2,
+              let fullRange = Range(match.range, in: title),
+              let innerRange = Range(match.range(at: 1), in: title)
+        else { return nil }
+        return (fullMatch: fullRange, query: String(title[innerRange]))
     }
 
-    /// If the title ends with an incomplete `/token`, returns the substring range to replace and the filter query.
+    /// If the title ends with an incomplete `#token`, returns the substring range to replace and the filter query.
+    public static func activeHashSuffix(in title: String) -> (fullTokenRange: Range<String.Index>, query: String)? {
+        guard let m = matchTrailingToken(in: title, pattern: "#([^\\s#]*)\\s*$") else { return nil }
+        return (m.fullMatch, m.query)
+    }
+
+    /// If the title ends with an incomplete `_token` or legacy `/token`, returns the substring range to replace and the filter query.
     public static func activeProjectSuffix(in title: String) -> (fullTokenRange: Range<String.Index>, query: String)? {
-        guard let range = title.range(of: "/([^\\s#]*)$", options: .regularExpression) else { return nil }
-        let afterSlash = title.index(after: range.lowerBound)
-        let query: String
-        if afterSlash < range.upperBound {
-            query = String(title[afterSlash..<range.upperBound])
-        } else {
-            query = ""
-        }
-        return (range, query)
+        guard let m = matchTrailingToken(in: title, pattern: "(?:/|_)([^\\s#]*)\\s*$") else { return nil }
+        return (m.fullMatch, m.query)
     }
 
     /// Replace the trailing `#...` token with `#Name ` (keeps leading text).
@@ -51,12 +55,12 @@ public enum ActionItemTitleParsing {
         return prefix + "#" + safeName + " "
     }
 
-    /// Replace the trailing `/...` token with `/Name ` (keeps leading text).
+    /// Replace the trailing `_...` or `/...` token with `_Name ` (keeps leading text).
     public static func applyProjectSelection(title: String, projectName: String) -> String {
         guard let (r, _) = activeProjectSuffix(in: title) else { return title }
         let prefix = String(title[..<r.lowerBound])
         let safeName = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return prefix + "/" + safeName + " "
+        return prefix + "_" + safeName + " "
     }
 
     // MARK: - Full parse at save time
@@ -156,8 +160,8 @@ public enum ActionItemTitleParsing {
             maxRun = max(maxRun, match.range.length)
         }
         if maxRun > 0 {
-            let bangP = min(4, maxRun - 1)
-            priority = bangP
+            // One `!` → priority 1; each additional `!` bumps up to P4 (matches user expectation vs. maxRun - 1 → P0 for a single !).
+            priority = min(4, maxRun)
         }
         return regex.stringByReplacingMatches(in: s, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "")
     }
@@ -191,7 +195,7 @@ public enum ActionItemTitleParsing {
     }
 
     private static func stripProjectPath(from s: String, into projectName: inout String?) -> String {
-        guard let regex = try? NSRegularExpression(pattern: #"/([^\s#]+)"#, options: []) else { return s }
+        guard let regex = try? NSRegularExpression(pattern: #"(?:/|_)([^\s#]+)"#, options: []) else { return s }
         let ns = s as NSString
         var lastName: String?
         regex.enumerateMatches(in: s, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in

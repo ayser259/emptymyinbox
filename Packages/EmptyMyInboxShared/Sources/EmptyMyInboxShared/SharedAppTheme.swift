@@ -19,12 +19,13 @@ public enum SharedAppTheme {
     public static let cornerRadiusMedium: CGFloat = 12
     public static let cornerRadiusLarge: CGFloat = 16
 
-    public static let title2: Font = .system(size: 22, weight: .bold, design: .default)
-    public static let title3: Font = .system(size: 20, weight: .semibold, design: .default)
-    public static let headline: Font = .system(size: 17, weight: .semibold, design: .default)
-    public static let body: Font = .system(size: 17, weight: .regular, design: .default)
-    public static let subheadline: Font = .system(size: 15, weight: .regular, design: .default)
-    public static let caption: Font = .system(size: 12, weight: .regular, design: .default)
+    /// Dynamic Type–aware text styles (prefer these over fixed `system(size:)` in forms).
+    public static let title2: Font = .title2.weight(.bold)
+    public static let title3: Font = .title3.weight(.semibold)
+    public static let headline: Font = .headline
+    public static let body: Font = .body
+    public static let subheadline: Font = .subheadline
+    public static let caption: Font = .caption
 }
 
 // MARK: - Text styles (match iOS Theme.swift)

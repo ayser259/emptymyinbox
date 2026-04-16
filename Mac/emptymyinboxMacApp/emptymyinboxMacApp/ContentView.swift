@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var isAddingGmailAccount = false
     @State private var lastCalendarRefreshAt: Date?
     @State private var lastActionItemsRefreshAt: Date?
+    @State private var dashboardActionItems: [VaultActionItemRecord] = []
 
     var body: some View {
         Group {
@@ -88,9 +89,23 @@ struct ContentView: View {
                 case .mail:
                     mailSplitView
                 case .calendar:
-                    MacVaultCalendarTab(model: calendarModel, onOpenSettings: { showAppSettings = true })
+                    MacVaultCalendarTab(
+                        model: calendarModel,
+                        snapshot: snapshot,
+                        dashboardActionItems: dashboardActionItems,
+                        isRefreshing: isRefreshing,
+                        refreshMessage: refreshMessage,
+                        onOpenSettings: { showAppSettings = true }
+                    )
                 case .actionItems:
-                    MacVaultActionItemsTab(onOpenSettings: { showAppSettings = true })
+                    MacVaultActionItemsTab(
+                        calendarModel: calendarModel,
+                        snapshot: snapshot,
+                        dashboardActionItems: dashboardActionItems,
+                        isRefreshing: isRefreshing,
+                        refreshMessage: refreshMessage,
+                        onOpenSettings: { showAppSettings = true }
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -142,6 +157,12 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task { await loadDashboardActionItems() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
+            Task { await loadDashboardActionItems() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
             Task {
                 await VaultManager.shared.performLifecycleSync(postNotification: false)
@@ -166,14 +187,18 @@ struct ContentView: View {
             snapshot: $snapshot,
             isRefreshing: $isRefreshing,
             refreshMessage: $refreshMessage,
+            calendarModel: calendarModel,
+            dashboardActionItems: dashboardActionItems,
             onRefreshMailbox: { Task { await refreshMailbox() } },
-            onOpenSettings: { showAppSettings = true }
+            onOpenSettings: { showAppSettings = true },
+            onAddAccount: { Task { await addGmailAccountFromSettings() } }
         )
         .environmentObject(authManager)
         .background(MacAppTheme.primaryBackground)
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
                 await loadSnapshot()
+                await loadDashboardActionItems()
                 NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
             }
         }
@@ -186,6 +211,10 @@ struct ContentView: View {
         snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
     }
 
+    private func loadDashboardActionItems() async {
+        dashboardActionItems = (try? await VaultManager.shared.listActionItems()) ?? []
+    }
+
     private func refreshMailbox() async {
         isRefreshing = true
         refreshMessage = nil
@@ -193,6 +222,7 @@ struct ContentView: View {
         await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
+        await loadDashboardActionItems()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
         NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
@@ -208,6 +238,7 @@ struct ContentView: View {
         case .actionItems:
             NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             lastActionItemsRefreshAt = Date()
+            Task { await loadDashboardActionItems() }
         }
     }
 
@@ -313,104 +344,6 @@ private struct MacSplashView: View {
                 .foregroundStyle(MacAppTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MacAppTheme.primaryBackground)
-    }
-}
-
-// MARK: - Dashboard
-
-private func unreadCount(snapshot: DashboardDataSnapshot, accountEmail: String) -> Int {
-    snapshot.emails.filter {
-        $0.account_email.caseInsensitiveCompare(accountEmail) == .orderedSame && !$0.is_read
-    }.count
-}
-
-struct MacDashboardDetailView: View {
-    let snapshot: DashboardDataSnapshot?
-    let isRefreshing: Bool
-    let refreshMessage: String?
-    let onRefresh: () -> Void
-
-    var body: some View {
-        Group {
-            if let snapshot {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        if isRefreshing {
-                            HStack {
-                                Spacer(minLength: 0)
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
-                        }
-                        if let refreshMessage {
-                            Text(refreshMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 12) {
-                            ForEach(snapshot.accounts, id: \.id) { account in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(account.email)
-                                        .font(.headline)
-                                        .foregroundStyle(MacAppTheme.primaryText)
-                                        .lineLimit(1)
-                                    Text("\(unreadCount(snapshot: snapshot, accountEmail: account.email)) unread")
-                                        .font(.caption)
-                                        .foregroundStyle(MacAppTheme.secondaryText)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding()
-                                .background(MacAppTheme.secondaryBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            }
-                        }
-
-                        Text("Last snapshot: \(snapshot.timestamp.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption2)
-                            .foregroundStyle(MacAppTheme.secondaryText.opacity(0.75))
-
-                        Text("Tip: Use ⌘R to refresh mailbox data from Gmail.")
-                            .font(.caption)
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    }
-                    .padding(24)
-                }
-            } else {
-                ContentUnavailableView {
-                    Label("No dashboard data yet", systemImage: "tray")
-                } description: {
-                    Text("Tap Refresh in the toolbar to pull your latest Gmail data.")
-                } actions: {
-                    Button("Refresh now", action: onRefresh)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .navigationTitle("Dashboard")
-    }
-}
-
-// MARK: - Accounts
-
-struct MacAccountsListView: View {
-    let accounts: [GmailAccount]
-
-    var body: some View {
-        List(accounts) { account in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(account.email)
-                    .font(.headline)
-                    .foregroundStyle(MacAppTheme.primaryText)
-                Text("Gmail account")
-                    .font(.caption)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-            }
-            .padding(.vertical, 4)
-        }
-        .navigationTitle("Accounts")
-        .scrollContentBackground(.hidden)
         .background(MacAppTheme.primaryBackground)
     }
 }

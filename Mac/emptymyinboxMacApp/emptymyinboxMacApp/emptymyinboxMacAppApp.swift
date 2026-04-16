@@ -51,6 +51,7 @@ struct emptymyinboxMacAppApp: App {
                 .tint(MacAppTheme.accent)
                 .task {
                     await VaultManager.shared.reloadFromPreferences()
+                    await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
                     await AppLifecycleCloudSync.performStartupSync()
                 }
                 .onOpenURL { url in

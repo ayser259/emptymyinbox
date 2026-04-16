@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 import EmptyMyInboxShared
 
 struct MainAppTopBar<Center: View>: View {
@@ -128,13 +129,13 @@ struct CalendarSkeletonView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.horizontal, 12)
                 .padding(.vertical, AppTheme.spacingSmall)
             }
 
             VaultRefreshStatusLabel(font: .caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.horizontal, 12)
                 .padding(.bottom, AppTheme.spacingSmall)
         }
     }
@@ -189,6 +190,8 @@ struct ActionItemsSkeletonView: View {
     @State private var checklistScale: [String: CGFloat] = [:]
     @State private var priorityFilter: Int?
     @State private var urgencyFilter: Int?
+    /// When set, shows a transient “Added / Undo” bar after creating an item.
+    @State private var lastAddedItemUndoId: String?
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
@@ -226,6 +229,14 @@ struct ActionItemsSkeletonView: View {
             }
         }
         .sheet(item: $editorPayload, content: editorSheet)
+        .onChange(of: editorPayload) { _, new in
+            if new == nil { lastAddedItemUndoId = nil }
+        }
+        .task(id: lastAddedItemUndoId) {
+            guard lastAddedItemUndoId != nil else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            lastAddedItemUndoId = nil
+        }
         .sheet(isPresented: $showTagLibrary) {
             NavigationStack {
                 ActionItemTagLibraryView()
@@ -244,87 +255,150 @@ struct ActionItemsSkeletonView: View {
             AppTheme.primaryBackground
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                MainAppTopBar(center: {
-                    Text("Action Items")
-                        .font(AppTheme.headline)
-                        .primaryText()
-                }, onMenuTap: onMenuTap)
+            if vaultManager.isVaultReady {
+                VStack(spacing: 0) {
+                    MainAppTopBar(center: {
+                        Text("Action Items")
+                            .font(AppTheme.headline)
+                            .primaryText()
+                    }, onMenuTap: onMenuTap)
 
-                actionItemsFilterCarousel
+                    actionItemsFilterCarousel
 
-                if let errorText {
-                    Text(errorText)
-                        .font(AppTheme.caption)
-                        .foregroundColor(.orange)
-                        .padding(.horizontal)
+                    if let errorText {
+                        Text(errorText)
+                            .font(AppTheme.caption)
+                            .foregroundColor(.orange)
+                            .padding(.horizontal)
+                    }
+
+                    ActionItemsCenteredColumn {
+                        listContent
+                    }
                 }
 
-                ActionItemsCenteredColumn {
-                    listContent
+                Button {
+                    presentAddSheet()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(Color.black)
+                        .frame(width: 62, height: 62)
+                        .background(
+                            Circle()
+                                .fill(AppTheme.accent)
+                                .shadow(color: AppTheme.accent.opacity(0.45), radius: 12, y: 4)
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, AppTheme.spacingMedium)
+                .padding(.bottom, 56)
+                .accessibilityLabel("Add Action Item")
+            } else {
+                VStack(spacing: 0) {
+                    MainAppTopBar(center: {
+                        Text("Action Items")
+                            .font(AppTheme.headline)
+                            .primaryText()
+                    }, onMenuTap: onMenuTap)
+
+                    ScrollView {
+                        ConfigureVaultPanel()
+                            .padding(.horizontal, AppTheme.spacingMedium)
+                            .padding(.vertical, AppTheme.spacingSmall)
+                    }
+                    .background(AppTheme.primaryBackground)
                 }
             }
-
-            Button {
-                presentAddSheet()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(Color.black)
-                    .frame(width: 62, height: 62)
-                    .background(
-                        Circle()
-                            .fill(AppTheme.accent)
-                            .shadow(color: AppTheme.accent.opacity(0.45), radius: 12, y: 4)
-                    )
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, AppTheme.spacingMedium)
-            .padding(.bottom, 56)
-            .accessibilityLabel("Add Action Item")
         }
     }
 
     @ViewBuilder
     private func editorSheet(payload: ActionItemEditorPayload) -> some View {
-        NavigationStack {
-            ActionItemQuickEntryView(
-                initial: payload.item,
-                isNew: payload.isNew,
-                contexts: contextDefinitions,
-                projects: projectDefinitions,
-                types: typeDefinitions,
-                typePresets: typePresets,
-                allTasks: allItems,
-                style: .iosSheet,
-                vaultManager: vaultManager,
-                onSave: { _, isNew in
-                    await reload()
-                    await reloadTagDefinitions()
-                    if isNew {
-                        editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
-                    } else {
+        ZStack(alignment: .bottom) {
+            NavigationStack {
+                ActionItemQuickEntryView(
+                    initial: payload.item,
+                    isNew: payload.isNew,
+                    contexts: contextDefinitions,
+                    projects: projectDefinitions,
+                    types: typeDefinitions,
+                    typePresets: typePresets,
+                    allTasks: allItems,
+                    style: .iosSheet,
+                    vaultManager: vaultManager,
+                    onSave: { saved, isNew in
+                        await reload()
+                        await reloadTagDefinitions()
+                        if isNew {
+                            lastAddedItemUndoId = saved.id
+                            if #available(iOS 17.0, *) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+                        } else {
+                            lastAddedItemUndoId = nil
+                            editorPayload = nil
+                        }
+                    },
+                    onCancel: {
+                        lastAddedItemUndoId = nil
                         editorPayload = nil
+                    },
+                    onManageTags: { showTagLibrary = true }
+                )
+                .id(payload.id)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text(payload.isNew ? "New action" : "Edit action")
+                            .font(AppTheme.headline)
+                            .primaryText()
                     }
-                },
-                onCancel: { editorPayload = nil },
-                onManageTags: { showTagLibrary = true }
-            )
-            .id(payload.id)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(payload.isNew ? "New action" : "Edit action")
-                        .font(AppTheme.headline)
-                        .primaryText()
                 }
             }
+
+            if let undoId = lastAddedItemUndoId {
+                HStack(spacing: 12) {
+                    Text("Added")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.primaryText)
+                    Spacer(minLength: 0)
+                    Button("Undo") {
+                        Task {
+                            try? await vaultManager.deleteActionItem(id: undoId)
+                            lastAddedItemUndoId = nil
+                            await reload()
+                            await reloadTagDefinitions()
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.accent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                        .fill(AppTheme.secondaryBackground)
+                        .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: lastAddedItemUndoId)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
     private func reloadTagDefinitions() async {
         let vault = VaultManager.shared
+        guard vault.isVaultReady else {
+            contextDefinitions = []
+            projectDefinitions = []
+            typeDefinitions = []
+            return
+        }
         try? await vault.ensureDefaultContextDefinitions()
         _ = try? await vault.ensureGeneralProjectDefinition()
         contextDefinitions = (try? await vault.listContextDefinitions()) ?? []
@@ -342,7 +416,7 @@ struct ActionItemsSkeletonView: View {
         }
         if let selectedSubjectKey {
             filtered = filtered.filter {
-                ActionItemsFeatureModel.normalizedSubjectKey($0.subjectLabel) == selectedSubjectKey
+                ActionItemsFeatureModel.contextBucketKey(for: $0, definitions: contextDefinitions) == selectedSubjectKey
             }
         }
         if let selectedProjectKey {
@@ -579,6 +653,14 @@ struct ActionItemsSkeletonView: View {
                             .font(.caption2)
                             .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: u))
                     }
+                    if let ctxLabel = ActionItemsFeatureModel.resolvedContextDisplayName(for: item, definitions: contextDefinitions) {
+                        Text(ActionItemsFeatureModel.displaySubjectHash(ctxLabel))
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Text(ActionItemsFeatureModel.displayProjectPath(projectName(forProjectId: item.projectId)))
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -602,28 +684,34 @@ struct ActionItemsSkeletonView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             checklistScale[item.id] = 1
         }
-        try? await vaultManager.updateActionItemCompletion(id: item.id, isDone: true)
+        do {
+            try await vaultManager.updateActionItemCompletion(id: item.id, isDone: true)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
         try? await Task.sleep(nanoseconds: 220_000_000)
         await reload()
     }
 
     private func templateDraftForNewItem() -> VaultActionItemRecord {
-        var draft = VaultActionItemRecord(title: "")
-        if let key = selectedSubjectKey, key != ActionItemsFeatureModel.unspecifiedSubjectKey {
-            draft.subjectLabel = key
-            if let def = ActionItemsFeatureModel.contextDefinition(matchingSubjectKey: key, definitions: contextDefinitions) {
-                draft.contextId = def.id
-            }
-        }
-        if let selectedProjectKey,
-           let project = projectDefinitions.first(where: { ActionItemsFeatureModel.normalizedProjectKey($0.name) == selectedProjectKey }) {
-            draft.projectId = project.id
-        }
-        return draft
+        ActionItemDraftComposer.newDraft(
+            selectedSubjectKey: selectedSubjectKey,
+            selectedProjectKey: selectedProjectKey,
+            contextDefinitions: contextDefinitions,
+            projectDefinitions: projectDefinitions,
+            defaultGeneralProjectWhenNoProjectSelected: false
+        )
     }
 
     private func presentAddSheet() {
+        lastAddedItemUndoId = nil
         editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+    }
+
+    private func projectName(forProjectId projectId: String?) -> String {
+        guard let projectId else { return ActionItemsFeatureModel.generalProjectName }
+        return projectDefinitions.first(where: { $0.id == projectId })?.name ?? ActionItemsFeatureModel.generalProjectName
     }
 
     private func deleteFrom(_ list: [VaultActionItemRecord], offsets: IndexSet) {
@@ -638,7 +726,18 @@ struct ActionItemsSkeletonView: View {
     private func reload() async {
         errorText = nil
         let vault = VaultManager.shared
+        guard vault.isVaultReady else {
+            allItems = []
+            subjectGroups = []
+            projectGroups = []
+            return
+        }
+        await refreshListsFromVault(using: vault)
         await vault.performLifecycleSync(postNotification: false)
+        await refreshListsFromVault(using: vault)
+    }
+
+    private func refreshListsFromVault(using vault: VaultManager) async {
         do {
             allItems = try await vault.listActionItems()
             let filtered = applyFilters(allItems)
@@ -658,7 +757,7 @@ struct ActionItemsSkeletonView: View {
 
 // MARK: - Editor payload (iOS)
 
-private struct ActionItemEditorPayload: Identifiable {
+private struct ActionItemEditorPayload: Identifiable, Equatable {
     let id = UUID()
     var item: VaultActionItemRecord
     var isNew: Bool

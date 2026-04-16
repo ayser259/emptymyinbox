@@ -159,16 +159,17 @@ class MockGmailAPIService {
         apiCallCount += 1
         
         let filteredMessages = messageReferences.filter { ref in
-            if let message = messages[ref.id] {
-                if query.contains("is:unread") && message.labelIds.contains("UNREAD") {
-                    return true
-                }
-                if query.contains("is:starred") && message.labelIds.contains("STARRED") {
-                    return true
-                }
-                return true
+            guard let message = messages[ref.id] else { return false }
+            if query.contains("is:unread") {
+                return message.labelIds.contains("UNREAD") && message.labelIds.contains("INBOX")
             }
-            return false
+            if query.contains("is:starred"), !query.contains("in:inbox") {
+                return message.labelIds.contains("STARRED")
+            }
+            if query.contains("in:inbox") {
+                return message.labelIds.contains("INBOX")
+            }
+            return message.labelIds.contains("INBOX")
         }
         
         let limited = Array(filteredMessages.prefix(maxResults))
@@ -241,6 +242,29 @@ class MockGmailAPIService {
             await callback(metadata.count, metadata.count)
         }
         
+        return metadata
+    }
+
+    func syncInboxEmailMetadata(
+        for account: GmailAccount,
+        maxResults: Int = 1000,
+        progressCallback: ((Int, Int?) async -> Void)? = nil
+    ) async throws -> [EmailMetadata] {
+        let (refs, _) = try await listMessages(for: account, query: "in:inbox", maxResults: maxResults)
+
+        var metadata: [EmailMetadata] = []
+        for ref in refs {
+            if let message = messages[ref.id] {
+                let emailId = StableID.emailId(gmailId: message.id)
+                let metadataItem = parseEmailMetadata(from: message, accountEmail: account.email, emailId: emailId)
+                metadata.append(metadataItem)
+            }
+        }
+
+        if let callback = progressCallback {
+            await callback(metadata.count, metadata.count)
+        }
+
         return metadata
     }
     

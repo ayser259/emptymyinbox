@@ -3,6 +3,7 @@ import SwiftUI
 /// Shared settings list used by iOS menu sheet and macOS settings panel.
 public struct AppSettingsMenuContent<Vault: View>: View {
     @EnvironmentObject public var authManager: AuthManager
+    @ObservedObject private var vaultManager = VaultManager.shared
     @Binding public var isAddingAccount: Bool
     @StateObject private var debugSettings = DebugSettings.shared
     @State private var showClearedAlert = false
@@ -36,6 +37,7 @@ public struct AppSettingsMenuContent<Vault: View>: View {
                 ForEach(authManager.accounts) { account in
                     SettingsConnectedAccountRow(
                         account: account,
+                        vaultConfiguration: vaultManager.activeConfiguration,
                         accent: accentColor,
                         onDisconnect: {
                             accountToDisconnect = account
@@ -68,7 +70,7 @@ public struct AppSettingsMenuContent<Vault: View>: View {
                 if authManager.accounts.isEmpty {
                     Text("No accounts connected. Add a Gmail account to get started.")
                 } else {
-                    Text("Tap the disconnect button to remove an account. You can reconnect it anytime.")
+                    Text("Mail and Calendar are enabled when you sign in. Drive shows as connected after you authorize Google Drive for a vault. The vault row shows which account owns the active vault.")
                 }
             }
 
@@ -235,7 +237,7 @@ public struct AppSettingsMenuContent<Vault: View>: View {
             }
         } message: {
             if let account = accountToDisconnect {
-                Text("This will disconnect \(account.email) from the app. You can reconnect it later.")
+                Text(disconnectExplanation(for: account))
             } else {
                 Text("This will disconnect the account from the app.")
             }
@@ -246,5 +248,26 @@ public struct AppSettingsMenuContent<Vault: View>: View {
         .task {
             cachedEmailCount = await EmailCache.shared.cachedEmailCount()
         }
+    }
+
+    private func disconnectExplanation(for account: GmailAccount) -> String {
+        let s = account.connectionSummary(activeVault: vaultManager.activeConfiguration)
+        var lines: [String] = []
+        lines.append("You will remove \(account.email) from Empty My Inbox.")
+        if s.calendar {
+            lines.append("Calendar access for this account will stop.")
+        }
+        lines.append(
+            s.drive
+                ? "Google Drive file access for this account will be removed on this device (the cloud copy is not deleted)."
+                : "This account has not granted the Google Drive scope (used for a Drive-backed vault)."
+        )
+        if s.vaultLinked, let v = s.vaultDetailLine {
+            lines.append("Active vault tied to this account: \(v).")
+        }
+        if authManager.accounts.count == 1 {
+            lines.append("This is your only account: signing out clears local vault mirrors on this device per your sign-out settings.")
+        }
+        return lines.joined(separator: "\n\n")
     }
 }

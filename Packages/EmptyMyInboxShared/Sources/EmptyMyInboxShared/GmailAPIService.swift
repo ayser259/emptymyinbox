@@ -27,6 +27,10 @@ public struct GmailAccount: Codable, Identifiable {
     public var tokenExpiry: Date?
     public var lastSync: Date?
     public var unreadEmailsNextPageToken: String?
+    /// Last known Calendar API scope grant (from Google Sign-In). `nil` in legacy saves → treat as granted.
+    public var hasGoogleCalendarReadonlyScope: Bool?
+    /// Last known Drive `drive.file` scope grant (vault). `nil`/false until user authorizes Drive.
+    public var hasGoogleDriveFileScope: Bool?
 
     public init(
         id: String,
@@ -36,7 +40,9 @@ public struct GmailAccount: Codable, Identifiable {
         refreshToken: String?,
         tokenExpiry: Date?,
         lastSync: Date?,
-        unreadEmailsNextPageToken: String?
+        unreadEmailsNextPageToken: String?,
+        hasGoogleCalendarReadonlyScope: Bool? = nil,
+        hasGoogleDriveFileScope: Bool? = nil
     ) {
         self.id = id
         self.email = email
@@ -46,6 +52,18 @@ public struct GmailAccount: Codable, Identifiable {
         self.tokenExpiry = tokenExpiry
         self.lastSync = lastSync
         self.unreadEmailsNextPageToken = unreadEmailsNextPageToken
+        self.hasGoogleCalendarReadonlyScope = hasGoogleCalendarReadonlyScope
+        self.hasGoogleDriveFileScope = hasGoogleDriveFileScope
+    }
+
+    /// Gmail + Calendar are requested at initial sign-in; missing legacy flag means “yes”.
+    public var hasCalendarAccessForSettings: Bool {
+        hasGoogleCalendarReadonlyScope ?? true
+    }
+
+    /// Drive file access is granted only after the vault / Drive scope flow.
+    public var hasDriveFileAccessForSettings: Bool {
+        hasGoogleDriveFileScope ?? false
     }
     
     // Generate a stable numeric ID for compatibility with existing code
@@ -216,6 +234,13 @@ public class GmailAPIService {
     }
 
     @MainActor
+    private func applyGrantedScopes(from user: GIDGoogleUser, to account: inout GmailAccount) {
+        let granted = Set(user.grantedScopes ?? [])
+        account.hasGoogleCalendarReadonlyScope = granted.contains(Self.googleCalendarReadonlyScope)
+        account.hasGoogleDriveFileScope = granted.contains(Self.googleDriveFileScope)
+    }
+
+    @MainActor
     private func upsertGmailAccountFromGoogleUser(_ user: GIDGoogleUser) throws -> GmailAccount {
         guard user.idToken != nil else {
             throw GmailAPIError.noToken
@@ -237,11 +262,12 @@ public class GmailAPIService {
             if let name = name {
                 updatedAccount.name = name
             }
+            applyGrantedScopes(from: user, to: &updatedAccount)
             accounts[existingIndex] = updatedAccount
             saveAccounts()
             return updatedAccount
         } else {
-            let account = GmailAccount(
+            var account = GmailAccount(
                 id: email,
                 email: email,
                 name: name,
@@ -251,6 +277,7 @@ public class GmailAPIService {
                 lastSync: nil,
                 unreadEmailsNextPageToken: nil
             )
+            applyGrantedScopes(from: user, to: &account)
             accounts.append(account)
             saveAccounts()
             return account
@@ -472,8 +499,11 @@ public class GmailAPIService {
         guard let idx = accounts.firstIndex(where: { $0.email == email }) else {
             throw GmailAPIError.notAuthenticated
         }
-        accounts[idx].accessToken = accessToken
-        accounts[idx].tokenExpiry = tokenExpiry
+        var acc = accounts[idx]
+        acc.accessToken = accessToken
+        acc.tokenExpiry = tokenExpiry
+        applyGrantedScopes(from: user, to: &acc)
+        accounts[idx] = acc
         saveAccounts()
     }
 
@@ -1244,6 +1274,59 @@ public class GmailAPIService {
         // Update lastSync timestamp
         updateAccountLastSync(email: account.email)
         
+        return allMetadata
+    }
+
+    /// Sync inbox email metadata (read and unread) — same lightweight path as unread sync, wider query.
+    public func syncInboxEmailMetadata(for account: GmailAccount, maxResults: Int = 1000, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
+        let (messageRefs, _) = try await listMessages(
+            for: account,
+            query: "in:inbox",
+            maxResults: maxResults,
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
+        )
+
+        guard !messageRefs.isEmpty else {
+            updateAccountLastSync(email: account.email)
+            return []
+        }
+
+        let totalCount = messageRefs.count
+        await progressCallback?(0, totalCount)
+
+        var allMetadata: [EmailMetadata] = []
+        let batchSize = 20
+
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+
+        var processedCount = 0
+
+        for batch in batches {
+            let batchIds = batch.map { $0.id }
+            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
+
+            for gmailMessage in messages {
+                guard gmailMessage.labelIds.contains("INBOX") else {
+                    continue
+                }
+
+                let emailId = getEmailId(for: gmailMessage.id)
+                let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                allMetadata.append(metadata)
+            }
+
+            processedCount += batch.count
+            await progressCallback?(processedCount, totalCount)
+        }
+
+        allMetadata.sort { $0.received_at > $1.received_at }
+
+        updateAccountLastSync(email: account.email)
+
         return allMetadata
     }
     

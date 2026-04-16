@@ -23,26 +23,75 @@ public final class VaultManager: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Load saved vault or create a default local vault.
+    /// Load saved vault from preferences. Does **not** create a vault automatically — the user must choose storage in Vault settings.
     public func reloadFromPreferences() async {
         let config = await VaultSettingsStore.shared.activeConfiguration()
         await applyConfiguration(config)
-        if config == nil {
-            await createDefaultLocalVaultIfNeeded()
-        } else {
+        if config != nil {
             try? await runMigrationIfPossible()
             try? await self.purgeCompletedActionItemsOlderThan(days: 30)
         }
     }
 
-    private func createDefaultLocalVaultIfNeeded() async {
-        let current = await VaultSettingsStore.shared.activeConfiguration()
-        guard current == nil else { return }
+    /// Deletes `Application Support/…/Vaults/<vaultId>/` if it exists (on-device mirrors for `.local` and `.googleDrive`).
+    /// Does not remove a user-chosen external-folder vault path.
+    public func removeLocalMirrorDirectoryIfPresent(vaultId: String) async {
+        let root = VaultLocalFolderBackend.localRoot(forVaultId: vaultId)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else { return }
         do {
-            try await createLocalVault(displayName: "Default vault")
+            try fm.removeItem(at: root)
+            logInfo("Vault: removed on-device mirror for \(vaultId)", category: "Vault")
         } catch {
-            logError("Vault: default local vault failed: \(error)", category: "Vault")
+            logError("Vault: failed to remove on-device mirror: \(error)", category: "Vault")
         }
+        objectWillChange.send()
+    }
+
+    /// Clears the active vault when its owner email no longer matches any signed-in Google account (e.g. switched accounts without clearing prefs).
+    public func detachActiveVaultIfOwnerNotAmongConnectedAccounts() async {
+        let accounts = GmailAPIService.shared.getAllAccounts()
+        guard !accounts.isEmpty else { return }
+        guard let config = await VaultSettingsStore.shared.activeConfiguration() else { return }
+        guard let owner = config.resolvedOwnerEmail else { return }
+        let stillConnected = accounts.contains { $0.email.caseInsensitiveCompare(owner) == .orderedSame }
+        guard !stillConnected else { return }
+        let vaultId = config.vaultId
+        await VaultSettingsStore.shared.clearActiveConfiguration()
+        await reloadFromPreferences()
+        await removeLocalMirrorDirectoryIfPresent(vaultId: vaultId)
+        logInfo("Vault: detached active vault (owner \(owner) not among connected accounts)", category: "Vault")
+        NotificationCenter.default.post(name: .vaultDidSync, object: nil)
+    }
+
+    /// Whether a vault is selected and the folder backend is ready (e.g. external-folder vault has a valid bookmark).
+    public var isVaultReady: Bool {
+        activeConfiguration != nil && folderBackend != nil
+    }
+
+    /// Removes all on-device vault mirrors under `Application Support/…/emptyMyInbox/Vaults/` (local + Google Drive mirrors), clears vault preferences, and resets in-memory state.
+    ///
+    /// Call when the last Google account signs out so task files, labels, and projects stored in those mirrors are removed from this device.
+    /// Does **not** delete files inside a user-chosen external-folder vault (only disconnects by clearing preferences).
+    public func purgeAllLocalVaultMirrorsAndReset() async {
+        let fm = FileManager.default
+        let vaultsRoot = VaultLocalFolderBackend.defaultVaultsDirectory()
+        if fm.fileExists(atPath: vaultsRoot.path) {
+            do {
+                try fm.removeItem(at: vaultsRoot)
+            } catch {
+                logError("Vault: failed to remove vault mirrors directory: \(error)", category: "Vault")
+            }
+        }
+        _ = VaultLocalFolderBackend.defaultVaultsDirectory()
+        await VaultSettingsStore.shared.clearActiveConfiguration()
+        activeConfiguration = nil
+        folderBackend = nil
+        lastSyncErrorMessage = nil
+        lastSuccessfulSyncAt = nil
+        objectWillChange.send()
+        logInfo("Vault: purged local vault mirrors and reset preferences", category: "Vault")
+        NotificationCenter.default.post(name: .vaultDidSync, object: nil)
     }
 
     private func applyConfiguration(_ config: VaultActiveConfiguration?) async {
@@ -65,6 +114,7 @@ public final class VaultManager: ObservableObject {
         } catch {
             logError("Vault: backend init failed: \(error)", category: "Vault")
         }
+        objectWillChange.send()
     }
 
     public func activeFolderBackend() -> (any VaultFolderBackend)? {
@@ -73,9 +123,18 @@ public final class VaultManager: ObservableObject {
 
     // MARK: - Create / switch vault
 
+    private func defaultVaultOwnerEmail() -> String? {
+        GmailAPIService.shared.getAllAccounts().first?.email
+    }
+
     public func createLocalVault(displayName: String?) async throws {
         let id = UUID().uuidString
-        let config = VaultActiveConfiguration(vaultId: id, backend: .local, displayName: displayName)
+        let config = VaultActiveConfiguration(
+            vaultId: id,
+            backend: .local,
+            displayName: displayName,
+            ownerAccountEmail: defaultVaultOwnerEmail()
+        )
         let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: id))
         try await backend.ensureStructure()
         try await VaultBootstrap.ensureManifestIfMissing(folderBackend: backend, configuration: config)
@@ -87,7 +146,12 @@ public final class VaultManager: ObservableObject {
 
     public func setExternalVault(bookmarkData: Data, displayName: String? = nil) async throws {
         let backend = try VaultExternalFolderBackend(bookmarkData: bookmarkData)
-        var config = VaultActiveConfiguration(vaultId: UUID().uuidString, backend: .externalFolder, displayName: displayName)
+        var config = VaultActiveConfiguration(
+            vaultId: UUID().uuidString,
+            backend: .externalFolder,
+            displayName: displayName,
+            ownerAccountEmail: defaultVaultOwnerEmail()
+        )
         config.securityScopedBookmarkData = bookmarkData
         try await backend.ensureStructure()
         try await VaultBootstrap.ensureManifestIfMissing(folderBackend: backend, configuration: config)
@@ -113,7 +177,8 @@ public final class VaultManager: ObservableObject {
             backend: .googleDrive,
             displayName: displayName,
             driveRootFolderId: rootId,
-            driveAccountEmail: account.email
+            driveAccountEmail: account.email,
+            ownerAccountEmail: account.email
         )
         let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: id))
         try await backend.ensureStructure()
@@ -139,7 +204,12 @@ public final class VaultManager: ObservableObject {
     }
 
     public func switchToLocalVault(vaultId: String, displayName: String? = nil) async throws {
-        let config = VaultActiveConfiguration(vaultId: vaultId, backend: .local, displayName: displayName)
+        let config = VaultActiveConfiguration(
+            vaultId: vaultId,
+            backend: .local,
+            displayName: displayName,
+            ownerAccountEmail: defaultVaultOwnerEmail()
+        )
         let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: vaultId))
         try await backend.ensureStructure()
         try await VaultBootstrap.ensureManifestIfMissing(folderBackend: backend, configuration: config)
@@ -201,7 +271,8 @@ public final class VaultManager: ObservableObject {
             backend: .googleDrive,
             displayName: displayName,
             driveRootFolderId: rootId,
-            driveAccountEmail: email
+            driveAccountEmail: email,
+            ownerAccountEmail: email
         )
         let backend = VaultLocalFolderBackend(vaultRoot: VaultLocalFolderBackend.localRoot(forVaultId: vaultId))
         try await backend.ensureStructure()
@@ -346,25 +417,32 @@ public final class VaultManager: ObservableObject {
         return raw.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
     }
 
-    /// Time-based scheduling is disabled for action items; all active items are treated as unscheduled.
+    /// Active items scheduled for `referenceDay` vs. everything else (still active).
     public func listActionItemsForToday(
         referenceDay: Date = Date(),
         calendar: Calendar = .current
     ) async throws -> (scheduled: [VaultActionItemRecord], unscheduled: [VaultActionItemRecord]) {
-        _ = referenceDay
-        _ = calendar
         let all = try await listActionItems()
-        return ([], all)
+        let forDay = ActionItemsFeatureModel.itemsScheduledForCalendarDay(
+            referenceDay: referenceDay,
+            calendar: calendar,
+            items: all
+        )
+        let ids = Set(forDay.map(\.id))
+        let rest = all.filter { !ids.contains($0.id) }
+        return (forDay, rest)
     }
 
     public func listActionItemsBySubject(_ subjectKey: String) async throws -> [VaultActionItemRecord] {
         let all = try await listActionItems()
-        return all.filter { ActionItemsFeatureModel.normalizedSubjectKey($0.subjectLabel) == subjectKey }
+        let defs = try await listContextDefinitions()
+        return all.filter { ActionItemsFeatureModel.contextBucketKey(for: $0, definitions: defs) == subjectKey }
     }
 
     public func listActionItemSubjectGroups() async throws -> [(key: String, items: [VaultActionItemRecord])] {
         let all = try await loadActiveActionItemsUnsorted()
-        return ActionItemsFeatureModel.groupedBySubject(all)
+        let defs = try await listContextDefinitions()
+        return ActionItemsFeatureModel.groupedBySubject(all, definitions: defs)
     }
 
     public func listActionItemsForCalendarRange(
@@ -372,10 +450,13 @@ public final class VaultManager: ObservableObject {
         end: Date,
         calendar: Calendar = .current
     ) async throws -> [VaultActionItemRecord] {
-        _ = start
-        _ = end
-        _ = calendar
-        return []
+        let all = try await listActionItems()
+        return ActionItemsFeatureModel.itemsScheduledInDateRange(
+            start: start,
+            end: end,
+            calendar: calendar,
+            items: all
+        )
     }
 
     public func loadActionItem(id: String) async throws -> VaultActionItemRecord {
@@ -419,6 +500,12 @@ public final class VaultManager: ObservableObject {
         var item = try await loadActionItem(id: id)
         item.isDone = isDone
         item.completedAt = isDone ? (item.completedAt ?? Date()) : nil
+        try await upsertActionItem(item)
+    }
+
+    public func updateActionItemStarred(id: String, isStarred: Bool) async throws {
+        var item = try await loadActionItem(id: id)
+        item.isStarred = isStarred
         try await upsertActionItem(item)
     }
 
@@ -612,6 +699,138 @@ public final class VaultManager: ObservableObject {
         )
         let data = try VaultJSON.encoder().encode(envelope)
         try await backend.write(relativePath: VaultLayout.actionItemsContextsAggregatePath, data: data)
+    }
+
+    /// Updates the saved project name. Tasks reference `projectId`, so they stay on the same project.
+    public func renameProjectDefinition(id: String, newDisplayName: String) async throws {
+        let trimmed = newDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var defs = try await listProjectDefinitions()
+        guard let idx = defs.firstIndex(where: { $0.id == id }) else { return }
+        var def = defs[idx]
+        def.name = trimmed
+        def.updatedAt = Date()
+        try await upsertProjectDefinition(def)
+    }
+
+    /// Moves every active and completed task off `projectId` onto `toProjectId`, then removes the project definition.
+    public func deleteProjectMovingTasksToGeneral(projectId: String) async throws {
+        let general = try await ensureGeneralProjectDefinition()
+        guard projectId != general.id else { throw VaultError.cannotDeleteReservedDefinition }
+        let active = try await loadActiveActionItemsUnsorted()
+        let completed = try await loadCompletedActionItemsUnsorted()
+        for item in active + completed where item.projectId == projectId {
+            var m = item
+            m.projectId = general.id
+            try await upsertActionItem(m)
+        }
+        try await deleteProjectDefinition(id: projectId)
+    }
+
+    /// Renames a saved label (context) and updates `subjectLabel` on tasks that only matched the old name.
+    public func renameContextDefinition(id: String, newDisplayName: String) async throws {
+        let trimmed = newDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let defs = try await listContextDefinitions()
+        guard let def = defs.first(where: { $0.id == id }) else { return }
+        let oldKey = ActionItemsFeatureModel.normalizedSubjectKey(def.name)
+        var updated = def
+        updated.name = trimmed
+        updated.updatedAt = Date()
+        try await upsertContextDefinition(updated)
+        let active = try await loadActiveActionItemsUnsorted()
+        let completed = try await loadCompletedActionItemsUnsorted()
+        for item in active + completed {
+            var m = item
+            if m.contextId == id {
+                m.subjectLabel = trimmed
+                try await upsertActionItem(m)
+            } else if m.contextId == nil && ActionItemsFeatureModel.normalizedSubjectKey(m.subjectLabel) == oldKey {
+                m.subjectLabel = trimmed
+                try await upsertActionItem(m)
+            }
+        }
+    }
+
+    /// Renames a label bucket that has **no** saved `VaultContextDefinition` (items only carry `subjectLabel`).
+    public func renameLabelBucketItemOnly(oldSubjectKey: String, newDisplayName: String) async throws {
+        let defs = try await listContextDefinitions()
+        let trimmed = newDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if defs.contains(where: { ActionItemsFeatureModel.normalizedSubjectKey($0.name) == oldSubjectKey }) {
+            return
+        }
+        let active = try await loadActiveActionItemsUnsorted()
+        let completed = try await loadCompletedActionItemsUnsorted()
+        for item in active + completed {
+            guard item.contextId == nil else { continue }
+            guard ActionItemsFeatureModel.normalizedSubjectKey(item.subjectLabel) == oldSubjectKey else { continue }
+            var m = item
+            m.subjectLabel = trimmed
+            try await upsertActionItem(m)
+        }
+    }
+
+    /// Clears label/context for every task in `subjectKey`, then deletes the context definition when present.
+    public func deleteLabelBucket(subjectKey: String) async throws {
+        let defs = try await listContextDefinitions()
+        let key = ActionItemsFeatureModel.normalizedSubjectKey(subjectKey)
+        guard key != ActionItemsFeatureModel.unspecifiedSubjectKey else { throw VaultError.cannotDeleteReservedDefinition }
+        let active = try await loadActiveActionItemsUnsorted()
+        let completed = try await loadCompletedActionItemsUnsorted()
+        for item in active + completed {
+            guard ActionItemsFeatureModel.contextBucketKey(for: item, definitions: defs) == key else { continue }
+            var m = item
+            m.contextId = nil
+            m.subjectLabel = nil
+            try await upsertActionItem(m)
+        }
+        if let def = defs.first(where: { ActionItemsFeatureModel.normalizedSubjectKey($0.name) == key }) {
+            try await deleteContextDefinition(id: def.id)
+        }
+    }
+
+    // MARK: - Starred sidebar channels (Action Items)
+
+    private func readStarredSidebarChannelsAggregateRaw() async throws -> (pins: [ActionItemsSidebarPin], data: Data?) {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.actionItemsStarredChannelsAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return ([], nil)
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultStarredSidebarChannelsPayload>.self, from: data) else {
+            return ([], data)
+        }
+        return (env.payload.pins, data)
+    }
+
+    public func loadStarredSidebarChannels() async throws -> [ActionItemsSidebarPin] {
+        let (pins, _) = try await readStarredSidebarChannelsAggregateRaw()
+        return Self.uniqueSortedSidebarPins(pins)
+    }
+
+    public func saveStarredSidebarChannels(_ pins: [ActionItemsSidebarPin]) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let unique = Self.uniqueSortedSidebarPins(pins)
+        let (_, existingData) = try await readStarredSidebarChannelsAggregateRaw()
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existingData)
+        let envelope = VaultFileEnvelope(
+            updatedAt: Date(),
+            writeToken: token,
+            payload: VaultStarredSidebarChannelsPayload(pins: unique)
+        )
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: VaultLayout.actionItemsStarredChannelsAggregatePath, data: data)
+    }
+
+    private static func uniqueSortedSidebarPins(_ pins: [ActionItemsSidebarPin]) -> [ActionItemsSidebarPin] {
+        var seen = Set<String>()
+        var unique: [ActionItemsSidebarPin] = []
+        for p in pins where seen.insert(p.sortKey).inserted {
+            unique.append(p)
+        }
+        unique.sort { $0.sortKey.localizedCaseInsensitiveCompare($1.sortKey) == .orderedAscending }
+        return unique
     }
 
     public func listActionTypeDefinitions() async throws -> [VaultActionTypeDefinition] {

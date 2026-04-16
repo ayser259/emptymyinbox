@@ -34,6 +34,7 @@ public enum VaultLayout {
     public static let actionItemsContextsAggregateFileName = "context_definitions.json"
     public static let actionItemsTypesAggregateFileName = "type_definitions.json"
     public static let actionItemsProjectsAggregateFileName = "project_definitions.json"
+    public static let actionItemsStarredChannelsAggregateFileName = "starred_channels.json"
 
     public static let currentSchemaVersion = 1
 
@@ -65,6 +66,10 @@ public enum VaultLayout {
         "\(actionItemsFolder)/\(actionItemsProjectsAggregateFileName)"
     }
 
+    public static var actionItemsStarredChannelsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsStarredChannelsAggregateFileName)"
+    }
+
     /// All JSON blobs for action items, labels (context/type definitions), and their sync targets. Keep in sync with `VaultManager` read/write sites.
     public static var actionItemAggregateRelativePaths: [String] {
         [
@@ -72,7 +77,8 @@ public enum VaultLayout {
             actionItemsCompletedAggregatePath,
             actionItemsContextsAggregatePath,
             actionItemsTypesAggregatePath,
-            actionItemsProjectsAggregatePath
+            actionItemsProjectsAggregatePath,
+            actionItemsStarredChannelsAggregatePath
         ]
     }
 }
@@ -83,6 +89,15 @@ public enum VaultBackendKind: String, Codable, Sendable, CaseIterable {
     case local
     case externalFolder
     case googleDrive
+
+    /// Short label for settings / account rows.
+    public var settingsDisplayName: String {
+        switch self {
+        case .local: return "On device"
+        case .externalFolder: return "Folder"
+        case .googleDrive: return "Google Drive"
+        }
+    }
 }
 
 // MARK: - Active configuration (persisted)
@@ -98,6 +113,8 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
     public var driveRootFolderId: String?
     /// Gmail account email whose OAuth token is used for Drive API
     public var driveAccountEmail: String?
+    /// Google account this vault is tied to (all backends). Used for settings / disconnect clarity. For Google Drive vaults, defaults to `driveAccountEmail` when unset.
+    public var ownerAccountEmail: String?
 
     public init(
         vaultId: String = UUID().uuidString,
@@ -105,7 +122,8 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
         displayName: String? = nil,
         securityScopedBookmarkData: Data? = nil,
         driveRootFolderId: String? = nil,
-        driveAccountEmail: String? = nil
+        driveAccountEmail: String? = nil,
+        ownerAccountEmail: String? = nil
     ) {
         self.vaultId = vaultId
         self.backend = backend
@@ -113,6 +131,12 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
         self.securityScopedBookmarkData = securityScopedBookmarkData
         self.driveRootFolderId = driveRootFolderId
         self.driveAccountEmail = driveAccountEmail
+        self.ownerAccountEmail = ownerAccountEmail
+    }
+
+    /// Owner for display and disconnect copy (`driveAccountEmail` for legacy Drive-only configs).
+    public var resolvedOwnerEmail: String? {
+        ownerAccountEmail ?? driveAccountEmail
     }
 
     /// Web URL for the vault root folder (Safari or Google Drive app on iOS).
@@ -269,6 +293,10 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var createdAt: Date?
     public var updatedAt: Date?
     public var completedAt: Date?
+    /// Calendar day the task is scheduled for (start-of-day semantics in the UI). `nil` means not scheduled.
+    public var scheduledDate: Date?
+    /// Pinned for the **Starred** hub (quick access across categories).
+    public var isStarred: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, isDone, notes
@@ -276,7 +304,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         case taskDescription = "description"
         case contextNotes, comments
         case parentTaskId, subjectLabel, contextId, typeLabel, typeId, projectId
-        case createdAt, updatedAt, completedAt
+        case createdAt, updatedAt, completedAt, scheduledDate
+        case isStarred
     }
 
     public init(
@@ -297,7 +326,9 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         projectId: String? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        scheduledDate: Date? = nil,
+        isStarred: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -317,6 +348,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.completedAt = completedAt
+        self.scheduledDate = scheduledDate
+        self.isStarred = isStarred
     }
 
     public init(from decoder: Decoder) throws {
@@ -339,6 +372,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        scheduledDate = try c.decodeIfPresent(Date.self, forKey: .scheduledDate)
+        isStarred = try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -361,6 +396,8 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
+        try c.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
+        try c.encode(isStarred, forKey: .isStarred)
     }
 }
 
@@ -395,6 +432,14 @@ public struct VaultProjectDefinitionsFilePayload: Codable, Sendable, Equatable {
 
     public init(definitions: [VaultProjectDefinition] = []) {
         self.definitions = definitions
+    }
+}
+
+public struct VaultStarredSidebarChannelsPayload: Codable, Sendable, Equatable {
+    public var pins: [ActionItemsSidebarPin]
+
+    public init(pins: [ActionItemsSidebarPin] = []) {
+        self.pins = pins
     }
 }
 

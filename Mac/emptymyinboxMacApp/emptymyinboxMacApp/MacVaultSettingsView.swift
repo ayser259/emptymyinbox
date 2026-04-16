@@ -114,7 +114,7 @@ struct MacVaultSettingsView: View {
                 } header: {
                     Text("Open vault")
                 } footer: {
-                    Text("These are vault mirrors already stored on this device under the app’s local storage. Only one vault is active at a time—opening one replaces the current one. To use an external folder vault again, choose it with “Choose folder…”.")
+                    Text("These are vault mirrors already stored on this device under the app’s local storage. Disconnecting a Google account removes its vault from the app and deletes the on-device mirror (your Google Drive folder is unchanged). Only one vault is active at a time—opening one replaces the current one. To use an external folder vault again, choose it with “Choose folder…”.")
                 }
 
                 Section {

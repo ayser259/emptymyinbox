@@ -178,28 +178,6 @@
 		};
 /* End PBXNativeTarget section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Sync shared icons from iOS";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -e\nIOS_ASSETS=\"${SRCROOT}/../../iOS/emptyMyInbox/emptyMyInbox/Assets.xcassets\"\nMAC_ASSETS=\"${SRCROOT}/emptymyinboxMacApp/Assets.xcassets\"\nmkdir -p \"${MAC_ASSETS}\"\nrsync -a --delete \"${IOS_ASSETS}/AppIcon.appiconset/\" \"${MAC_ASSETS}/AppIcon.appiconset/\"\nrsync -a --delete \"${IOS_ASSETS}/Logo.imageset/\" \"${MAC_ASSETS}/Logo.imageset/\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXProject section */
 		AEFBF4312F79ADFE00AA180E /* Project object */ = {
 			isa = PBXProject;
@@ -269,6 +247,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sync shared icons from iOS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nIOS_ASSETS=\"${SRCROOT}/../../iOS/emptyMyInbox/emptyMyInbox/Assets.xcassets\"\nMAC_ASSETS=\"${SRCROOT}/emptymyinboxMacApp/Assets.xcassets\"\nmkdir -p \"${MAC_ASSETS}\"\nrsync -a --delete \"${IOS_ASSETS}/AppIcon.appiconset/\" \"${MAC_ASSETS}/AppIcon.appiconset/\"\nrsync -a --delete \"${IOS_ASSETS}/Logo.imageset/\" \"${MAC_ASSETS}/Logo.imageset/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AEFBF4352F79ADFE00AA180E /* Sources */ = {

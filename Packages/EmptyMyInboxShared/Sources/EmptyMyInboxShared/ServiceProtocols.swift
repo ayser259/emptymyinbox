@@ -19,6 +19,12 @@ public protocol GmailServiceProtocol: AnyObject {
         maxResults: Int,
         progressCallback: ((Int, Int?) async -> Void)?
     ) async throws -> [EmailMetadata]
+    /// Inbox messages (read and unread), metadata only — used for dashboard “all emails” lists.
+    func syncInboxEmailMetadata(
+        for account: GmailAccount,
+        maxResults: Int,
+        progressCallback: ((Int, Int?) async -> Void)?
+    ) async throws -> [EmailMetadata]
     func syncStarredEmailMetadata(
         for account: GmailAccount,
         maxResults: Int,

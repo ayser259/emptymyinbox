@@ -20,6 +20,7 @@ public enum VaultError: Error, Sendable, Equatable, LocalizedError {
     case actionItemNotFound(String)
     case vaultNotFound
     case cannotOpenDriveVault
+    case cannotDeleteReservedDefinition
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +38,7 @@ public enum VaultError: Error, Sendable, Equatable, LocalizedError {
         case .actionItemNotFound(let id): return "Action item not found: \(id)"
         case .vaultNotFound: return "That vault folder was not found on this device."
         case .cannotOpenDriveVault: return "This Google Drive vault is missing folder or account info. Sync once while signed in, or recreate the vault."
+        case .cannotDeleteReservedDefinition: return "That label or project cannot be deleted."
         }
     }
 }
