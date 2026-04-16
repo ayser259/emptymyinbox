@@ -54,12 +54,20 @@ struct MacVaultCalendarTab: View {
     @State private var sidebarCalendars: [MacSidebarCalendarRow] = []
     @State private var sidebarCalendarsLoadError: String?
 
+    private var calendarFeatureShortcutSection: MacSidebarFeatureShortcutSection? {
+        if selectedTool == .calendar || selectedTool == .starred {
+            return MacSidebarFeatureShortcutSection(title: "Calendar", shortcuts: MacSidebarShortcutLibrary.calendarModes)
+        }
+        return nil
+    }
+
     var body: some View {
         NavigationSplitView {
             MacSidebarShell(
                 minColumnWidth: 220,
                 idealColumnWidth: 248,
                 maxColumnWidth: 320,
+                featureShortcutSection: calendarFeatureShortcutSection,
                 onRefresh: {
                     Task {
                         await VaultManager.shared.performLifecycleSync(postNotification: false)
@@ -153,6 +161,19 @@ struct MacVaultCalendarTab: View {
             }
         }
         .background(MacAppTheme.primaryBackground)
+        .onKeyPress { press in
+            guard selectedTool == .calendar || selectedTool == .starred else { return .ignored }
+            guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+            let s = press.characters.lowercased()
+            guard s.count == 1 else { return .ignored }
+            switch s {
+            case "e": model.mode = .events; return .handled
+            case "d": model.mode = .day; return .handled
+            case "w": model.mode = .week; return .handled
+            case "m": model.mode = .month; return .handled
+            default: return .ignored
+            }
+        }
         .task {
             await model.refreshStarredKeysFromStore()
             syncStarredFilterWithSelection()
@@ -349,6 +370,34 @@ private struct MacActionItemsCenteredScrollList<Row: View>: View {
     }
 }
 
+/// List view with a section header per project (same width as `MacActionItemsCenteredScrollList`).
+private struct MacActionItemsGroupedByProjectScrollList<Row: View>: View {
+    let groups: [(key: String, items: [VaultActionItemRecord])]
+    @ViewBuilder var row: (VaultActionItemRecord) -> Row
+
+    var body: some View {
+        MacActionItemsCenteredColumn {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(groups, id: \.key) { pair in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(ActionItemsFeatureModel.displayProjectPath(pair.key))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(MacAppTheme.secondaryText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            ForEach(pair.items) { item in
+                                row(item)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 struct MacVaultActionItemsTab: View {
     @ObservedObject var calendarModel: GoogleCalendarViewModel
     let snapshot: DashboardDataSnapshot?
@@ -381,8 +430,22 @@ struct MacVaultActionItemsTab: View {
     @State private var renamingTarget: RenamingTarget?
     @State private var renameFieldText = ""
     @State private var deletingTarget: DeletingTarget?
+    /// Like Slack’s **Channels** list: project channels stay visible without selecting Projects first.
+    @State private var projectsSidebarExpanded = true
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
+
+    private var actionItemsFeatureShortcutSection: MacSidebarFeatureShortcutSection {
+        MacSidebarFeatureShortcutSection(
+            title: "Action Items",
+            shortcuts: [
+                MacSidebarContextualShortcut(title: "Priority", shortcutDisplay: "p0–p4"),
+                MacSidebarContextualShortcut(title: "Urgency", shortcutDisplay: "u0–u4"),
+                MacSidebarContextualShortcut(title: "Labels", shortcutDisplay: "@"),
+                MacSidebarContextualShortcut(title: "Projects", shortcutDisplay: "#"),
+            ]
+        )
+    }
 
     @AppStorage("macActionItemsDetailViewMode") private var detailViewModeRaw: String = MacActionItemsDetailViewMode.list.rawValue
 
@@ -606,6 +669,7 @@ struct MacVaultActionItemsTab: View {
             minColumnWidth: 220,
             idealColumnWidth: 248,
             maxColumnWidth: 320,
+            featureShortcutSection: actionItemsFeatureShortcutSection,
             onRefresh: { Task { await reload() } },
             onOpenSettings: onOpenSettings
         ) {
@@ -727,7 +791,7 @@ struct MacVaultActionItemsTab: View {
 
             projectsCategoryRowWithMenu
 
-            if route.isProjectsCategorySelected {
+            if projectsSidebarExpanded {
                 ForEach(projectSidebarColumns, id: \.boardId) { col in
                     let pin = ActionItemsSidebarPin(kind: .projectChannel, identifier: col.boardId)
                     let projectDef = projectDefinitions.first(where: { ActionItemsFeatureModel.normalizedProjectKey($0.name) == col.boardId })
@@ -791,32 +855,48 @@ struct MacVaultActionItemsTab: View {
     }
 
     private var projectsCategoryRowWithMenu: some View {
-        HStack(alignment: .center, spacing: 4) {
+        HStack(alignment: .center, spacing: 2) {
             Button {
-                route = .projectsHome
-            } label: {
-                MacSidebarRowLeadingContent(
-                    title: ActionItemsSection.projects.navigationTitle,
-                    icon: .asset(MacActionItemsCategorySidebarAsset.projects)
-                )
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(route.isProjectsCategorySelected ? MacAppTheme.accent : MacAppTheme.primaryText)
-
-            Menu {
-                Button("New project…") {
-                    newProjectName = ""
-                    showCreateProjectSheet = true
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    projectsSidebarExpanded.toggle()
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.body)
+                Image(systemName: projectsSidebarExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(MacAppTheme.secondaryText)
-                    .frame(minWidth: 28, minHeight: 28)
+                    .frame(width: 22, height: 28)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .help("Project actions")
+            .buttonStyle(.plain)
+            .help(projectsSidebarExpanded ? "Collapse projects" : "Expand projects")
+
+            HStack(alignment: .center, spacing: 4) {
+                Button {
+                    route = .projectsHome
+                } label: {
+                    MacSidebarRowLeadingContent(
+                        title: ActionItemsSection.projects.navigationTitle,
+                        icon: .asset(MacActionItemsCategorySidebarAsset.projects)
+                    )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(route.isProjectsCategorySelected ? MacAppTheme.accent : MacAppTheme.primaryText)
+
+                Menu {
+                    Button("New project…") {
+                        newProjectName = ""
+                        showCreateProjectSheet = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.body)
+                        .foregroundStyle(MacAppTheme.secondaryText)
+                        .frame(minWidth: 28, minHeight: 28)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .help("Project actions")
+            }
         }
         .listRowBackground(route.isProjectsCategorySelected ? MacAppTheme.sidebarSelectionBackground : Color.clear)
     }
@@ -1208,34 +1288,31 @@ struct MacVaultActionItemsTab: View {
         }
     }
 
-    /// Open tasks still on the default **General** project (not assigned to another project).
+    /// All open tasks, grouped by project (same buckets as **Projects**).
     @ViewBuilder
     private var stickyBoardDetailContent: some View {
-        let items = ActionItemsFeatureModel.itemsWithoutNamedProject(
+        let boardColumns = ActionItemsFeatureModel.boardColumnsForProjects(
             definitions: projectDefinitions,
             items: allItems
         )
-        let boardColumn = ActionItemsBoardColumn(
-            boardId: "sticky-unassigned",
-            title: "Unassigned",
-            items: items
-        )
+        let listGroups = ActionItemsFeatureModel.groupedByProject(definitions: projectDefinitions, items: allItems)
+            .filter { !$0.items.isEmpty }
         Group {
-            if items.isEmpty {
+            if allItems.isEmpty {
                 MacActionItemsCenteredColumn {
                     ContentUnavailableView {
-                        Label("No unassigned tasks", systemImage: "rectangle.on.rectangle.angled")
+                        Label("No action items", systemImage: "rectangle.on.rectangle.angled")
                     } description: {
-                        Text("Tasks without a project show up here. Assign a project from the Projects category in the sidebar.")
+                        Text("Add an action item using the form below.")
                     }
                     .foregroundStyle(MacAppTheme.secondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if detailViewMode == .board {
-                MacActionItemsBoardsScrollView(columns: [boardColumn], row: { item in macActionRow(item) })
+                MacActionItemsBoardsScrollView(columns: boardColumns, row: { item in macActionRow(item) })
             } else {
-                MacActionItemsCenteredScrollList(items: items, row: { macActionRow($0) })
+                MacActionItemsGroupedByProjectScrollList(groups: listGroups, row: { macActionRow($0) })
             }
         }
     }

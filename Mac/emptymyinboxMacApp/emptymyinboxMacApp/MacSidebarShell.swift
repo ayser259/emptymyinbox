@@ -21,6 +21,12 @@ struct MacSidebarContextualShortcut: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Feature-specific shortcuts shown **above** the global block in the sidebar (e.g. Catch Up, Calendar, Action Items).
+struct MacSidebarFeatureShortcutSection: Equatable, Sendable {
+    let title: String
+    let shortcuts: [MacSidebarContextualShortcut]
+}
+
 /// Asset names in `Assets.xcassets` for Action Items **Categories** parent rows (Priority, Urgency, Labels, Projects).
 enum MacActionItemsCategorySidebarAsset {
     static let priority = "ActionItemsCategoryPriority"
@@ -71,8 +77,10 @@ struct MacSidebarShell<Content: View>: View {
     var minColumnWidth: CGFloat = 220
     var idealColumnWidth: CGFloat = 240
     var maxColumnWidth: CGFloat = 280
-    /// Keyboard hints for the frontmost detail screen (empty hides the section).
-    var contextualShortcuts: [MacSidebarContextualShortcut] = []
+    /// Optional feature-specific shortcuts (Catch Up, Calendar modes, Action Items syntax, …). Shown **above** global shortcuts.
+    var featureShortcutSection: MacSidebarFeatureShortcutSection? = nil
+    /// App-wide shortcuts (navigation, refresh, next tab). Shown **below** feature shortcuts.
+    var globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global
     var onRefresh: () -> Void
     var onOpenSettings: () -> Void
     /// Pinned between the scrolling list and the Refresh/Settings footer (e.g. mini month).
@@ -85,7 +93,8 @@ struct MacSidebarShell<Content: View>: View {
         minColumnWidth: CGFloat = 220,
         idealColumnWidth: CGFloat = 240,
         maxColumnWidth: CGFloat = 280,
-        contextualShortcuts: [MacSidebarContextualShortcut] = [],
+        featureShortcutSection: MacSidebarFeatureShortcutSection? = nil,
+        globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global,
         onRefresh: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         bottomAccessory: (() -> AnyView)? = nil,
@@ -94,7 +103,8 @@ struct MacSidebarShell<Content: View>: View {
         self.minColumnWidth = minColumnWidth
         self.idealColumnWidth = idealColumnWidth
         self.maxColumnWidth = maxColumnWidth
-        self.contextualShortcuts = contextualShortcuts
+        self.featureShortcutSection = featureShortcutSection
+        self.globalShortcuts = globalShortcuts
         self.onRefresh = onRefresh
         self.onOpenSettings = onOpenSettings
         self.bottomAccessory = bottomAccessory
@@ -121,9 +131,10 @@ struct MacSidebarShell<Content: View>: View {
             Divider()
                 .opacity(0.35)
 
-            if !contextualShortcuts.isEmpty {
-                MacSidebarContextualShortcutsSection(
-                    shortcuts: contextualShortcuts,
+            if !globalShortcuts.isEmpty || !(featureShortcutSection?.shortcuts.isEmpty ?? true) {
+                MacSidebarShortcutsPanel(
+                    featureSection: featureShortcutSection,
+                    globalShortcuts: globalShortcuts,
                     isExpanded: $shortcutsSectionExpanded
                 )
                 Divider()
@@ -147,9 +158,15 @@ struct MacSidebarShell<Content: View>: View {
     }
 }
 
-private struct MacSidebarContextualShortcutsSection: View {
-    let shortcuts: [MacSidebarContextualShortcut]
+private struct MacSidebarShortcutsPanel: View {
+    let featureSection: MacSidebarFeatureShortcutSection?
+    let globalShortcuts: [MacSidebarContextualShortcut]
     @Binding var isExpanded: Bool
+
+    private var showsFeatureBlock: Bool {
+        guard let featureSection else { return false }
+        return !featureSection.shortcuts.isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -175,24 +192,46 @@ private struct MacSidebarContextualShortcutsSection: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                ForEach(shortcuts) { item in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(item.title)
-                            .font(.caption)
-                            .foregroundStyle(MacAppTheme.primaryText)
-                            .lineLimit(2)
-                        Spacer(minLength: 8)
-                        Text(item.shortcutDisplay)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(MacAppTheme.secondaryText.opacity(0.45))
+                if let featureSection, !featureSection.shortcuts.isEmpty {
+                    subsectionTitle(featureSection.title)
+                        .padding(.top, 4)
+                    ForEach(featureSection.shortcuts) { item in
+                        shortcutRow(item)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
+                }
+
+                subsectionTitle("Global")
+                    .padding(.top, showsFeatureBlock ? 10 : 4)
+                ForEach(globalShortcuts) { item in
+                    shortcutRow(item)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(MacAppTheme.primaryBackground)
+    }
+
+    private func subsectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MacAppTheme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+    }
+
+    private func shortcutRow(_ item: MacSidebarContextualShortcut) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(item.title)
+                .font(.caption)
+                .foregroundStyle(MacAppTheme.primaryText)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Text(item.shortcutDisplay)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.45))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
     }
 }
 

@@ -45,9 +45,9 @@ public enum ActionItemsFeatureModel {
             .map { key in (key, defaultSorted(dict[key] ?? [])) }
     }
 
-    /// Sidebar label: `#` + space + normalized subject (e.g. `# Unspecified`).
+    /// Sidebar label: `@` + space + normalized subject (e.g. `@ Unspecified`).
     public static func displaySubjectHash(_ label: String?) -> String {
-        "# " + normalizedSubjectKey(label)
+        "@ " + normalizedSubjectKey(label)
     }
 
     public struct ContextPickerEntry: Equatable {
@@ -77,7 +77,7 @@ public enum ActionItemsFeatureModel {
         return entries
     }
 
-    /// Context sidebar: `#Unspecified` first, then all definitions (by sort order), then any item-only buckets.
+    /// Context sidebar: `@ Unspecified` first, then all definitions (by sort order), then any item-only buckets.
     public static func groupedBySubjectForSidebar(
         definitions: [VaultContextDefinition],
         items: [VaultActionItemRecord]
@@ -130,16 +130,16 @@ public enum ActionItemsFeatureModel {
         return t
     }
 
-    /// Sidebar label: `_` + spaces around segments (e.g. `_ General`, `_ Client _ Q1`). Names may still contain `/` internally; we split on `/` for hierarchy only.
+    /// Sidebar label: `#` + spaces around segments (e.g. `# General`, `# Client # Q1`). Names may still contain `/` internally; we split on `/` for hierarchy only.
     public static func displayProjectPath(_ name: String?) -> String {
         let key = normalizedProjectKey(name)
         let segments = key.split(separator: "/")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         if segments.isEmpty {
-            return "_ " + generalProjectName
+            return "# " + generalProjectName
         }
-        return "_ " + segments.joined(separator: " _ ")
+        return "# " + segments.joined(separator: " # ")
     }
 
     public static func groupedByProject(

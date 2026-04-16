@@ -20,10 +20,12 @@ struct MacCatchUpFeedView: View {
     @Binding var contextualShortcuts: [MacSidebarContextualShortcut]
 
     @StateObject private var loader = LazyEmailLoader()
+    @StateObject private var accountOrderStore = CatchUpAccountOrderStore()
     @State private var isProcessing = false
     @State private var hasUnsubscribeAvailable = false
     @State private var showUnsubscribeWebView = false
     @State private var unsubscribeManualURL: URL?
+    @State private var showReorderSheet = false
 
     // MARK: - Session stats (for celebration view)
     @State private var sessionStats = CatchUpSessionStats()
@@ -99,8 +101,9 @@ struct MacCatchUpFeedView: View {
             } else {
                 GeometryReader { geo in
                     let bottomBarHeight: CGFloat = 168
-                    let deckHeight = max(320, geo.size.height - bottomBarHeight)
+                    let deckHeight = max(320, geo.size.height - bottomBarHeight - accountGroupBarHeight)
                     VStack(spacing: 0) {
+                        accountGroupBar
                         deckStack(deckHeight: deckHeight)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .task(id: loader.currentIndex) {
@@ -123,10 +126,22 @@ struct MacCatchUpFeedView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
         .navigationTitle("Catch Up")
-        .task { await loader.loadMetadata() }
+        .task {
+            // Sync account order with live accounts, then load
+            let allAccounts = GmailAPIService.shared.getAllAccounts().map { $0.email }
+            accountOrderStore.sync(allAccounts: allAccounts)
+            loader.accountOrder = accountOrderStore.orderedAccounts
+            await loader.loadMetadata()
+        }
+        .onChange(of: accountOrderStore.orderedAccounts) { _, newOrder in
+            loader.accountOrder = newOrder
+        }
         .onAppear {
             syncSidebarContextualShortcuts()
             installKeyMonitor()
+        }
+        .sheet(isPresented: $showReorderSheet) {
+            AccountReorderSheet(store: accountOrderStore)
         }
         .onDisappear { removeKeyMonitor() }
         .onChange(of: loader.isLoadingMetadata) { _, _ in syncSidebarContextualShortcuts() }
@@ -141,6 +156,68 @@ struct MacCatchUpFeedView: View {
         .sheet(isPresented: $showUnsubscribeWebView) {
             if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
         }
+    }
+
+    // MARK: - Account group bar
+
+    private let accountGroupBarHeight: CGFloat = 44
+
+    /// Groups emails by account, preserving accountOrderStore order.
+    private var groupedCounts: [(account: String, total: Int, remaining: Int)] {
+        let order = accountOrderStore.orderedAccounts
+        // Count all unseen emails per account
+        var totalMap: [String: Int] = [:]
+        var remainingMap: [String: Int] = [:]
+        for (idx, meta) in loader.emailMetadata.enumerated() {
+            guard !loader.sessionSeenEmailIds.contains(meta.id) else { continue }
+            totalMap[meta.account_email, default: 0] += 1
+            if idx >= loader.currentIndex {
+                remainingMap[meta.account_email, default: 0] += 1
+            }
+        }
+        let accounts = order.isEmpty ? Array(totalMap.keys.sorted()) : order
+        return accounts.compactMap { account in
+            guard let total = totalMap[account] else { return nil }
+            return (account, total, remainingMap[account] ?? 0)
+        }
+    }
+
+    private var accountGroupBar: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(groupedCounts, id: \.account) { group in
+                        AccountGroupPill(
+                            account: group.account,
+                            remaining: group.remaining,
+                            total: group.total
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+
+            Divider()
+                .frame(height: 20)
+                .opacity(0.4)
+                .padding(.horizontal, 4)
+
+            Button {
+                showReorderSheet = true
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MacAppTheme.secondaryText)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Reorder accounts")
+            .padding(.trailing, 12)
+        }
+        .frame(height: accountGroupBarHeight)
+        .background(MacAppTheme.primaryBackground.opacity(0.85))
     }
 
     // MARK: - Deck
@@ -669,6 +746,117 @@ private struct MacCatchUpDeckCard: View {
         }()
         guard let d else { return iso }
         return d.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+// MARK: - Account group pill (progress indicator)
+
+private struct AccountGroupPill: View {
+    let account: String
+    let remaining: Int
+    let total: Int
+
+    private var isDone: Bool { remaining == 0 }
+    private var isCurrent: Bool { remaining > 0 && remaining == total }
+
+    private var shortName: String {
+        // Use the portion before '@' for brevity
+        account.components(separatedBy: "@").first ?? account
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if isDone {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(MacAppTheme.accent)
+            } else {
+                Circle()
+                    .fill(isCurrent ? MacAppTheme.accent : MacAppTheme.secondaryText.opacity(0.4))
+                    .frame(width: 6, height: 6)
+            }
+            Text(shortName)
+                .font(.system(size: 12, weight: isCurrent ? .semibold : .regular))
+                .foregroundStyle(isDone
+                                 ? MacAppTheme.secondaryText.opacity(0.5)
+                                 : (isCurrent ? MacAppTheme.primaryText : MacAppTheme.secondaryText))
+                .lineLimit(1)
+            if !isDone {
+                Text("\(remaining)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isCurrent ? MacAppTheme.accent : MacAppTheme.secondaryText.opacity(0.6))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(isCurrent
+                      ? MacAppTheme.accent.opacity(0.12)
+                      : MacAppTheme.secondaryBackground.opacity(0.6))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(isCurrent ? MacAppTheme.accent.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Reorder sheet
+
+private struct AccountReorderSheet: View {
+    @ObservedObject var store: CatchUpAccountOrderStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Account Order")
+                    .font(.headline)
+                    .foregroundStyle(MacAppTheme.primaryText)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(MacAppTheme.accent)
+                    .font(.body.weight(.semibold))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+
+            Divider().opacity(0.3)
+
+            Text("Drag to set the order emails are reviewed in Catch Up.")
+                .font(.caption)
+                .foregroundStyle(MacAppTheme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            List {
+                ForEach(store.orderedAccounts, id: \.self) { account in
+                    HStack(spacing: 12) {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundStyle(MacAppTheme.secondaryText)
+                            .font(.system(size: 14))
+                        Image(systemName: "envelope.circle")
+                            .foregroundStyle(MacAppTheme.accent)
+                        Text(account)
+                            .font(.body)
+                            .foregroundStyle(MacAppTheme.primaryText)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .onMove { from, to in
+                    store.move(fromOffsets: from, toOffset: to)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+        .frame(minWidth: 380, minHeight: 300)
+        .background(MacAppTheme.primaryBackground)
     }
 }
 

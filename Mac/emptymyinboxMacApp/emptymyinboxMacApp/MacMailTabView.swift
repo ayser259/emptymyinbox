@@ -124,20 +124,21 @@ struct MacMailTabView: View {
         }
     }
 
+    /// snapshot.emails is the authoritative unread-only list built during refresh.
     private var unreadCount: Int {
-        snapshot?.allEmails.filter { !$0.is_read }.count ?? 0
+        snapshot?.emails.count ?? 0
     }
 
-    private var mailSidebarContextualShortcuts: [MacSidebarContextualShortcut] {
+    private var mailFeatureShortcutSection: MacSidebarFeatureShortcutSection? {
         if case .tool(.catchUp) = selection {
-            return catchUpContextualShortcuts
+            return MacSidebarFeatureShortcutSection(title: "Catch Up", shortcuts: catchUpContextualShortcuts)
         }
-        return []
+        return nil
     }
 
     private var sidebar: some View {
         MacSidebarShell(
-            contextualShortcuts: mailSidebarContextualShortcuts,
+            featureShortcutSection: mailFeatureShortcutSection,
             onRefresh: onRefreshMailbox,
             onOpenSettings: onOpenSettings
         ) {
@@ -339,7 +340,9 @@ private struct MacMailboxListColumn: View {
         case .all:
             return snapshot.allEmails
         case .allUnread:
-            return snapshot.allEmails.filter { !$0.is_read }
+            // Use snapshot.emails — the authoritative unread-only list built during refresh —
+            // so the list and the sidebar badge always agree with the Dashboard count.
+            return snapshot.emails
         case .account(let email):
             return snapshot.allEmails.filter {
                 $0.account_email.caseInsensitiveCompare(email) == .orderedSame

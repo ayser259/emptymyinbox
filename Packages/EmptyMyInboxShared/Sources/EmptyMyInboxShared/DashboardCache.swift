@@ -30,6 +30,22 @@ public struct DashboardDataSnapshot: Codable {
         self.starredEmails = starredEmails
         self.labels = labels
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case timestamp, accounts, emails, allEmails, starredEmails, labels
+    }
+
+    // Custom decoder so snapshots saved before `allEmails` was introduced still load correctly.
+    // Falls back to the unread-only `emails` list when the key is absent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        accounts = try c.decode([EmailAccount].self, forKey: .accounts)
+        emails = try c.decode([EmailListItem].self, forKey: .emails)
+        allEmails = (try? c.decode([EmailListItem].self, forKey: .allEmails)) ?? emails
+        starredEmails = (try? c.decode([EmailListItem].self, forKey: .starredEmails)) ?? []
+        labels = (try? c.decode([GmailLabel].self, forKey: .labels)) ?? []
+    }
 }
 
 public actor DashboardCache {

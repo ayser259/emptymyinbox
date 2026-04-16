@@ -226,14 +226,14 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     }
 
     func testDisplaySubjectHash() {
-        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(nil), "# Unspecified")
-        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(" Work "), "# Work")
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(nil), "@ Unspecified")
+        XCTAssertEqual(ActionItemsFeatureModel.displaySubjectHash(" Work "), "@ Work")
     }
 
-    func testDisplayProjectPathUsesUnderscorePrefixes() {
-        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(nil), "_ General")
-        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath("Home"), "_ Home")
-        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(" Client / Q1 "), "_ Client _ Q1")
+    func testDisplayProjectPathUsesHashPrefixes() {
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(nil), "# General")
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath("Home"), "# Home")
+        XCTAssertEqual(ActionItemsFeatureModel.displayProjectPath(" Client / Q1 "), "# Client # Q1")
     }
 
     func testItemsScheduledForCalendarDayFiltersByDate() {
@@ -277,7 +277,7 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     }
 
     func testActionItemTitleParsingPriorityAndContext() {
-        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 u1 #errands _Home")
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Buy milk p2 u1 @errands #Home")
         XCTAssertEqual(p.cleanedTitle, "Buy milk")
         XCTAssertEqual(p.priority, 2)
         XCTAssertEqual(p.urgency, 1)
@@ -297,21 +297,21 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(p.priority, 1)
     }
 
-    func testActiveHashSuffix() {
-        let s = "Hello #tra"
-        let r = ActionItemTitleParsing.activeHashSuffix(in: s)
+    func testActiveLabelSuffix() {
+        let s = "Hello @tra"
+        let r = ActionItemTitleParsing.activeLabelSuffix(in: s)
         XCTAssertNotNil(r)
         XCTAssertEqual(r?.query, "tra")
     }
 
-    func testActiveHashSuffixEmptyQuery() {
-        let r = ActionItemTitleParsing.activeHashSuffix(in: "Note #")
+    func testActiveLabelSuffixEmptyQuery() {
+        let r = ActionItemTitleParsing.activeLabelSuffix(in: "Note @")
         XCTAssertNotNil(r)
         XCTAssertEqual(r?.query, "")
     }
 
-    func testActiveHashSuffixPartialAtEnd() {
-        let r = ActionItemTitleParsing.activeHashSuffix(in: "x #ab")
+    func testActiveLabelSuffixPartialAtEnd() {
+        let r = ActionItemTitleParsing.activeLabelSuffix(in: "x @ab")
         XCTAssertNotNil(r)
         XCTAssertEqual(r?.query, "ab")
     }
@@ -328,20 +328,32 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         XCTAssertEqual(r?.query, "Work")
     }
 
+    func testActiveProjectSuffixHashWithoutTrailingSpace() {
+        let r = ActionItemTitleParsing.activeProjectSuffix(in: "Call #Work")
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.query, "Work")
+    }
+
+    func testParseShortcutsRecognizesHashProjectWithoutTrailingSpace() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Call #Work")
+        XCTAssertEqual(p.cleanedTitle, "Call")
+        XCTAssertEqual(p.projectName, "Work")
+    }
+
     func testParseShortcutsStripsLegacySlashProjectToken() {
         let p = ActionItemTitleParsing.parseShortcuts(from: "Buy _New /Legacy")
         XCTAssertEqual(p.cleanedTitle, "Buy")
         XCTAssertEqual(p.projectName, "Legacy")
     }
 
-    func testActiveHashSuffixAllowsTrailingWhitespace() {
-        let r = ActionItemTitleParsing.activeHashSuffix(in: "Note #label ")
+    func testActiveLabelSuffixAllowsTrailingWhitespace() {
+        let r = ActionItemTitleParsing.activeLabelSuffix(in: "Note @label ")
         XCTAssertNotNil(r)
         XCTAssertEqual(r?.query, "label")
     }
 
-    func testParseShortcutsMultipleHashTagsLastWinsContext() {
-        let p = ActionItemTitleParsing.parseShortcuts(from: "Do #home #work p1")
+    func testParseShortcutsMultipleLabelTagsLastWinsContext() {
+        let p = ActionItemTitleParsing.parseShortcuts(from: "Do @home @work p1")
         XCTAssertEqual(p.cleanedTitle, "Do")
         XCTAssertEqual(p.contextName, "work")
         XCTAssertEqual(p.priority, 1)
@@ -357,7 +369,7 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         let p = ActionItemTitleParsing.parseShortcuts(from: "   p0   #x   ")
         XCTAssertEqual(p.cleanedTitle, "")
         XCTAssertEqual(p.priority, 0)
-        XCTAssertEqual(p.contextName, "x")
+        XCTAssertEqual(p.projectName, "x")
     }
 
     func testContextBucketKeyUsesDefinitionNameWhenIdMatches() {

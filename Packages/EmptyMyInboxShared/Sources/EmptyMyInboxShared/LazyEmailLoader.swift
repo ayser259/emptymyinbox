@@ -59,6 +59,10 @@ public class LazyEmailLoader: ObservableObject {
     /// Used as a safety net to prevent a background metadata sort from re-surfacing them.
     @Published public private(set) var sessionSeenEmailIds: Set<Int> = []
     
+    /// Desired account order for grouped sorting (account emails in priority order).
+    /// Set this before calling `loadMetadata()` or any time before the background sort completes.
+    public var accountOrder: [String] = []
+
     // MARK: - Private State
     
     private let gmailService = GmailAPIService.shared
@@ -328,17 +332,16 @@ public class LazyEmailLoader: ObservableObject {
             }
         }
         
-        // Sort by received_at descending (newest first).
-        // Only sort the *unseen* portion of the array (from currentIndex onwards) so that
-        // emails the user has already processed (via Keep Unread / Mark Read) are never
-        // displaced back into the visible deck by a background sort.
+        // Sort by account order (if set) then by received_at descending within each account.
+        // Only sort the *unseen* portion (from currentIndex onwards) so that already-processed
+        // emails are never displaced back into the visible deck by a background sort.
         if currentIndex > 0 && currentIndex <= emailMetadata.count {
             let seen = Array(emailMetadata[0..<currentIndex])
             var unseen = Array(emailMetadata[currentIndex...])
-            unseen.sort { $0.received_at > $1.received_at }
+            sortEmails(&unseen)
             emailMetadata = seen + unseen
         } else {
-            emailMetadata.sort { $0.received_at > $1.received_at }
+            sortEmails(&emailMetadata)
         }
         
         // Save to cache and notify dashboard
@@ -347,6 +350,21 @@ public class LazyEmailLoader: ObservableObject {
         logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails", category: "Email")
     }
     
+    /// Sort emails: by accountOrder position first, then by received_at descending within each account.
+    /// If accountOrder is empty, sort purely by received_at descending.
+    private func sortEmails(_ emails: inout [EmailMetadata]) {
+        if accountOrder.isEmpty {
+            emails.sort { $0.received_at > $1.received_at }
+        } else {
+            emails.sort { a, b in
+                let ai = accountOrder.firstIndex(of: a.account_email) ?? accountOrder.count
+                let bi = accountOrder.firstIndex(of: b.account_email) ?? accountOrder.count
+                if ai != bi { return ai < bi }
+                return a.received_at > b.received_at
+            }
+        }
+    }
+
     /// Load next batch of full emails in background
     private func loadNextBatchInBackground() async {
         // Load emails 2-5 in background

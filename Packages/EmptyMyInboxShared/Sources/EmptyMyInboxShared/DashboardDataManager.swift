@@ -570,9 +570,12 @@ public actor DashboardDataManager {
         
         let baseAllEmails: [EmailListItem]
         if let accountEmail {
+            // Remove only the target account's emails; other accounts' emails are preserved via merge.
             baseAllEmails = snapshot.allEmails.filter { $0.account_email != accountEmail }
         } else {
-            baseAllEmails = []
+            // No specific account targeted — keep everything already in allEmails as the base so
+            // that read emails are never lost when Catch Up updates the unread set across all accounts.
+            baseAllEmails = snapshot.allEmails
         }
         
         var mergedByGmailId: [String: EmailListItem] = [:]

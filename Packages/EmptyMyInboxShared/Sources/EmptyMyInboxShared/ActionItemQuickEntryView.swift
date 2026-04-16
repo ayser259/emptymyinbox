@@ -65,7 +65,7 @@ public struct ActionItemQuickEntryView: View {
         lastShortcutEditSource = .menu
     }
 
-    /// Parsed shortcuts from the current title (same as save). Chips read from this + `draft` so labels update live like `#` tags.
+    /// Parsed shortcuts from the current title (same as save). Chips read from this + `draft` so labels update live like `@` tags.
     private var shortcutsPreview: ActionItemTitleParsing.ParsedShortcuts {
         ActionItemTitleParsing.parseShortcuts(from: draft.title)
     }
@@ -78,7 +78,7 @@ public struct ActionItemQuickEntryView: View {
         shortcutsPreview.urgency ?? draft.urgency
     }
 
-    /// Same resolution as list/board subtitles: `#` in title → menu/contextId → freeform `subjectLabel`.
+    /// Same resolution as list/board subtitles: `@` in title → menu/contextId → freeform `subjectLabel`.
     private var resolvedContextNameForChip: String? {
         if let name = shortcutsPreview.contextName, !name.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
             return name
@@ -86,7 +86,7 @@ public struct ActionItemQuickEntryView: View {
         return ActionItemsFeatureModel.resolvedContextDisplayName(for: draft, definitions: contexts)
     }
 
-    /// Label text for the context chip: last `#tag` in the title wins over menu selection when present.
+    /// Label text for the context chip: last `@tag` in the title wins over menu selection when present.
     private var displayedContextChipText: String {
         ActionItemsFeatureModel.displaySubjectHash(resolvedContextNameForChip)
     }
@@ -97,7 +97,7 @@ public struct ActionItemQuickEntryView: View {
             || (draft.subjectLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
     }
 
-    /// Project shown on the chip: `_path` in the title overrides the menu when present.
+    /// Project shown on the chip: `#path` in the title overrides the menu when present.
     private var displayedProjectNameForChip: String? {
         if let fromTitle = shortcutsPreview.projectName, !fromTitle.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
             return fromTitle
@@ -215,12 +215,12 @@ public struct ActionItemQuickEntryView: View {
             }
         )
         .modifier(HashKeyPressModifier(
-            isActive: hashCompletionVisible,
+            isActive: labelCompletionVisible,
             count: hashRowCount,
             highlightedIndex: $hashHighlightedIndex
         ))
         .modifier(HashKeyPressModifier(
-            isActive: projectMenuOpen,
+            isActive: projectCompletionVisible && !projectFilteredDefinitions.isEmpty,
             count: projectFilteredDefinitions.count,
             highlightedIndex: $projectHighlightedIndex
         ))
@@ -246,32 +246,32 @@ public struct ActionItemQuickEntryView: View {
         .padding(SharedAppTheme.spacingMedium)
         .background(SharedAppTheme.secondaryBackground)
         .modifier(HashKeyPressModifier(
-            isActive: hashCompletionVisible,
+            isActive: labelCompletionVisible,
             count: hashRowCount,
             highlightedIndex: $hashHighlightedIndex
         ))
         .modifier(HashKeyPressModifier(
-            isActive: projectMenuOpen,
+            isActive: projectCompletionVisible && !projectFilteredDefinitions.isEmpty,
             count: projectFilteredDefinitions.count,
             highlightedIndex: $projectHighlightedIndex
         ))
     }
 
-    /// Trailing `#query` fragment for the active hash token (may be empty while typing `#`).
+    /// Trailing `@query` fragment for the active label token (may be empty while typing `@`).
     private var hashActiveQuery: String {
-        guard let (_, q) = ActionItemTitleParsing.activeHashSuffix(in: draft.title) else { return "" }
+        guard let (_, q) = ActionItemTitleParsing.activeLabelSuffix(in: draft.title) else { return "" }
         return q
     }
 
-    /// Offer “create this label” when nothing matches but the user typed a non-empty query after `#`.
+    /// Offer “create this label” when nothing matches but the user typed a non-empty query after `@`.
     private var hashShowsCreateRow: Bool {
-        guard ActionItemTitleParsing.activeHashSuffix(in: draft.title) != nil else { return false }
+        guard ActionItemTitleParsing.activeLabelSuffix(in: draft.title) != nil else { return false }
         return hashFilteredContexts.isEmpty && !hashActiveQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Show the hash overlay when there are suggestions **or** a create-new-context row.
-    private var hashCompletionVisible: Bool {
-        guard ActionItemTitleParsing.activeHashSuffix(in: draft.title) != nil else { return false }
+    /// Show the label overlay when there are suggestions **or** a create-new-context row.
+    private var labelCompletionVisible: Bool {
+        guard ActionItemTitleParsing.activeLabelSuffix(in: draft.title) != nil else { return false }
         return !hashFilteredContexts.isEmpty || hashShowsCreateRow
     }
 
@@ -280,8 +280,9 @@ public struct ActionItemQuickEntryView: View {
         return hashShowsCreateRow ? n + 1 : n
     }
 
-    private var projectMenuOpen: Bool {
-        ActionItemTitleParsing.activeProjectSuffix(in: draft.title) != nil && !projectFilteredDefinitions.isEmpty
+    /// `true` while the title ends with a `#`, `_`, or `/` project token (show picker even when the filter list is empty).
+    private var projectCompletionVisible: Bool {
+        ActionItemTitleParsing.activeProjectSuffix(in: draft.title) != nil
     }
 
     private enum CompletionMode {
@@ -290,25 +291,25 @@ public struct ActionItemQuickEntryView: View {
     }
 
     private var activeCompletionMode: CompletionMode? {
-        let hashRange = ActionItemTitleParsing.activeHashSuffix(in: draft.title)?.fullTokenRange
+        let hashRange = ActionItemTitleParsing.activeLabelSuffix(in: draft.title)?.fullTokenRange
         let projectRange = ActionItemTitleParsing.activeProjectSuffix(in: draft.title)?.fullTokenRange
         switch (hashRange, projectRange) {
         case (nil, nil):
             return nil
         case (.some, nil):
-            return hashCompletionVisible ? .hash : nil
+            return labelCompletionVisible ? .hash : nil
         case (nil, .some):
-            return projectMenuOpen ? .project : nil
+            return projectCompletionVisible ? .project : nil
         case let (h?, p?):
             if h.lowerBound > p.lowerBound {
-                return hashCompletionVisible ? .hash : nil
+                return labelCompletionVisible ? .hash : nil
             }
-            return projectMenuOpen ? .project : nil
+            return projectCompletionVisible ? .project : nil
         }
     }
 
     private var hashFilteredContexts: [VaultContextDefinition] {
-        guard let (_, q) = ActionItemTitleParsing.activeHashSuffix(in: draft.title) else { return [] }
+        guard let (_, q) = ActionItemTitleParsing.activeLabelSuffix(in: draft.title) else { return [] }
         let sorted = dedupedContextDefinitions
         if q.isEmpty { return sorted }
         return sorted.filter { $0.name.localizedCaseInsensitiveContains(q) }
@@ -321,7 +322,7 @@ public struct ActionItemQuickEntryView: View {
         return sorted.filter { $0.name.localizedCaseInsensitiveContains(q) }
     }
 
-    /// User edits to the title field use shortcut tokens; programmatic updates from # / overlays use `commitHashSelection` / `commitProjectSelection` + `markMenuEdit()`.
+    /// User edits to the title field use shortcut tokens; programmatic updates from @ / # overlays use `commitHashSelection` / `commitProjectSelection` + `markMenuEdit()`.
     private var titleFieldBinding: Binding<String> {
         Binding(
             get: { draft.title },
@@ -332,9 +333,9 @@ public struct ActionItemQuickEntryView: View {
         )
     }
 
-    /// Applies a picked label: updates bottom chips, strips `#…` from the title, prefers menu resolution on save.
+    /// Applies a picked label: updates bottom chips, strips `@…` from the title, prefers menu resolution on save.
     private func commitHashSelection(context def: VaultContextDefinition) {
-        let t = ActionItemTitleParsing.applyHashSelection(title: draft.title, contextName: def.name)
+        let t = ActionItemTitleParsing.applyLabelSelection(title: draft.title, contextName: def.name)
         let parsed = ActionItemTitleParsing.parseShortcuts(from: t)
         draft.title = parsed.cleanedTitle
         draft.contextId = def.id
@@ -342,11 +343,11 @@ public struct ActionItemQuickEntryView: View {
         markMenuEdit()
     }
 
-    /// New label from the “Create #…” row: chips show the name; title loses the `#` token (definition created on save).
+    /// New label from the “Create @…” row: chips show the name; title loses the `@` token (definition created on save).
     private func commitHashCreateQuery(_ rawQuery: String) {
         let name = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        let t = ActionItemTitleParsing.applyHashSelection(title: draft.title, contextName: name)
+        let t = ActionItemTitleParsing.applyLabelSelection(title: draft.title, contextName: name)
         let parsed = ActionItemTitleParsing.parseShortcuts(from: t)
         draft.title = parsed.cleanedTitle
         draft.contextId = nil
@@ -354,7 +355,7 @@ public struct ActionItemQuickEntryView: View {
         markMenuEdit()
     }
 
-    /// Applies a picked project: updates the project chip, strips `_…` (or legacy `/…`) from the title.
+    /// Applies a picked project: updates the project chip, strips `#…` (or legacy `_…` / `/…`) from the title.
     private func commitProjectSelection(project def: VaultProjectDefinition) {
         let t = ActionItemTitleParsing.applyProjectSelection(title: draft.title, projectName: def.name)
         let parsed = ActionItemTitleParsing.parseShortcuts(from: t)
@@ -391,9 +392,9 @@ public struct ActionItemQuickEntryView: View {
             + Text("–")
             + Text("u4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(", ")
-            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + Text("@").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(", ")
-            + Text("_").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(", or ")
             + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(" as separate words in the title (e.g. ")
@@ -417,9 +418,9 @@ public struct ActionItemQuickEntryView: View {
             + Text(" · ")
             + Text("u0–u4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(" · ")
-            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + Text("@").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(" · ")
-            + Text("_").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text(" · ")
             + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
             + Text("→P1…P4"))
@@ -452,18 +453,18 @@ public struct ActionItemQuickEntryView: View {
                         Task { await submitDraft() }
                     }
                     #endif
-                    .accessibilityHint("Use number sign for context, P0 through P4 or exclamation marks for priority, U0 through U4 for urgency, underscore for project.")
+                    .accessibilityHint("Use at sign for labels, number sign for projects, P0 through P4 or exclamation marks for priority, U0 through U4 for urgency.")
 
-                if hashCompletionVisible {
+                if labelCompletionVisible {
                     hashSuggestionOverlay
                         .padding(.top, hashSuggestionTopInset)
-                } else if projectMenuOpen {
+                } else if projectCompletionVisible {
                     projectSuggestionOverlay
                         .padding(.top, hashSuggestionTopInset)
                 }
             }
 
-            Text("Number sign sets context; P0–P4 or exclamation marks set priority; U0–U4 sets urgency; underscore sets project.")
+            Text("@ sets labels; # sets projects; P0–P4 or exclamation marks set priority; U0–U4 sets urgency.")
                 .font(SharedAppTheme.caption)
                 .foregroundStyle(SharedAppTheme.secondaryText)
                 .lineLimit(2)
@@ -507,12 +508,12 @@ public struct ActionItemQuickEntryView: View {
                                     )
                             )
                     )
-                    .accessibilityHint("Use number sign for context, P0 through P4 or exclamation marks for priority, U0 through U4 for urgency, underscore for project.")
+                    .accessibilityHint("Use at sign for labels, number sign for projects, P0 through P4 or exclamation marks for priority, U0 through U4 for urgency.")
 
-                if hashCompletionVisible {
+                if labelCompletionVisible {
                     hashSuggestionOverlay
                         .padding(.top, 72)
-                } else if projectMenuOpen {
+                } else if projectCompletionVisible {
                     projectSuggestionOverlay
                         .padding(.top, 72)
                 }
@@ -554,7 +555,7 @@ public struct ActionItemQuickEntryView: View {
                         hashHighlightedIndex = 0
                     } label: {
                         HStack(spacing: 8) {
-                            Text("#")
+                            Text("@")
                                 .foregroundStyle(Color(hex: c.accentColorHex ?? ContextAccentPalette.defaultGreyHex))
                             Text(c.name)
                                 .foregroundStyle(SharedAppTheme.primaryText)
@@ -578,7 +579,7 @@ public struct ActionItemQuickEntryView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "plus.circle.fill")
                                 .foregroundStyle(SharedAppTheme.accent)
-                            Text("Create “#\(q)” on save")
+                            Text("Create “@\(q)” on save")
                                 .foregroundStyle(SharedAppTheme.primaryText)
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.85)
@@ -613,7 +614,7 @@ public struct ActionItemQuickEntryView: View {
                         projectHighlightedIndex = 0
                     } label: {
                         HStack(spacing: 8) {
-                            Text("_")
+                            Text("#")
                                 .foregroundStyle(SharedAppTheme.accent)
                             Text(p.name)
                                 .foregroundStyle(SharedAppTheme.primaryText)
@@ -640,7 +641,7 @@ public struct ActionItemQuickEntryView: View {
     }
 
     private var inlineHashChips: some View {
-        let tags = ActionItemTitleParsing.hashTagNames(in: draft.title)
+        let tags = ActionItemTitleParsing.labelTagNames(in: draft.title)
         guard !tags.isEmpty else { return AnyView(EmptyView()) }
         let tagFont: Font = isMacProminentQuickEntry ? .subheadline.weight(.medium) : SharedAppTheme.caption
         let hPad: CGFloat = isMacProminentQuickEntry ? 14 : 8
@@ -651,7 +652,7 @@ public struct ActionItemQuickEntryView: View {
                     ForEach(tags, id: \.self) { tag in
                         let hex = contexts.first(where: { $0.name.caseInsensitiveCompare(tag) == .orderedSame })?.accentColorHex
                             ?? ContextAccentPalette.defaultGreyHex
-                        Text("#" + tag)
+                        Text("@" + tag)
                             .font(tagFont)
                             .foregroundStyle(SharedAppTheme.primaryText)
                             .padding(.horizontal, hPad)
@@ -799,12 +800,12 @@ public struct ActionItemQuickEntryView: View {
 
     private var projectChip: some View {
         Menu {
-            Button("_\(ActionItemsFeatureModel.generalProjectName)") {
+            Button("#\(ActionItemsFeatureModel.generalProjectName)") {
                 markMenuEdit()
                 draft.projectId = nil
             }
             ForEach(sortedProjects) { project in
-                Button("_\(project.name)") {
+                Button("#\(project.name)") {
                     markMenuEdit()
                     draft.projectId = project.id
                 }
@@ -927,15 +928,18 @@ public struct ActionItemQuickEntryView: View {
             return
         }
         if activeCompletionMode == .project {
-            guard !projectFilteredDefinitions.isEmpty else { return }
-            let i = min(max(0, projectHighlightedIndex), projectFilteredDefinitions.count - 1)
-            commitProjectSelection(project: projectFilteredDefinitions[i])
+            if !projectFilteredDefinitions.isEmpty {
+                let i = min(max(0, projectHighlightedIndex), projectFilteredDefinitions.count - 1)
+                commitProjectSelection(project: projectFilteredDefinitions[i])
+            } else {
+                await persist()
+            }
             return
         }
         await persist()
     }
 
-    /// Persists the draft. Shortcut tokens are always stripped from the stored title. If the user last edited via the title field, parsed `#`/`p`/`u`/`_` tokens win; if they last used chips/menus, chip state wins for priority, urgency, and labels.
+    /// Persists the draft. Shortcut tokens are always stripped from the stored title. If the user last edited via the title field, parsed `@`/`#`/`p`/`u` tokens win; if they last used chips/menus, chip state wins for priority, urgency, and labels.
     private func persist() async {
         let parsed = ActionItemTitleParsing.parseShortcuts(from: draft.title)
 

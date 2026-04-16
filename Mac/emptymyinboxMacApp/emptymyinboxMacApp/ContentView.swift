@@ -8,22 +8,6 @@
 import SwiftUI
 import EmptyMyInboxShared
 
-private enum MacRootTab: Int, CaseIterable, Identifiable, Hashable {
-    case mail
-    case calendar
-    case actionItems
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .mail: return "Mail"
-        case .calendar: return "Calendar"
-        case .actionItems: return "Action Items"
-        }
-    }
-}
-
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
@@ -157,6 +141,18 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: .macSelectRootTab)) { notification in
+            guard let raw = notification.object as? Int, let tab = MacRootTab(rawValue: raw) else { return }
+            rootTab = tab
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macCycleRootTabForward)) { _ in
+            let order = MacRootTab.allCases
+            guard let idx = order.firstIndex(of: rootTab) else { return }
+            rootTab = order[(idx + 1) % order.count]
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macRefreshCurrentRootTab)) { _ in
+            Task { await refreshCurrentTab() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task { await loadDashboardActionItems() }
         }
@@ -178,6 +174,9 @@ struct ContentView: View {
                 await calendarModel.refresh()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
+            Task { snapshot = await DashboardDataManager.shared.loadCachedSnapshot() }
         }
     }
 
@@ -209,6 +208,10 @@ struct ContentView: View {
 
     private func loadSnapshot() async {
         snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
+        // No cached data at all — trigger a full fetch so the user sees their emails immediately.
+        if snapshot == nil, !isRefreshing {
+            await refreshMailbox()
+        }
     }
 
     private func loadDashboardActionItems() async {
