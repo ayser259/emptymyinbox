@@ -33,8 +33,6 @@ public actor LLMSettingsStore {
     private var settings: LLMSettings = .default
     private var didLoad = false
 
-    private let supportedModels: Set<String> = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o"]
-
     public init(
         settingsFileName: String = "llm_settings.json",
         keychainService: String = "com.emptyMyInbox.llm",
@@ -254,18 +252,54 @@ public actor LLMSettingsStore {
     }
 
     private func validatedSettings(_ candidate: LLMSettings) -> LLMSettings {
-        let defaultSettings = LLMSettings.default
-        let defaultModel = supportedModels.contains(candidate.defaultModel) ? candidate.defaultModel : defaultSettings.defaultModel
-        let initialPassModel = supportedModels.contains(candidate.initialPassModel) ? candidate.initialPassModel : defaultSettings.initialPassModel
-        let proModel = supportedModels.contains(candidate.proModel) ? candidate.proModel : defaultSettings.proModel
+        let defaults = LLMModelCatalog.defaults(for: candidate.provider)
+        let defaultCandidate = canonicalModel(candidate.defaultModel, provider: candidate.provider)
+        let initialPassCandidate = canonicalModel(candidate.initialPassModel, provider: candidate.provider)
+        let proCandidate = canonicalModel(candidate.proModel, provider: candidate.provider)
+        let briefCandidate = canonicalModel(candidate.briefModel, provider: candidate.provider)
+        let storiesCandidate = canonicalModel(candidate.storiesModel, provider: candidate.provider)
+        let quickReplyCandidate = canonicalModel(candidate.quickReplyModel, provider: candidate.provider)
+
+        let defaultModel = LLMModelCatalog.contains(defaultCandidate, provider: candidate.provider) ? defaultCandidate : defaults.defaultModel
+        let initialPassModel = LLMModelCatalog.contains(initialPassCandidate, provider: candidate.provider) ? initialPassCandidate : defaults.initialPassModel
+        let proModel = LLMModelCatalog.contains(proCandidate, provider: candidate.provider) ? proCandidate : defaults.proModel
+        let briefModel = LLMModelCatalog.contains(briefCandidate, provider: candidate.provider) ? briefCandidate : initialPassModel
+        let storiesModel = LLMModelCatalog.contains(storiesCandidate, provider: candidate.provider) ? storiesCandidate : initialPassModel
+        let quickReplyModel = LLMModelCatalog.contains(quickReplyCandidate, provider: candidate.provider) ? quickReplyCandidate : defaultModel
         return LLMSettings(
+            provider: candidate.provider,
             defaultModel: defaultModel,
             initialPassModel: initialPassModel,
             proModel: proModel,
+            briefModel: briefModel,
+            storiesModel: storiesModel,
+            quickReplyModel: quickReplyModel,
             useProModelForDeepAnalysis: candidate.useProModelForDeepAnalysis,
             requestTimeoutSeconds: candidate.requestTimeoutSeconds,
             maxRetries: candidate.maxRetries
         )
+    }
+
+    private func canonicalModel(_ model: String, provider: LLMProvider) -> String {
+        switch provider {
+        case .openAI:
+            return model
+        case .claude:
+            switch model {
+            case "claude-haiku-4-5-20251001":
+                return "claude-haiku-4-5"
+            case "claude-3-5-haiku-latest":
+                return "claude-haiku-4-5"
+            case "claude-3-5-sonnet-latest":
+                return "claude-sonnet-4-6"
+            case "claude-3-5-haiku-20241022":
+                return "claude-haiku-4-5"
+            case "claude-3-5-sonnet-20241022":
+                return "claude-sonnet-4-6"
+            default:
+                return model
+            }
+        }
     }
 
     private func message(for status: OSStatus, operation: String) -> String {

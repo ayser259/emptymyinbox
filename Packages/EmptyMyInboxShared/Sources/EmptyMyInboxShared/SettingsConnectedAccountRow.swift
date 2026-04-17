@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Account row for Settings: Mail / Calendar / Drive status and vault link.
+/// Account row for Settings: Mail / Calendar / Action Items and vault link.
 public struct SettingsConnectedAccountRow: View {
     let account: GmailAccount
     let vaultConfiguration: VaultActiveConfiguration?
@@ -77,7 +77,7 @@ public struct SettingsConnectedAccountRow: View {
         HStack(spacing: 10) {
             serviceChip(title: "Mail", on: summary.gmail)
             serviceChip(title: "Calendar", on: summary.calendar)
-            serviceChip(title: "Drive", on: summary.drive)
+            serviceChip(title: "Action Items", on: summary.vaultLinked)
         }
     }
 

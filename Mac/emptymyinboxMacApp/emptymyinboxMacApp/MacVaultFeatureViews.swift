@@ -47,6 +47,7 @@ struct MacVaultCalendarTab: View {
     let dashboardActionItems: [VaultActionItemRecord]
     let isRefreshing: Bool
     let refreshMessage: String?
+    var refreshState: MacSidebarRefreshState = .init()
     var onOpenSettings: () -> Void
     @State private var showVisibility = false
     @State private var selectedTool: MacCalendarSidebarTool = .calendar
@@ -76,6 +77,7 @@ struct MacVaultCalendarTab: View {
                     }
                 },
                 onOpenSettings: onOpenSettings,
+                refreshState: refreshState,
                 bottomAccessory: {
                     AnyView(
                         MacCalendarMiniMonthView(selectedDate: $model.selectedDate, accentColor: MacAppTheme.accent)
@@ -134,6 +136,14 @@ struct MacVaultCalendarTab: View {
                     }
                 }
             }
+            .focusable()
+            .onKeyPress { press in
+                MacCalendarModeKeyPress.handle(
+                    press,
+                    calendarModesActive: selectedTool == .calendar || selectedTool == .starred,
+                    setMode: { model.mode = $0 }
+                )
+            }
         } detail: {
             NavigationStack {
                 Group {
@@ -153,6 +163,14 @@ struct MacVaultCalendarTab: View {
                             accentColor: MacAppTheme.accent,
                             showsBuiltInModePicker: true
                         )
+                        .focusable()
+                        .onKeyPress { press in
+                            MacCalendarModeKeyPress.handle(
+                                press,
+                                calendarModesActive: true,
+                                setMode: { model.mode = $0 }
+                            )
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -161,19 +179,6 @@ struct MacVaultCalendarTab: View {
             }
         }
         .background(MacAppTheme.primaryBackground)
-        .onKeyPress { press in
-            guard selectedTool == .calendar || selectedTool == .starred else { return .ignored }
-            guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
-            let s = press.characters.lowercased()
-            guard s.count == 1 else { return .ignored }
-            switch s {
-            case "e": model.mode = .events; return .handled
-            case "d": model.mode = .day; return .handled
-            case "w": model.mode = .week; return .handled
-            case "m": model.mode = .month; return .handled
-            default: return .ignored
-            }
-        }
         .task {
             await model.refreshStarredKeysFromStore()
             syncStarredFilterWithSelection()
@@ -405,6 +410,7 @@ struct MacVaultActionItemsTab: View {
     let dashboardActionItems: [VaultActionItemRecord]
     let isRefreshing: Bool
     let refreshMessage: String?
+    var refreshState: MacSidebarRefreshState = .init()
     var onOpenSettings: () -> Void
 
     @ObservedObject private var vaultManager = VaultManager.shared
@@ -671,7 +677,8 @@ struct MacVaultActionItemsTab: View {
             maxColumnWidth: 320,
             featureShortcutSection: actionItemsFeatureShortcutSection,
             onRefresh: { Task { await reload() } },
-            onOpenSettings: onOpenSettings
+            onOpenSettings: onOpenSettings,
+            refreshState: refreshState
         ) {
             Section {
                 MacSidebarListRowButton(

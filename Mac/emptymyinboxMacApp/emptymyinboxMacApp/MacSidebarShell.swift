@@ -72,7 +72,147 @@ struct MacSidebarRowLeadingContent: View {
     }
 }
 
-/// Primary-tab sidebar: scrollable sections plus optional **pinned** accessory (e.g. mini calendar), then Refresh + Settings.
+// MARK: - Refresh state
+
+/// Snapshot of per-domain refresh state passed into `MacSidebarShell` to power the refresh widget.
+struct MacSidebarRefreshState: Equatable {
+    var isRefreshingMail: Bool = false
+    var isRefreshingCalendar: Bool = false
+    var lastMailRefreshAt: Date? = nil
+    var lastCalendarRefreshAt: Date? = nil
+    var lastActionItemsRefreshAt: Date? = nil
+
+    var isAnyRefreshing: Bool { isRefreshingMail || isRefreshingCalendar }
+}
+
+// MARK: - Refresh widget
+
+private struct MacSidebarRefreshWidget: View {
+    let refreshState: MacSidebarRefreshState
+    let onRefresh: () -> Void
+
+    @State private var animPhase: CGFloat = 0
+
+    var body: some View {
+        Button(action: onRefresh) {
+            TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                VStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        domainRow(
+                            icon: "envelope",
+                            label: "Mail",
+                            date: refreshState.lastMailRefreshAt,
+                            isRefreshing: refreshState.isRefreshingMail,
+                            now: timeline.date
+                        )
+                        domainRow(
+                            icon: "calendar",
+                            label: "Calendar",
+                            date: refreshState.lastCalendarRefreshAt,
+                            isRefreshing: refreshState.isRefreshingCalendar,
+                            now: timeline.date
+                        )
+                        domainRow(
+                            icon: "checkmark.square",
+                            label: "Tasks",
+                            date: refreshState.lastActionItemsRefreshAt,
+                            isRefreshing: false,
+                            now: timeline.date
+                        )
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, refreshState.isAnyRefreshing ? 6 : 8)
+
+                    if refreshState.isAnyRefreshing {
+                        indeterminateBar
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Refresh (⌘R)")
+    }
+
+    @ViewBuilder
+    private func domainRow(icon: String, label: String, date: Date?, isRefreshing: Bool, now: Date) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5))
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.6))
+                .frame(width: 13, alignment: .center)
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(MacAppTheme.primaryText)
+            Spacer(minLength: 4)
+            if isRefreshing {
+                Text("Syncing…")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(MacAppTheme.accent)
+            } else {
+                Text(relativeTime(date, now: now))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(MacAppTheme.secondaryText.opacity(0.5))
+                    .monospacedDigit()
+            }
+        }
+        .padding(.vertical, 3.5)
+    }
+
+    private var indeterminateBar: some View {
+        GeometryReader { geo in
+            let trackW = geo.size.width
+            let segW = trackW * 0.42
+            let x = animPhase * (trackW + segW) - segW
+
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(MacAppTheme.accent.opacity(0.12))
+                    .frame(maxWidth: .infinity)
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                MacAppTheme.accent.opacity(0.15),
+                                MacAppTheme.accent.opacity(0.85),
+                                MacAppTheme.accent.opacity(0.15)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: segW)
+                    .offset(x: max(0, x))
+            }
+            .clipped()
+        }
+        .frame(height: 2)
+        .onAppear {
+            animPhase = 0
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                animPhase = 1
+            }
+        }
+        .onDisappear {
+            animPhase = 0
+        }
+    }
+
+    private func relativeTime(_ date: Date?, now: Date) -> String {
+        guard let date else { return "Never" }
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 5 { return "Just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        if seconds < 86400 { return "\(seconds / 3600)h ago" }
+        return "Yesterday"
+    }
+}
+
+// MARK: - Shell
+
+/// Primary-tab sidebar: scrollable sections plus optional **pinned** accessory (e.g. mini calendar), then Refresh widget + Settings.
 struct MacSidebarShell<Content: View>: View {
     var minColumnWidth: CGFloat = 220
     var idealColumnWidth: CGFloat = 240
@@ -83,6 +223,8 @@ struct MacSidebarShell<Content: View>: View {
     var globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global
     var onRefresh: () -> Void
     var onOpenSettings: () -> Void
+    /// Per-domain refresh timestamps and loading flags — drives the refresh widget in the footer.
+    var refreshState: MacSidebarRefreshState = .init()
     /// Pinned between the scrolling list and the Refresh/Settings footer (e.g. mini month).
     var bottomAccessory: (() -> AnyView)?
     @ViewBuilder var content: () -> Content
@@ -97,6 +239,7 @@ struct MacSidebarShell<Content: View>: View {
         globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global,
         onRefresh: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
+        refreshState: MacSidebarRefreshState = .init(),
         bottomAccessory: (() -> AnyView)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
@@ -107,6 +250,7 @@ struct MacSidebarShell<Content: View>: View {
         self.globalShortcuts = globalShortcuts
         self.onRefresh = onRefresh
         self.onOpenSettings = onOpenSettings
+        self.refreshState = refreshState
         self.bottomAccessory = bottomAccessory
         self.content = content
     }
@@ -142,15 +286,11 @@ struct MacSidebarShell<Content: View>: View {
             }
 
             VStack(spacing: 0) {
-                MacSidebarFooterButton(
-                    title: "Refresh",
-                    systemImage: "arrow.clockwise",
-                    shortcutHint: "⌘R",
-                    action: onRefresh
-                )
+                MacSidebarRefreshWidget(refreshState: refreshState, onRefresh: onRefresh)
+                Divider()
+                    .opacity(0.2)
                 MacSidebarFooterButton(title: "Settings", systemImage: "gearshape.fill", action: onOpenSettings)
             }
-            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(MacAppTheme.secondaryBackground.opacity(0.55))
         }

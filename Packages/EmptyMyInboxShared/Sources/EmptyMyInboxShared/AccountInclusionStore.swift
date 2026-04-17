@@ -26,6 +26,7 @@ public actor AccountInclusionStore {
                         accountEmail: email,
                         includeInDailyBriefing: true,
                         includeInNewsletterInsights: true,
+                        includeInQuickReply: true,
                         isPrimaryNewsletterAddress: false
                     )
                 )
@@ -55,6 +56,13 @@ public actor AccountInclusionStore {
         await persist()
     }
 
+    public func setIncludeInQuickReply(accountEmail: String, isIncluded: Bool) async {
+        await ensureLoaded()
+        guard let index = indexOf(email: accountEmail) else { return }
+        cached[index].includeInQuickReply = isIncluded
+        await persist()
+    }
+
     public func setPrimaryNewsletterAddress(accountEmail: String) async {
         await ensureLoaded()
         for idx in cached.indices {
@@ -71,6 +79,11 @@ public actor AccountInclusionStore {
     public func isIncludedInNewsletterInsights(accountEmail: String) async -> Bool {
         await ensureLoaded()
         return cached.first(where: { $0.accountEmail.caseInsensitiveCompare(accountEmail) == .orderedSame })?.includeInNewsletterInsights ?? true
+    }
+
+    public func isIncludedInQuickReply(accountEmail: String) async -> Bool {
+        await ensureLoaded()
+        return cached.first(where: { $0.accountEmail.caseInsensitiveCompare(accountEmail) == .orderedSame })?.includeInQuickReply ?? true
     }
 
     public func primaryNewsletterAddress() async -> String? {

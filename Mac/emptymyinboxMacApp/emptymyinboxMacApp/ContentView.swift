@@ -19,9 +19,20 @@ struct ContentView: View {
     @State private var showVaultSettings = false
     @State private var showAppSettings = false
     @State private var isAddingGmailAccount = false
+    @State private var lastMailRefreshAt: Date?
     @State private var lastCalendarRefreshAt: Date?
     @State private var lastActionItemsRefreshAt: Date?
     @State private var dashboardActionItems: [VaultActionItemRecord] = []
+
+    private var sidebarRefreshState: MacSidebarRefreshState {
+        MacSidebarRefreshState(
+            isRefreshingMail: isRefreshing,
+            isRefreshingCalendar: calendarModel.isLoading,
+            lastMailRefreshAt: lastMailRefreshAt,
+            lastCalendarRefreshAt: lastCalendarRefreshAt,
+            lastActionItemsRefreshAt: lastActionItemsRefreshAt
+        )
+    }
 
     var body: some View {
         Group {
@@ -37,20 +48,21 @@ struct ContentView: View {
         .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
         .sheet(isPresented: $showVaultSettings) {
-            MacVaultSettingsView()
+            NavigationStack {
+                MacVaultSettingsView()
+            }
+            .frame(minWidth: 440, minHeight: 400)
         }
         .sheet(isPresented: $showAppSettings) {
-            NavigationStack {
-                AppSettingsMenuContent(
-                    vaultSettings: { MacVaultSettingsView() },
-                    isAddingAccount: $isAddingGmailAccount,
-                    onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
-                    onDismiss: { showAppSettings = false },
-                    accentColor: MacAppTheme.accent
-                )
-                .environmentObject(authManager)
-            }
-            .frame(minWidth: 520, minHeight: 640)
+            SettingsContainerView(
+                vaultSettings: { MacVaultSettingsView(showDismissToolbar: false) },
+                isAddingAccount: $isAddingGmailAccount,
+                onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
+                onDismiss: { showAppSettings = false },
+                accentColor: MacAppTheme.accent
+            )
+            .environmentObject(authManager)
+            .frame(minWidth: 760, minHeight: 560)
         }
         .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
             showVaultSettings = true
@@ -79,6 +91,7 @@ struct ContentView: View {
                         dashboardActionItems: dashboardActionItems,
                         isRefreshing: isRefreshing,
                         refreshMessage: refreshMessage,
+                        refreshState: sidebarRefreshState,
                         onOpenSettings: { showAppSettings = true }
                     )
                 case .actionItems:
@@ -88,6 +101,7 @@ struct ContentView: View {
                         dashboardActionItems: dashboardActionItems,
                         isRefreshing: isRefreshing,
                         refreshMessage: refreshMessage,
+                        refreshState: sidebarRefreshState,
                         onOpenSettings: { showAppSettings = true }
                     )
                 }
@@ -188,6 +202,7 @@ struct ContentView: View {
             refreshMessage: $refreshMessage,
             calendarModel: calendarModel,
             dashboardActionItems: dashboardActionItems,
+            refreshState: sidebarRefreshState,
             onRefreshMailbox: { Task { await refreshMailbox() } },
             onOpenSettings: { showAppSettings = true },
             onAddAccount: { Task { await addGmailAccountFromSettings() } }
@@ -226,6 +241,7 @@ struct ContentView: View {
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         await loadDashboardActionItems()
+        lastMailRefreshAt = Date()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
         NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }

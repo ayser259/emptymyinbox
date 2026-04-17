@@ -21,6 +21,7 @@ struct EmailDetailView: View {
     @State private var unsubscribeToastIsSuccess = false
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
+    @State private var replyComposerEmail: EmailDetail?
     @ObservedObject private var debugSettings = DebugSettings.shared
     
     var body: some View {
@@ -232,6 +233,9 @@ struct EmailDetailView: View {
                 UnsubscribeWebView(url: url)
             }
         }
+        .sheet(item: $replyComposerEmail) { email in
+            EmailReplyComposerView(email: email)
+        }
         .task {
             await loadEmail()
         }
@@ -308,8 +312,10 @@ struct EmailDetailView: View {
     }
     
     private func handleReply() async {
-        // TODO: Implement reply functionality
-        logDebug("Reply to email \(emailId)", category: "Email")
+        guard let email else { return }
+        await MainActor.run {
+            replyComposerEmail = email
+        }
     }
     
     private func handleStar() async {

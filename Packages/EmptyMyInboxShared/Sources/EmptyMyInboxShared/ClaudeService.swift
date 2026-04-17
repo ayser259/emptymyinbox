@@ -1,24 +1,22 @@
 import Foundation
 
-public struct InsightGenerationResult: Codable {
-    public let summary: String
-    public let keyPoints: [String]
-    public let themeTag: String
-    public let confidence: Double
+private struct ClaudeResponsePayload: Decodable {
+    struct ContentBlock: Decodable {
+        let type: String
+        let text: String?
+    }
+
+    let content: [ContentBlock]
 }
 
-private struct InsightGenerationEnvelope: Codable {
-    let insights: [InsightGenerationResult]
-}
-
-private struct QuickReplyEnvelope: Codable {
+private struct ClaudeQuickReplyEnvelope: Codable {
     let reply: String
 }
 
-public actor OpenAIService {
-    public static let shared = OpenAIService()
+public actor ClaudeService {
+    public static let shared = ClaudeService()
 
-    private let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private let retryableStatusCodes: Set<Int> = [408, 409, 425, 429]
     private let retryableURLErrorCodes: Set<URLError.Code> = [
         .timedOut,
@@ -39,20 +37,19 @@ public actor OpenAIService {
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedBriefPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
-        let response = try await runChatPrompt(
+        let response = try await runPrompt(
             feature: "briefing.classify",
             systemPrompt: systemPrompt,
             userPrompt: prompt,
             model: settings.briefModel,
-            temperature: 0.0,
-            maxTokens: 40,
-            schema: Self.briefingTypeSchema
+            maxTokens: 100
         )
 
-        guard let data = response.data(using: .utf8),
+        let normalizedJSON = normalizeJSONText(response)
+        guard let data = normalizedJSON.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let typeString = object["type"] as? String else {
-            throw OpenAIServiceError.invalidResponse
+            throw ClaudeServiceError.invalidResponse
         }
 
         let normalized = typeString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -78,19 +75,18 @@ public actor OpenAIService {
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedStoriesPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
-        let response = try await runChatPrompt(
+        let response = try await runPrompt(
             feature: "stories.summarize",
             systemPrompt: systemPrompt,
             userPrompt: prompt,
             model: selectedStoriesModel,
-            temperature: 0.1,
-            maxTokens: 500,
-            schema: Self.storyInsightsSchema
+            maxTokens: 1200
         )
 
-        guard let data = response.data(using: .utf8),
-              let envelope = try? JSONDecoder().decode(InsightGenerationEnvelope.self, from: data) else {
-            throw OpenAIServiceError.invalidResponse
+        let normalizedJSON = normalizeJSONText(response)
+        guard let data = normalizedJSON.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(ClaudeInsightEnvelope.self, from: data) else {
+            throw ClaudeServiceError.invalidResponse
         }
         return envelope.insights.map { normalized(result: $0) }
     }
@@ -113,61 +109,46 @@ public actor OpenAIService {
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedQuickReplyPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
-        let response = try await runChatPrompt(
+        let response = try await runPrompt(
             feature: "reply.quick",
             systemPrompt: systemPrompt,
             userPrompt: prompt,
             model: settings.quickReplyModel,
-            temperature: 0.5,
-            maxTokens: 220,
-            schema: Self.quickReplySchema
+            maxTokens: 320
         )
         return try parseQuickReply(from: response)
     }
 
-    private func runChatPrompt(
+    private func runPrompt(
         feature: String,
         systemPrompt: String,
         userPrompt: String,
         model: String,
-        temperature: Double,
-        maxTokens: Int,
-        schema: [String: Any]? = nil
+        maxTokens: Int
     ) async throws -> String {
         let settings = await LLMSettingsStore.shared.currentSettings()
-        guard let apiKey = await LLMSettingsStore.shared.getAPIKey(), !apiKey.isEmpty else {
-            throw OpenAIServiceError.missingAPIKey
+        guard let apiKey = await ClaudeAPIKeyStore.shared.readAPIKeyResult().keyValue, !apiKey.isEmpty else {
+            throw ClaudeServiceError.missingAPIKey
         }
-        let defaults = LLMModelCatalog.defaults(for: .openAI)
-        let selectedModel = LLMModelCatalog.contains(model, provider: .openAI) ? model : defaults.defaultModel
+        let defaults = LLMModelCatalog.defaults(for: .claude)
+        let selectedModel = LLMModelCatalog.contains(model, provider: .claude) ? model : defaults.defaultModel
         Telemetry.event("llm.request.started", metadata: [
-            "provider": LLMProvider.openAI.rawValue,
+            "provider": LLMProvider.claude.rawValue,
             "feature": feature,
             "model": selectedModel
         ])
         let requestStart = Date()
 
-        var requestBody: [String: Any] = [
+        let requestBody: [String: Any] = [
             "model": selectedModel,
+            "max_tokens": maxTokens,
+            "system": systemPrompt,
             "messages": [
-                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userPrompt]
-            ],
-            "temperature": temperature,
-            "max_tokens": maxTokens
-        ]
-        if let schema {
-            requestBody["response_format"] = [
-                "type": "json_schema",
-                "json_schema": [
-                    "name": "response",
-                    "strict": true,
-                    "schema": schema
-                ]
             ]
-        }
+        ]
         logLLMRequestPayload(
-            provider: .openAI,
+            provider: .claude,
             feature: feature,
             model: selectedModel,
             requestBody: requestBody
@@ -177,7 +158,8 @@ public actor OpenAIService {
         request.httpMethod = "POST"
         request.timeoutInterval = settings.requestTimeoutSeconds
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody, options: [])
 
         var attempts = 0
@@ -186,52 +168,55 @@ public actor OpenAIService {
                 try Task.checkCancellation()
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
-                    throw OpenAIServiceError.invalidResponse
+                    throw ClaudeServiceError.invalidResponse
                 }
                 guard (200...299).contains(http.statusCode) else {
                     let body = String(data: data, encoding: .utf8) ?? "unknown"
                     let retryAfter = parseRetryAfterSeconds(from: http)
-                    throw OpenAIServiceError.apiStatusError(
+                    throw ClaudeServiceError.apiStatusError(
                         statusCode: http.statusCode,
                         body: body,
                         retryAfterSeconds: retryAfter
                     )
                 }
 
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let choices = json["choices"] as? [[String: Any]],
-                      let first = choices.first,
-                      let message = first["message"] as? [String: Any],
-                      let content = message["content"] as? String else {
-                    throw OpenAIServiceError.invalidResponse
+                guard let payload = try? JSONDecoder().decode(ClaudeResponsePayload.self, from: data),
+                      let text = payload.content.first(where: { $0.type == "text" })?.text else {
+                    throw ClaudeServiceError.invalidResponse
                 }
                 Telemetry.event("llm.request.succeeded", metadata: [
-                    "provider": LLMProvider.openAI.rawValue,
+                    "provider": LLMProvider.claude.rawValue,
                     "feature": feature,
                     "model": selectedModel,
                     "attempts": "\(attempts + 1)",
                     "elapsed_ms": "\(Int(Date().timeIntervalSince(requestStart) * 1000))"
                 ])
-                return content
+                return text
             } catch is CancellationError {
                 Telemetry.event("llm.request.cancelled", metadata: [
-                    "provider": LLMProvider.openAI.rawValue,
+                    "provider": LLMProvider.claude.rawValue,
                     "feature": feature,
                     "model": selectedModel,
                     "elapsed_ms": "\(Int(Date().timeIntervalSince(requestStart) * 1000))"
                 ])
-                throw OpenAIServiceError.cancelled
+                throw ClaudeServiceError.cancelled
             } catch {
                 attempts += 1
                 if attempts > settings.maxRetries || !shouldRetry(error: error) {
-                    Telemetry.event("llm.request.failed", metadata: [
-                        "provider": LLMProvider.openAI.rawValue,
+                    var metadata: [String: String] = [
+                        "provider": LLMProvider.claude.rawValue,
                         "feature": feature,
                         "model": selectedModel,
                         "attempts": "\(attempts)",
                         "error_type": "\(type(of: error))",
                         "elapsed_ms": "\(Int(Date().timeIntervalSince(requestStart) * 1000))"
-                    ])
+                    ]
+                    if let claudeError = error as? ClaudeServiceError,
+                       case .apiStatusError(let statusCode, let body, _) = claudeError {
+                        metadata["status_code"] = "\(statusCode)"
+                        metadata["status_body"] = String(body.prefix(240))
+                    }
+                    Telemetry.event("llm.request.failed", metadata: metadata)
                     throw error
                 }
                 let delaySeconds = retryDelaySeconds(for: error, attempt: attempts)
@@ -256,6 +241,16 @@ public actor OpenAIService {
         return template + "\n\n```json\n" + inputJSON + "\n```\n"
     }
 
+    private func normalizeJSONText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("```") else { return trimmed }
+        let stripped = trimmed
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```JSON", with: "")
+            .replacingOccurrences(of: "```", with: "")
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func parseRetryAfterSeconds(from response: HTTPURLResponse) -> TimeInterval? {
         guard let retryAfter = response.value(forHTTPHeaderField: "Retry-After"),
               let seconds = TimeInterval(retryAfter),
@@ -266,13 +261,11 @@ public actor OpenAIService {
     }
 
     private func shouldRetry(error: Error) -> Bool {
-        if let error = error as? OpenAIServiceError {
+        if let error = error as? ClaudeServiceError {
             switch error {
             case .apiStatusError(let statusCode, _, _):
                 return retryableStatusCodes.contains(statusCode) || (500...599).contains(statusCode)
-            case .missingAPIKey, .invalidResponse, .apiError:
-                return false
-            case .cancelled:
+            case .missingAPIKey, .invalidResponse, .apiError, .cancelled:
                 return false
             }
         }
@@ -283,7 +276,7 @@ public actor OpenAIService {
     }
 
     private func retryDelaySeconds(for error: Error, attempt: Int) -> TimeInterval {
-        if let error = error as? OpenAIServiceError,
+        if let error = error as? ClaudeServiceError,
            case .apiStatusError(_, _, let retryAfterSeconds) = error,
            let retryAfterSeconds {
             return retryAfterSeconds + Double.random(in: 0.0...0.25)
@@ -293,17 +286,19 @@ public actor OpenAIService {
     }
 
     private func parseQuickReply(from response: String) throws -> String {
-        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw OpenAIServiceError.invalidResponse
-        }
-        if let data = trimmed.data(using: .utf8),
-           let envelope = try? JSONDecoder().decode(QuickReplyEnvelope.self, from: data) {
+        let normalizedJSON = normalizeJSONText(response)
+        if let data = normalizedJSON.data(using: .utf8),
+           let envelope = try? JSONDecoder().decode(ClaudeQuickReplyEnvelope.self, from: data) {
             let reply = envelope.reply.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !reply.isEmpty else {
-                throw OpenAIServiceError.invalidResponse
+                throw ClaudeServiceError.invalidResponse
             }
             return reply
+        }
+
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ClaudeServiceError.invalidResponse
         }
         // Backward compatibility for older/custom prompt formats that may still return plain text.
         return trimmed
@@ -348,61 +343,13 @@ public actor OpenAIService {
             confidence: clampedConfidence
         )
     }
-
-    private static let briefingTypeSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "type": [
-                "type": "string",
-                "enum": ["directCommunication", "calendarInvite", "urgentNotification"]
-            ]
-        ],
-        "required": ["type"],
-        "additionalProperties": false
-    ]
-
-    private static let singleInsightSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "summary": ["type": "string"],
-            "keyPoints": [
-                "type": "array",
-                "items": ["type": "string"],
-                "minItems": 3,
-                "maxItems": 3
-            ],
-            "themeTag": ["type": "string"],
-            "confidence": ["type": "number"]
-        ],
-        "required": ["summary", "keyPoints", "themeTag", "confidence"],
-        "additionalProperties": false
-    ]
-
-    private static let storyInsightsSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "insights": [
-                "type": "array",
-                "items": singleInsightSchema,
-                "minItems": 0,
-                "maxItems": 3
-            ]
-        ],
-        "required": ["insights"],
-        "additionalProperties": false
-    ]
-
-    private static let quickReplySchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "reply": ["type": "string"]
-        ],
-        "required": ["reply"],
-        "additionalProperties": false
-    ]
 }
 
-public enum OpenAIServiceError: LocalizedError {
+private struct ClaudeInsightEnvelope: Codable {
+    let insights: [InsightGenerationResult]
+}
+
+public enum ClaudeServiceError: LocalizedError {
     case missingAPIKey
     case invalidResponse
     case apiError(String)
@@ -412,16 +359,15 @@ public enum OpenAIServiceError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "OpenAI API key is missing."
+            return "Anthropic Claude API key is missing."
         case .invalidResponse:
             return "The AI response could not be parsed."
         case .apiError(let message):
             return message
         case .apiStatusError(let statusCode, let body, _):
-            return "OpenAI status \(statusCode): \(body)"
+            return "Claude status \(statusCode): \(body)"
         case .cancelled:
             return "AI request was cancelled."
         }
     }
 }
-

@@ -53,6 +53,11 @@ public struct CalendarVisibilitySettingsView: View {
                 }
             }
         }
+        #if os(macOS)
+        .listStyle(.inset(alternatesRowBackgrounds: false))
+        .scrollContentBackground(.hidden)
+        .background(SharedAppTheme.primaryBackground)
+        #endif
         .navigationTitle("Calendar visibility")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

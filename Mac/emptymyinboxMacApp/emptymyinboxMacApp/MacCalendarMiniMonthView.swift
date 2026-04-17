@@ -10,6 +10,8 @@ import SwiftUI
 struct MacCalendarMiniMonthView: View {
     @Binding var selectedDate: Date
     var accentColor: Color
+    /// When set, shows a dot under days that have events (e.g. dashboard).
+    var hasEventOnDay: ((Date) -> Bool)? = nil
 
     @State private var displayMonth: Date = Date()
 
@@ -115,19 +117,40 @@ struct MacCalendarMiniMonthView: View {
         let isToday = calendar.isDateInToday(day)
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
         let dayNum = calendar.component(.day, from: day)
+        let hasEvent = hasEventOnDay?(day) == true
 
         return Button {
             selectedDate = calendar.startOfDay(for: day)
         } label: {
-            Text("\(dayNum)")
-                .font(.system(size: 11, weight: isToday ? .bold : .regular))
-                .foregroundStyle(isSelected ? MacAppTheme.primaryText : MacAppTheme.primaryText.opacity(0.9))
-                .frame(maxWidth: .infinity)
-                .frame(height: 26)
-                .background(
+            if hasEventOnDay != nil {
+                VStack(spacing: 2) {
+                    Text("\(dayNum)")
+                        .font(.system(size: 11, weight: isToday ? .bold : .regular))
+                        .foregroundStyle(isSelected ? MacAppTheme.primaryText : MacAppTheme.primaryText.opacity(0.9))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 22)
+                        .background(
+                            Circle()
+                                .fill(isToday ? accentColor.opacity(0.35) : (isSelected ? accentColor.opacity(0.15) : Color.clear))
+                        )
+
                     Circle()
-                        .fill(isToday ? accentColor.opacity(0.35) : (isSelected ? accentColor.opacity(0.15) : Color.clear))
-                )
+                        .fill(hasEvent ? accentColor : Color.clear)
+                        .frame(width: 4, height: 4)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+            } else {
+                Text("\(dayNum)")
+                    .font(.system(size: 11, weight: isToday ? .bold : .regular))
+                    .foregroundStyle(isSelected ? MacAppTheme.primaryText : MacAppTheme.primaryText.opacity(0.9))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 26)
+                    .background(
+                        Circle()
+                            .fill(isToday ? accentColor.opacity(0.35) : (isSelected ? accentColor.opacity(0.15) : Color.clear))
+                    )
+            }
         }
         .buttonStyle(.plain)
         .help(day.formatted(date: .complete, time: .omitted))

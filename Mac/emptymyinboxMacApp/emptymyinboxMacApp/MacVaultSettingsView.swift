@@ -8,6 +8,9 @@ import SwiftUI
 import EmptyMyInboxShared
 
 struct MacVaultSettingsView: View {
+    /// When opened from the Settings `NavigationStack`, the system back control is enough; a second "Close" clashes with the toolbar.
+    var showDismissToolbar: Bool = true
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @ObservedObject private var vaultManager = VaultManager.shared
@@ -37,8 +40,7 @@ struct MacVaultSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
+        List {
                 Section {
                     if let c = vaultManager.activeConfiguration {
                         LabeledContent("Backend") { Text(backendTitle(c.backend)) }
@@ -218,12 +220,16 @@ struct MacVaultSettingsView: View {
             .navigationTitle("Vault")
             .onAppear { refreshDiscoveredVaults() }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                if showDismissToolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                    }
                 }
             }
             .frame(minWidth: 420, minHeight: 360)
-        }
+            .listStyle(.inset(alternatesRowBackgrounds: false))
+            .scrollContentBackground(.hidden)
+            .background(MacAppTheme.primaryBackground)
         .sheet(isPresented: $showDeleteSheet) {
             NavigationStack {
                 Form {

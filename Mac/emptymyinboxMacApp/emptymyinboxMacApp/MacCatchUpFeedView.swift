@@ -26,6 +26,7 @@ struct MacCatchUpFeedView: View {
     @State private var showUnsubscribeWebView = false
     @State private var unsubscribeManualURL: URL?
     @State private var showReorderSheet = false
+    @State private var replyComposerEmail: EmailDetail?
 
     // MARK: - Session stats (for celebration view)
     @State private var sessionStats = CatchUpSessionStats()
@@ -155,6 +156,9 @@ struct MacCatchUpFeedView: View {
         }
         .sheet(isPresented: $showUnsubscribeWebView) {
             if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
+        }
+        .sheet(item: $replyComposerEmail) { email in
+            EmailReplyComposerView(email: email)
         }
     }
 
@@ -466,7 +470,10 @@ struct MacCatchUpFeedView: View {
     }
 
     private func handleReply() async {
-        logDebug("Catch Up reply (Mac) — not wired yet", category: "Email")
+        guard let email = loader.currentEmail else { return }
+        await MainActor.run {
+            replyComposerEmail = email
+        }
     }
 
     private func handleStar() async {
@@ -944,34 +951,44 @@ private struct MacCatchUpControlCenter: View {
             .padding(.top, 12)
             .padding(.bottom, 4)
 
-            // Secondary actions row
+            // Secondary actions row — Reply aligns with Star's left edge, Unsubscribe with its right edge
             HStack(spacing: 8) {
-                SecondaryActionButton(
-                    label: "Reply",
-                    systemImage: "arrowshape.turn.up.left",
-                    shortcutDisplay: "R",
-                    shortcutKey: "r",
-                    shortcutModifiers: [],
-                    isDisabled: isDisabled,
-                    action: onReply
-                )
-                .help("Compose a reply  [R]")
+                // Empty spacer matching "Keep Unread" column width
+                Color.clear.frame(maxWidth: .infinity)
 
-                if hasUnsubscribe {
+                // Middle column mirrors the Star button width
+                HStack(spacing: 0) {
                     SecondaryActionButton(
-                        label: "Unsubscribe",
-                        systemImage: "envelope.badge.fill",
-                        shortcutDisplay: "⌘⇧U",
-                        shortcutKey: "u",
-                        shortcutModifiers: [.command, .shift],
-                        tint: .red,
+                        label: "Reply",
+                        systemImage: "arrowshape.turn.up.left",
+                        shortcutDisplay: "R",
+                        shortcutKey: "r",
+                        shortcutModifiers: [],
                         isDisabled: isDisabled,
-                        action: onUnsubscribe
+                        action: onReply
                     )
-                    .help("Unsubscribe from this sender  [⌘⇧U]")
-                }
+                    .help("Compose a reply  [R]")
 
-                Spacer()
+                    Spacer()
+
+                    if hasUnsubscribe {
+                        SecondaryActionButton(
+                            label: "Unsubscribe",
+                            systemImage: "envelope.badge.fill",
+                            shortcutDisplay: "⌘⇧U",
+                            shortcutKey: "u",
+                            shortcutModifiers: [.command, .shift],
+                            tint: .red,
+                            isDisabled: isDisabled,
+                            action: onUnsubscribe
+                        )
+                        .help("Unsubscribe from this sender  [⌘⇧U]")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                // Empty spacer matching "Mark Read" column width
+                Color.clear.frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
@@ -1022,38 +1039,47 @@ private struct TriageButton: View {
     }
 
     var body: some View {
-        VStack(spacing: 5) {
-            Button(action: action) {
-                HStack(spacing: 7) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 15, weight: .medium))
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(fgColor)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(bgColor)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .strokeBorder(borderColor, lineWidth: 1)
-                )
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .medium))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                // Inline keycap badge — same style as the secondary action buttons
+                Text(shortcutDisplay)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(fgColor.opacity(0.12))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(fgColor.opacity(0.25), lineWidth: 0.5)
+                    )
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
-            .disabled(isDisabled)
-            .onHover { isHovered = $0 }
-            .scaleEffect(isHovered && !isDisabled ? 1.015 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: isHovered)
-            .opacity(isDisabled ? 0.4 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: isDisabled)
-
-            Text(shortcutDisplay)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.45))
+            .foregroundStyle(fgColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .background(bgColor)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: 1)
+            )
         }
+        .buttonStyle(.plain)
+        .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
+        .disabled(isDisabled)
+        .onHover { isHovered = $0 }
+        .scaleEffect(isHovered && !isDisabled ? 1.015 : 1.0)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .opacity(isDisabled ? 0.4 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isDisabled)
     }
 }
 

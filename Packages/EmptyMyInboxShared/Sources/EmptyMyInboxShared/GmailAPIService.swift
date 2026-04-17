@@ -180,13 +180,13 @@ public class GmailAPIService {
     
     public static let shared = GmailAPIService()
     
-    private let baseURL = "https://gmail.googleapis.com/gmail/v1"
+    internal let baseURL = "https://gmail.googleapis.com/gmail/v1"
     private var accounts: [GmailAccount] = []
     private var accountsLoadStatus: AccountLoadStatus = .notFound
     private var nextEmailId: Int = 1000 // Starting ID for generated email IDs
     
     // URLSession with timeout configuration to prevent hanging requests
-    private lazy var urlSession: URLSession = {
+    internal lazy var urlSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30.0 // 30 second timeout per request
         configuration.timeoutIntervalForResource = 60.0 // 60 second total timeout

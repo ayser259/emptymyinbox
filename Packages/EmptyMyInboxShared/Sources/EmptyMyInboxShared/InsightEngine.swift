@@ -93,7 +93,6 @@ public actor InsightEngine {
 
     public func generateBatch(from candidates: [EmailListItem], limit: Int = 12) async -> StoryGenerationBatch {
         let startedAt = Date()
-        let settings = await LLMSettingsStore.shared.currentSettings()
         let preferenceContext = await preferenceContextText()
         var processableCandidates: [EmailListItem] = []
         processableCandidates.reserveCapacity(limit * 2)
@@ -141,13 +140,12 @@ public actor InsightEngine {
                 group.addTask {
                     let inferredTheme = self.inferThemeTag(from: email)
                     do {
-                        let generations = try await OpenAIService.shared.summarizeNewsletterStories(
+                        let generations = try await LLMProviderRouter.shared.summarizeNewsletterStories(
                             subject: email.subject,
                             snippet: email.snippet,
                             sender: email.sender,
                             body: nil,
-                            preferenceContext: preferenceContext,
-                            useProModel: settings.useProModelForDeepAnalysis
+                            preferenceContext: preferenceContext
                         )
                         guard !generations.isEmpty else {
                             return CandidateGenerationResult(
@@ -247,8 +245,7 @@ public actor InsightEngine {
             "failed_count": "\(failedCount)",
             "empty_count": "\(emptyCount)",
             "fallback_count": "\(fallbackCount)",
-            "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))",
-            "use_pro_model": "\(settings.useProModelForDeepAnalysis)"
+            "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
         ])
         return StoryGenerationBatch(cards: cards, outcomes: outcomes, fallbackCount: fallbackCount)
     }

@@ -8,7 +8,7 @@ public actor DailyBriefingEngine {
         let includedEmails = await includedAccounts(from: emails)
         let filtered = filterRelevantEmails(from: includedEmails, sinceDate: sinceDate)
         let topItems = Array(filtered.prefix(8))
-        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
         let classificationResult = await classifyEmails(topItems, hasKey: hasKey)
         let briefingItems = classificationResult.items
 
@@ -64,7 +64,7 @@ public actor DailyBriefingEngine {
                     let type: BriefingItemType
                     var usedFallback = false
                     do {
-                        type = try await OpenAIService.shared.classifyBriefingItem(
+                        type = try await LLMProviderRouter.shared.classifyBriefingItem(
                             subject: email.subject,
                             snippet: email.snippet,
                             sender: email.sender

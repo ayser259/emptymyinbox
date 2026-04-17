@@ -60,6 +60,7 @@ struct MacMailTabView: View {
     @Binding var refreshMessage: String?
     @ObservedObject var calendarModel: GoogleCalendarViewModel
     let dashboardActionItems: [VaultActionItemRecord]
+    var refreshState: MacSidebarRefreshState = .init()
     var onRefreshMailbox: () -> Void
     var onOpenSettings: () -> Void
     var onAddAccount: () -> Void
@@ -140,7 +141,8 @@ struct MacMailTabView: View {
         MacSidebarShell(
             featureShortcutSection: mailFeatureShortcutSection,
             onRefresh: onRefreshMailbox,
-            onOpenSettings: onOpenSettings
+            onOpenSettings: onOpenSettings,
+            refreshState: refreshState
         ) {
             Section("Tools") {
                 ForEach(MailTool.allCases) { tool in
@@ -230,7 +232,13 @@ struct MacMailTabView: View {
                 snapshot: snapshot,
                 actionItems: dashboardActionItems,
                 isRefreshing: isRefreshing,
-                refreshMessage: refreshMessage
+                refreshMessage: refreshMessage,
+                onOpenMailbox: { email in
+                    selection = .mailbox(.account(email))
+                },
+                onOpenCatchUp: {
+                    selection = .tool(.catchUp)
+                }
             )
         case .catchUp:
             MacCatchUpFeedView(contextualShortcuts: $catchUpContextualShortcuts)
@@ -285,6 +293,12 @@ struct MacMailTabView: View {
                 await loadBriefingForMacTab()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task {
+                guard case .tool(.brief) = selection else { return }
+                await loadBriefingForMacTab()
+            }
+        }
     }
 
     /// Identity for reloading Brief when the mailbox snapshot changes while the tab is open.
@@ -298,7 +312,7 @@ struct MacMailTabView: View {
     }
 
     private func loadBriefingForMacTab() async {
-        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
         guard hasKey else {
             await MainActor.run {
                 briefLLMKeyState = false
@@ -547,6 +561,7 @@ private struct MacCachedEmailDetailView: View {
     @State private var detail: EmailDetail?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var replyComposerEmail: EmailDetail?
 
     var body: some View {
         Group {
@@ -565,6 +580,9 @@ private struct MacCachedEmailDetailView: View {
         }
         .navigationTitle("Email")
         .task { await loadEmail() }
+        .sheet(item: $replyComposerEmail) { email in
+            EmailReplyComposerView(email: email)
+        }
     }
 
     // MARK: - Content layout
@@ -600,6 +618,13 @@ private struct MacCachedEmailDetailView: View {
 
                 // Body
                 emailBody(detail, availableHeight: geo.size.height)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Reply") {
+                    replyComposerEmail = detail
+                }
             }
         }
     }

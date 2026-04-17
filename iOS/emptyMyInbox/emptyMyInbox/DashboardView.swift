@@ -36,6 +36,7 @@ struct DashboardView: View {
     @State private var storiesCount = 0
     @State private var isGeneratingBrief = false
     private let persistedBriefingKey = "persistedDailyBriefingPayload"
+    @StateObject private var calendarModel = GoogleCalendarViewModel()
     
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -101,6 +102,9 @@ struct DashboardView: View {
         .task {
             await loadInitialData()
         }
+        .task {
+            await calendarModel.refreshIfNeeded()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .cacheCleared)) { _ in
             Task { @MainActor in
                 // Clear in-memory state so UI reflects empty cache immediately
@@ -133,7 +137,20 @@ struct DashboardView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
             Task {
-                let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+                let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+                await MainActor.run {
+                    if hasKey {
+                        showSummaryUpsell = false
+                    }
+                }
+                if hasKey, pendingAutoBriefing {
+                    await presentDailyBriefingIfPending()
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task {
+                let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
                 await MainActor.run {
                     if hasKey {
                         showSummaryUpsell = false
@@ -183,6 +200,11 @@ struct DashboardView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
+            Task {
+                await calendarModel.refreshIfNeeded()
+            }
+        }
         .sheet(isPresented: $showProgressModal) {
             RefreshProgressModal(progressTracker: progressTracker)
         }
@@ -221,29 +243,72 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var content: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                topBarSection
+        VStack(spacing: 0) {
+            topBarSection
 
-                VaultRefreshStatusLabel(font: .caption)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, AppTheme.spacingMedium)
-                    .padding(.bottom, AppTheme.spacingSmall)
-                
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    feedColumnScroll
+                        .frame(maxWidth: .infinity)
+                    calendarSidebarScroll
+                        .frame(width: 280)
+                }
+                .padding(.horizontal, AppTheme.spacingMedium)
+
+                VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
+                    feedColumnScroll
+                    calendarSidebarScroll
+                }
+                .padding(.horizontal, AppTheme.spacingMedium)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Left column: quick actions + account-grouped inbox cards (scrolls independently on wide layouts).
+    private var feedColumnScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
                 actionButtonsSection
                     .padding(.bottom, AppTheme.spacingMedium)
-                
+
+                inboxFeedHeader
+                    .padding(.bottom, AppTheme.spacingSmall)
+
                 accountSummaryCards
                     .padding(.bottom, AppTheme.spacingLarge)
-                
+
                 Spacer()
-                    .frame(height: 100)
+                    .frame(height: 40)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
         }
         .refreshable {
             await refreshDashboard(shouldSync: true)
         }
+    }
+
+    /// Right column: mini month + upcoming events.
+    private var calendarSidebarScroll: some View {
+        ScrollView {
+            DashboardCalendarSidebar(model: calendarModel)
+        }
+    }
+
+    private var inboxFeedHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Inbox feed")
+                .font(AppTheme.title3.weight(.semibold))
+                .primaryText()
+            Text("By account")
+                .font(AppTheme.caption)
+                .secondaryText()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var topBarSection: some View {
@@ -415,11 +480,6 @@ struct DashboardView: View {
 
     private var accountSummaryCards: some View {
         VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-            Text("Accounts")
-                .font(AppTheme.title3)
-                .primaryText()
-                .padding(.horizontal, AppTheme.spacingMedium)
-            
             if isLoading && accounts.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity)
@@ -439,7 +499,6 @@ struct DashboardView: View {
                             unreadCount: getUnreadCount(for: account),
                             starredCount: getStarredCount(for: account),
                             totalEmailCount: getTotalEmailCount(for: account),
-                            senderCount: getSenderCount(for: account),
                             unreadSenderCount: getUnreadSenderCount(for: account),
                             lastRefreshTime: getLastRefreshTime(for: account),
                             healthStatus: accountHealthStatuses[account.email],
@@ -467,12 +526,6 @@ struct DashboardView: View {
     
     private func getTotalEmailCount(for account: EmailAccount) -> Int {
         allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }.count
-    }
-    
-    private func getSenderCount(for account: EmailAccount) -> Int {
-        let accountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }
-        let uniqueSenders = Set(accountEmails.map { $0.sender })
-        return uniqueSenders.count
     }
     
     private func getUnreadSenderCount(for account: EmailAccount) -> Int {
@@ -650,6 +703,7 @@ struct DashboardView: View {
 
                 await refreshStoriesCount()
                 await presentDailyBriefingIfPending()
+                await calendarModel.refreshIfNeeded()
             } else {
                 logWarning("refreshData returned nil", category: "Dashboard")
             }
@@ -697,7 +751,7 @@ struct DashboardView: View {
         Telemetry.event("daily_briefing.generate.started", metadata: ["trigger": triggerLabel])
         await MainActor.run { isGeneratingBrief = true }
 
-        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
         guard hasKey else {
             await MainActor.run {
                 showSummaryUpsell = true

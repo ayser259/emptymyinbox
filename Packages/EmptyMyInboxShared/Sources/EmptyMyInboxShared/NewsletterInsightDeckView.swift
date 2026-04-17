@@ -43,7 +43,7 @@ public struct NewsletterInsightDeckView: View {
             } else if !hasKey {
                 LLMUpsellView(
                     title: "Unlock Stories",
-                    subtitle: "Add your OpenAI API key to generate personalized stories from newsletters.",
+                    subtitle: "Add your selected provider API key to generate personalized stories from newsletters.",
                     actionTitle: "Add API Key",
                     onAction: onOpenLLMSettings
                 )
@@ -102,6 +102,9 @@ public struct NewsletterInsightDeckView: View {
             scheduleRefreshContent()
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
+            scheduleRefreshContent()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
             scheduleRefreshContent()
         }
     }
@@ -223,7 +226,7 @@ public struct NewsletterInsightDeckView: View {
             aiStatusMessage = nil
         }
 
-        let hasAPIKey = await LLMSettingsStore.shared.hasAPIKey()
+        let hasAPIKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
         var loadedStories: [InsightCard] = persistedStories
         if hasAPIKey {
             let promptStates = await StoriesFeedStore.shared.promptStates()
