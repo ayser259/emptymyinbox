@@ -108,6 +108,8 @@ final class EmptyMyInboxSharedTests: XCTestCase {
     func testVaultLayoutIncludesActionItemsFolder() {
         let subs = VaultLayout.standardSubfolders()
         XCTAssertTrue(subs.contains(VaultLayout.actionItemsFolder))
+        XCTAssertTrue(subs.contains(VaultLayout.storiesFolder))
+        XCTAssertTrue(subs.contains(VaultLayout.briefFolder))
     }
 
     /// Regression: iOS and macOS must use identical relative paths (shared `VaultManager` + Drive sync).
@@ -155,6 +157,10 @@ final class EmptyMyInboxSharedTests: XCTestCase {
         try await backend.ensureStructure()
         let actionItems = tmp.appendingPathComponent("ActionItems", isDirectory: true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: actionItems.path))
+        let stories = tmp.appendingPathComponent("Stories", isDirectory: true)
+        let brief = tmp.appendingPathComponent("Brief", isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stories.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: brief.path))
     }
 
     func testVaultActionItemDescriptionCodingKeyRoundTrip() throws {

@@ -259,6 +259,7 @@ public final class GoogleCalendarViewModel: ObservableObject {
                     fetchPairs.append((account, calItem))
                 }
             } catch {
+                if error.isURLSessionCancellation { continue }
                 logWarning("Calendar list failed for \(account.email): \(error)", category: "Calendar")
                 if errorMessage == nil {
                     errorMessage = "Could not load calendars for \(account.email). Reconnect your account to grant Calendar access."
@@ -322,10 +323,12 @@ public final class GoogleCalendarViewModel: ObservableObject {
                             )
                             return (pair.account.email, pair.calendar.id, events)
                         } catch {
-                            logWarning(
-                                "Events list failed \(pair.account.email) / \(pair.calendar.id): \(error)",
-                                category: "Calendar"
-                            )
+                            if !error.isURLSessionCancellation {
+                                logWarning(
+                                    "Events list failed \(pair.account.email) / \(pair.calendar.id): \(error)",
+                                    category: "Calendar"
+                                )
+                            }
                             return nil
                         }
                     }

@@ -17,9 +17,9 @@ public enum Telemetry {
     ]
 
     public static func event(_ name: String, metadata: [String: String] = [:]) {
-        let sanitized = sanitizeMetadata(metadata)
-        let payload = sanitized.isEmpty ? "" : " \(sanitized)"
-        logInfo("Telemetry event: \(name)\(payload)", category: "Metrics")
+        // Intentionally not written to DebugLogger — these fire constantly and drown useful logs.
+        _ = name
+        _ = metadata
     }
     
     public static func counter(_ name: String, delta: Int = 1, metadata: [String: String] = [:]) {

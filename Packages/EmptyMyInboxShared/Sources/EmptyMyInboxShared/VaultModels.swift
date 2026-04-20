@@ -20,6 +20,8 @@ public enum VaultLayout {
     public static let inboxFolder = "Inbox"
     public static let calendarFolder = "Calendar"
     public static let actionItemsFolder = "ActionItems"
+    public static let storiesFolder = "Stories"
+    public static let briefFolder = "Brief"
     public static let inboxThreadsSubfolder = "threads"
     public static let calendarEventsSubfolder = "events"
 
@@ -35,6 +37,9 @@ public enum VaultLayout {
     public static let actionItemsTypesAggregateFileName = "type_definitions.json"
     public static let actionItemsProjectsAggregateFileName = "project_definitions.json"
     public static let actionItemsStarredChannelsAggregateFileName = "starred_channels.json"
+    public static let storiesFeedFileName = "stories_feed.json"
+    public static let storiesBookmarkedFileName = "bookmarked_stories.json"
+    public static let briefDailyFileName = "daily_brief.json"
 
     public static let currentSchemaVersion = 1
 
@@ -42,7 +47,9 @@ public enum VaultLayout {
         [
             "\(inboxFolder)/\(inboxThreadsSubfolder)",
             "\(calendarFolder)/\(calendarEventsSubfolder)",
-            actionItemsFolder
+            actionItemsFolder,
+            storiesFolder,
+            briefFolder
         ]
     }
 
@@ -80,6 +87,18 @@ public enum VaultLayout {
             actionItemsProjectsAggregatePath,
             actionItemsStarredChannelsAggregatePath
         ]
+    }
+
+    public static var storiesFeedAggregatePath: String {
+        "\(storiesFolder)/\(storiesFeedFileName)"
+    }
+
+    public static var storiesBookmarkedAggregatePath: String {
+        "\(storiesFolder)/\(storiesBookmarkedFileName)"
+    }
+
+    public static var briefDailyAggregatePath: String {
+        "\(briefFolder)/\(briefDailyFileName)"
     }
 }
 
@@ -538,6 +557,40 @@ public struct VaultProjectDefinition: Codable, Sendable, Identifiable, Equatable
         self.parentProjectId = parentProjectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+// MARK: - Stories & Brief (vault mirrors)
+
+/// Full stories feed snapshot for vault sync (matches `StoriesFeedStore` logical state).
+public struct VaultStoriesFeedPayload: Codable, Sendable {
+    public var stories: [InsightCard]
+    public var bookmarkedStoryIds: [Int]
+    public var reviewedStoryIds: [Int]
+    public var lastGeneratedAt: Date?
+    public var promptStates: [Int: StoryPromptState]
+
+    public init(
+        stories: [InsightCard] = [],
+        bookmarkedStoryIds: [Int] = [],
+        reviewedStoryIds: [Int] = [],
+        lastGeneratedAt: Date? = nil,
+        promptStates: [Int: StoryPromptState] = [:]
+    ) {
+        self.stories = stories
+        self.bookmarkedStoryIds = bookmarkedStoryIds
+        self.reviewedStoryIds = reviewedStoryIds
+        self.lastGeneratedAt = lastGeneratedAt
+        self.promptStates = promptStates
+    }
+}
+
+/// Bookmarked-only mirror for easy browsing in the vault folder.
+public struct VaultStoriesBookmarkedPayload: Codable, Sendable {
+    public var stories: [InsightCard]
+
+    public init(stories: [InsightCard] = []) {
+        self.stories = stories
     }
 }
 

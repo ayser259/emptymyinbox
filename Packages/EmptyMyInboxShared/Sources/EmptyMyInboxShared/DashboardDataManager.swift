@@ -77,7 +77,7 @@ public actor DashboardDataManager {
     @discardableResult
     public func refreshData(shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
         let refreshStart = Date()
-        logInfo("refreshData called - shouldSync: \(shouldSync), hasCallback: \(progressCallback != nil)", category: "Refresh")
+        logDebug("refreshData called - shouldSync: \(shouldSync), hasCallback: \(progressCallback != nil)", category: "Refresh")
         
         // Stage 1: Initializing
         logDebug("Stage: Initializing", category: "Refresh")
@@ -92,7 +92,7 @@ public actor DashboardDataManager {
             return nil
         }
         
-        logSuccess("Found \(gmailAccounts.count) Gmail account(s): \(gmailAccounts.map { $0.email }.joined(separator: ", "))", category: "Refresh")
+        logDebug("Found \(gmailAccounts.count) Gmail account(s): \(gmailAccounts.map { $0.email }.joined(separator: ", "))", category: "Refresh")
         logDebug("Progress callback provided: \(progressCallback != nil)", category: "Refresh")
         
         await progressCallback?(.initializing, .completed, "Found \(gmailAccounts.count) account(s)", nil, gmailAccounts.count, nil)
@@ -121,7 +121,7 @@ public actor DashboardDataManager {
             let accountNum = accountIndex + 1
             
             // Stage 4: Fetching inbox (read + unread) metadata for lists and counts
-            logInfo("Fetching inbox for \(gmailAccount.email)", category: "Refresh")
+            logDebug("Fetching inbox for \(gmailAccount.email)", category: "Refresh")
             await progressCallback?(.fetchingUnread, .inProgress, "Account \(accountNum) of \(totalAccounts)", gmailAccount.email, 0, nil)
             
             do {
@@ -143,7 +143,7 @@ public actor DashboardDataManager {
                     health.lastError = nil
                     health.lastChecked = Date()
                     accountHealthMap[gmailAccount.email] = health
-                    logSuccess("Health: \(gmailAccount.email) marked healthy", category: "Health")
+                    logDebug("Health: \(gmailAccount.email) marked healthy", category: "Health")
                     
                 } else {
                     // Load from existing snapshot (full inbox list, not unread-only)
@@ -182,7 +182,7 @@ public actor DashboardDataManager {
             
             // Stage 5: Fetching starred emails
             await progressCallback?(.fetchingStarred, .inProgress, "Account \(accountNum) of \(totalAccounts)", gmailAccount.email, 0, nil)
-            logInfo("Fetching starred for \(gmailAccount.email)", category: "Refresh")
+            logDebug("Fetching starred for \(gmailAccount.email)", category: "Refresh")
             
             do {
                 let starredMetadata: [EmailMetadata]
@@ -195,7 +195,7 @@ public actor DashboardDataManager {
                             await progressCallback?(.fetchingStarred, .inProgress, "Fetching starred: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
                         }
                     )
-                    logInfo("syncStarredEmailMetadata returned \(starredMetadata.count) starred for \(gmailAccount.email)", category: "Starred")
+                    logDebug("syncStarredEmailMetadata returned \(starredMetadata.count) starred for \(gmailAccount.email)", category: "Starred")
                 } else {
                     if let existing = existingSnapshot {
                         starredMetadata = existing.starredEmails
@@ -223,7 +223,7 @@ public actor DashboardDataManager {
                 }
                 
                 allStarredMetadata.append(contentsOf: starredMetadata)
-                logInfo("Total starred so far: \(allStarredMetadata.count)", category: "Starred")
+                logDebug("Total starred so far: \(allStarredMetadata.count)", category: "Starred")
                 await progressCallback?(.fetchingStarred, .inProgress, "\(starredMetadata.count) starred from \(gmailAccount.email)", gmailAccount.email, starredMetadata.count, nil)
                 
             } catch {
@@ -553,7 +553,7 @@ public actor DashboardDataManager {
         }
         let updatedSnapshot = rebuiltSnapshot(from: snapshot, allEmails: updatedAllEmails)
         await dashboardCache.saveSnapshot(updatedSnapshot)
-        logInfo(
+        logDebug(
             "Updated starred status for email \(emailId): \(isStarred), starred count now: \(updatedSnapshot.starredEmails.count)",
             category: "Starred"
         )

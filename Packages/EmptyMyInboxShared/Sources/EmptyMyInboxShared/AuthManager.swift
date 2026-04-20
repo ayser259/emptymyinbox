@@ -49,7 +49,7 @@ public class AuthManager: ObservableObject {
                 self.accounts = gmailAccounts
                 self.isAuthenticated = true
                 self.sessionState = .authenticated
-                logSuccess("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
+                logDebug("Auth: Found \(gmailAccounts.count) authenticated account(s)", category: "Auth")
                 Telemetry.counter("auth.accounts_loaded", delta: gmailAccounts.count)
                 if let api = self.gmailService as? GmailAPIService {
                     await api.restoreGoogleSignInSessionIfNeeded()

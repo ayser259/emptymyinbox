@@ -9,6 +9,36 @@ import SwiftUI
 import EmptyMyInboxShared
 
 struct ContentView: View {
+    /// Persist sidebar “last refresh” times across app launches (UserDefaults).
+    private enum SidebarRefreshPersistence {
+        static let mailKey = "mac.sidebar.lastMailRefreshAt"
+        static let calendarKey = "mac.sidebar.lastCalendarRefreshAt"
+        static let actionItemsKey = "mac.sidebar.lastActionItemsRefreshAt"
+
+        static func restore() -> (mail: Date?, calendar: Date?, actionItems: Date?) {
+            let d = UserDefaults.standard
+            return (
+                d.object(forKey: mailKey) as? Date,
+                d.object(forKey: calendarKey) as? Date,
+                d.object(forKey: actionItemsKey) as? Date
+            )
+        }
+
+        static func save(mail: Date?, calendar: Date?, actionItems: Date?) {
+            let d = UserDefaults.standard
+            if let mail { d.set(mail, forKey: mailKey) } else { d.removeObject(forKey: mailKey) }
+            if let calendar { d.set(calendar, forKey: calendarKey) } else { d.removeObject(forKey: calendarKey) }
+            if let actionItems { d.set(actionItems, forKey: actionItemsKey) } else { d.removeObject(forKey: actionItemsKey) }
+        }
+
+        static func clear() {
+            let d = UserDefaults.standard
+            d.removeObject(forKey: mailKey)
+            d.removeObject(forKey: calendarKey)
+            d.removeObject(forKey: actionItemsKey)
+        }
+    }
+
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var calendarModel = GoogleCalendarViewModel()
@@ -73,6 +103,14 @@ struct ContentView: View {
             }
             if oldPhase != .active && newPhase == .active {
                 checkMacForegroundCompanionIfNeeded()
+            }
+        }
+        .onChange(of: authManager.sessionState) { _, new in
+            if case .needsLogin = new {
+                lastMailRefreshAt = nil
+                lastCalendarRefreshAt = nil
+                lastActionItemsRefreshAt = nil
+                SidebarRefreshPersistence.clear()
             }
         }
     }
@@ -180,6 +218,7 @@ struct ContentView: View {
                 lastCalendarRefreshAt = Date()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
                 lastActionItemsRefreshAt = Date()
+                persistSidebarRefreshTimestamps()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
@@ -190,7 +229,7 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
-            Task { snapshot = await DashboardDataManager.shared.loadCachedSnapshot() }
+            Task { await loadSnapshot() }
         }
     }
 
@@ -211,6 +250,10 @@ struct ContentView: View {
         .background(MacAppTheme.primaryBackground)
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
+                let restored = SidebarRefreshPersistence.restore()
+                lastMailRefreshAt = restored.mail
+                lastCalendarRefreshAt = restored.calendar
+                lastActionItemsRefreshAt = restored.actionItems
                 await loadSnapshot()
                 await loadDashboardActionItems()
                 NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
@@ -218,15 +261,30 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
             lastActionItemsRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
         }
     }
 
     private func loadSnapshot() async {
-        snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
+        let loaded = await DashboardDataManager.shared.loadCachedSnapshot()
+        snapshot = loaded
+        // Prefer dashboard snapshot time (same as on-disk cache); keep UserDefaults restore if no snapshot yet.
+        if let ts = loaded?.timestamp {
+            lastMailRefreshAt = ts
+        }
+        persistSidebarRefreshTimestamps()
         // No cached data at all — trigger a full fetch so the user sees their emails immediately.
-        if snapshot == nil, !isRefreshing {
+        if loaded == nil, !isRefreshing {
             await refreshMailbox()
         }
+    }
+
+    private func persistSidebarRefreshTimestamps() {
+        SidebarRefreshPersistence.save(
+            mail: lastMailRefreshAt,
+            calendar: lastCalendarRefreshAt,
+            actionItems: lastActionItemsRefreshAt
+        )
     }
 
     private func loadDashboardActionItems() async {
@@ -241,7 +299,6 @@ struct ContentView: View {
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         await loadDashboardActionItems()
-        lastMailRefreshAt = Date()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
         NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
@@ -254,9 +311,11 @@ struct ContentView: View {
             await VaultManager.shared.performLifecycleSync(postNotification: false)
             await calendarModel.refresh()
             lastCalendarRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
         case .actionItems:
             NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             lastActionItemsRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
             Task { await loadDashboardActionItems() }
         }
     }

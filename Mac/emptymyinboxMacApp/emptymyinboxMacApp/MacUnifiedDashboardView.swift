@@ -2,27 +2,33 @@
 //  MacUnifiedDashboardView.swift
 //  emptymyinboxMacApp
 //
-//  Dashboard: inbox feed by account (left) + mini calendar & upcoming events (right).
+//  Dashboard: greeting + widgets (brief, action items, account updates, stories) + inbox feed.
 //
 
 import SwiftUI
 import EmptyMyInboxShared
 
 struct MacUnifiedDashboardView: View {
+    @EnvironmentObject private var authManager: AuthManager
     @ObservedObject var calendarModel: GoogleCalendarViewModel
     let snapshot: DashboardDataSnapshot?
     let actionItems: [VaultActionItemRecord]
     let isRefreshing: Bool
     let refreshMessage: String?
-    /// When set (Mail tab), opens that account’s mailbox in the middle column.
     var onOpenMailbox: ((String) -> Void)?
-    /// When set (Mail tab), switches to Catch Up.
     var onOpenCatchUp: (() -> Void)?
+    var onOpenBrief: (() -> Void)?
+    var onOpenStories: (() -> Void)?
+
+    @State private var dailyBriefingPayload: DailyBriefingPayload?
+    @State private var recentStories: [InsightCard] = []
+    @State private var hasLLMKey = false
+    @State private var isBriefGenerating = false
 
     private var calendar: Calendar { Calendar.current }
 
     private var openTasks: [VaultActionItemRecord] {
-        actionItems.filter { !$0.isDone }
+        ActionItemsFeatureModel.defaultSorted(actionItems.filter { !$0.isDone })
     }
 
     private var upcomingEvents: [GoogleCalendarDisplayEvent] {
@@ -35,6 +41,19 @@ struct MacUnifiedDashboardView: View {
             .map { $0 }
     }
 
+    private var firstName: String? {
+        guard let fullName = authManager.accounts.first?.name, !fullName.isEmpty else { return nil }
+        return fullName.components(separatedBy: " ").first
+    }
+
+    private var totalUnread: Int {
+        snapshot?.emails.count ?? 0
+    }
+
+    private var totalStarred: Int {
+        snapshot?.starredEmails.count ?? 0
+    }
+
     var body: some View {
         ViewThatFits(in: .horizontal) {
             twoColumnLayout
@@ -44,11 +63,23 @@ struct MacUnifiedDashboardView: View {
         .background(MacAppTheme.primaryBackground)
         .navigationTitle("Dashboard")
         .task {
+            await loadWidgetData()
             if calendarModel.events.isEmpty && !calendarModel.isLoading {
                 await calendarModel.refresh()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .briefingPayloadDidPersist)) { _ in
+            Task { await refreshBriefBadge() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
+            Task { await refreshLLMKeyStatus() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task { await refreshLLMKeyStatus() }
+        }
     }
+
+    // MARK: - Layout
 
     private var twoColumnLayout: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -69,11 +100,15 @@ struct MacUnifiedDashboardView: View {
         .padding(24)
     }
 
+    // MARK: - Left column
+
     private var leftFeedColumn: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                todayHeader
+            VStack(alignment: .leading, spacing: 16) {
+                // Greeting
+                greetingSection
 
+                // Refresh progress
                 if isRefreshing {
                     HStack {
                         Spacer(minLength: 0)
@@ -87,8 +122,44 @@ struct MacUnifiedDashboardView: View {
                         .foregroundStyle(MacAppTheme.secondaryText)
                 }
 
+                // Brief + Action Items side by side
+                HStack(alignment: .top, spacing: 12) {
+                    MacDailyBriefCard(
+                        payload: dailyBriefingPayload,
+                        hasLLMKey: hasLLMKey,
+                        isGenerating: isBriefGenerating,
+                        onRefresh: { refreshBrief() },
+                        onOpenBrief: onOpenBrief,
+                        onOpenLLMSettings: { onOpenBrief?() }
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    MacActionItemsCard(
+                        items: openTasks,
+                        isVaultReady: VaultManager.shared.isVaultReady
+                    )
+                    .frame(width: 220)
+                }
+
+                // Account Updates
+                MacAccountUpdatesCard(
+                    unreadCount: totalUnread,
+                    starredCount: totalStarred,
+                    onCatchUp: onOpenCatchUp,
+                    onViewMore: snapshot.flatMap { snap in
+                        snap.accounts.first.map { acct in { self.onOpenMailbox?(acct.email) } }
+                    }
+                )
+
+                // Stories Feed
+                MacStoriesFeedCard(
+                    stories: recentStories,
+                    onViewAll: onOpenStories
+                )
+
+                // Inbox feed
                 if let snapshot, !snapshot.accounts.isEmpty {
-                    sectionTitle("Inbox feed")
+                    MacDashboardSectionTitle("Inbox feed")
                     Text("By account")
                         .font(.caption)
                         .foregroundStyle(MacAppTheme.secondaryText.opacity(0.9))
@@ -99,17 +170,17 @@ struct MacUnifiedDashboardView: View {
                         .font(.body)
                         .foregroundStyle(MacAppTheme.secondaryText)
                 }
-
-                actionItemsSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
+    // MARK: - Right column
+
     private var rightCalendarColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                sectionTitle("Calendar")
+                MacDashboardSectionTitle("Calendar")
                 MacCalendarMiniMonthView(
                     selectedDate: $calendarModel.selectedDate,
                     accentColor: MacAppTheme.accent,
@@ -118,7 +189,7 @@ struct MacUnifiedDashboardView: View {
                     }
                 )
 
-                sectionTitle("Upcoming")
+                MacDashboardSectionTitle("Upcoming")
                 Group {
                     if calendarModel.isLoading && calendarModel.events.isEmpty {
                         ProgressView("Loading calendar…")
@@ -144,61 +215,33 @@ struct MacUnifiedDashboardView: View {
         }
     }
 
-    private var todayHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Today")
-                .font(.title2.weight(.semibold))
+    // MARK: - Greeting
+
+    private var greetingSection: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(timeLabel)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(1.2)
+                .foregroundStyle(MacAppTheme.accent)
+            Text(firstName ?? "Welcome back")
+                .font(.title3.weight(.bold))
                 .foregroundStyle(MacAppTheme.primaryText)
-            Text(Date().formatted(date: .complete, time: .omitted))
-                .font(.subheadline)
+            Text(Date().formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .font(.caption)
                 .foregroundStyle(MacAppTheme.secondaryText)
         }
     }
 
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(MacAppTheme.secondaryText)
-    }
-
-    private var actionItemsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("Action items")
-            Text("Per-day scheduling is not wired yet — showing all open tasks.")
-                .font(.caption)
-                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.9))
-
-            if openTasks.isEmpty {
-                Text("No open tasks.")
-                    .font(.body)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(openTasks.prefix(12)) { item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "circle")
-                                .font(.caption)
-                                .foregroundStyle(MacAppTheme.secondaryText)
-                                .padding(.top, 2)
-                            Text(item.title)
-                                .font(.subheadline)
-                                .foregroundStyle(MacAppTheme.primaryText)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    if openTasks.count > 12 {
-                        Text("… and \(openTasks.count - 12) more")
-                            .font(.caption)
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    }
-                }
-            }
+    private var timeLabel: String {
+        let h = Calendar.current.component(.hour, from: Date())
+        switch h {
+        case 0..<12: return "GOOD MORNING"
+        case 12..<17: return "GOOD AFTERNOON"
+        default: return "GOOD EVENING"
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(MacAppTheme.secondaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: MacAppTheme.cornerRadiusSmall))
     }
+
+    // MARK: - Account sections
 
     @ViewBuilder
     private func accountSections(snapshot: DashboardDataSnapshot) -> some View {
@@ -240,9 +283,529 @@ struct MacUnifiedDashboardView: View {
         }
         return Set(unread.map(\.sender)).count
     }
+
+    // MARK: - Data loading
+
+    private func loadWidgetData() async {
+        await refreshBriefBadge()
+        await refreshLLMKeyStatus()
+        await loadRecentStories()
+    }
+
+    private func refreshBriefBadge() async {
+        guard let data = UserDefaults.standard.data(forKey: DailyBriefingDefaults.persistedPayloadKey),
+              let payload = try? JSONDecoder().decode(DailyBriefingPayload.self, from: data) else {
+            await MainActor.run { dailyBriefingPayload = nil }
+            return
+        }
+        await MainActor.run { dailyBriefingPayload = payload }
+    }
+
+    private func refreshLLMKeyStatus() async {
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        await MainActor.run { hasLLMKey = hasKey }
+    }
+
+    private func loadRecentStories() async {
+        let stories = await StoriesFeedStore.shared.stories()
+        await MainActor.run { recentStories = Array(stories.prefix(3)) }
+    }
+
+    private func refreshBrief() {
+        Task {
+            guard hasLLMKey else { return }
+            await MainActor.run { isBriefGenerating = true }
+            let built = await DailyBriefingEngine.shared.buildPayload(
+                from: snapshot?.allEmails ?? [],
+                sinceDate: nil
+            )
+            if let data = try? JSONEncoder().encode(built) {
+                UserDefaults.standard.set(data, forKey: DailyBriefingDefaults.persistedPayloadKey)
+            }
+            NotificationCenter.default.post(name: .briefingPayloadDidPersist, object: nil)
+            await MainActor.run {
+                dailyBriefingPayload = built
+                isBriefGenerating = false
+            }
+        }
+    }
 }
 
-// MARK: - Account section
+// MARK: - Shared section title
+
+private func MacDashboardSectionTitle(_ text: String) -> some View {
+    Text(text)
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(MacAppTheme.secondaryText)
+}
+
+// MARK: - Mac card shell
+
+private struct MacDashboardCard<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MacAppTheme.secondaryBackground)
+            .clipShape(RoundedRectangle(cornerRadius: MacAppTheme.cornerRadiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: MacAppTheme.cornerRadiusSmall)
+                    .stroke(Color.white.opacity(0.09), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Mac card header
+
+private struct MacCardHeader: View {
+    let icon: String
+    let title: String
+    var count: Int? = nil
+    var trailing: AnyView? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(MacAppTheme.accent)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.4)
+                .foregroundStyle(MacAppTheme.secondaryText)
+            if let count, count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(MacAppTheme.accent)
+                    .clipShape(Capsule())
+            }
+            Spacer()
+            if let trailing { trailing }
+        }
+    }
+}
+
+// MARK: - Mac empty state
+
+private struct MacCardEmptyState: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 22))
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.3))
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.6))
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.4))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+}
+
+// MARK: - Daily Brief Card
+
+private struct MacDailyBriefCard: View {
+    let payload: DailyBriefingPayload?
+    let hasLLMKey: Bool
+    let isGenerating: Bool
+    let onRefresh: () -> Void
+    let onOpenBrief: (() -> Void)?
+    let onOpenLLMSettings: () -> Void
+
+    var body: some View {
+        MacDashboardCard {
+            VStack(alignment: .leading, spacing: 8) {
+                MacCardHeader(
+                    icon: "sparkles",
+                    title: "DAILY BRIEF",
+                    count: payload?.items.count,
+                    trailing: AnyView(refreshButton)
+                )
+
+                Divider().opacity(0.15)
+
+                briefContent
+                    .animation(.easeOut(duration: 0.2), value: payload == nil)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var refreshButton: some View {
+        Button {
+            onRefresh()
+        } label: {
+            if isGenerating {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .controlSize(.mini)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(hasLLMKey ? MacAppTheme.accent : MacAppTheme.secondaryText.opacity(0.3))
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isGenerating || !hasLLMKey)
+        .help(hasLLMKey ? "Regenerate brief" : "Add an AI API key first")
+        .animation(.easeOut(duration: 0.15), value: isGenerating)
+    }
+
+    @ViewBuilder
+    private var briefContent: some View {
+        if !hasLLMKey {
+            VStack(alignment: .leading, spacing: 6) {
+                MacCardEmptyState(
+                    icon: "lock.fill",
+                    title: "Set up AI",
+                    subtitle: "Add an API key to enable your daily brief"
+                )
+                Button("Configure in Settings") {
+                    onOpenLLMSettings()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(MacAppTheme.accent)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+        } else if let payload {
+            Button {
+                onOpenBrief?()
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(payload.introText)
+                        .font(.caption)
+                        .foregroundStyle(MacAppTheme.secondaryText)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    let items = Array(payload.items.prefix(2))
+                    if !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(items) { item in
+                                HStack(alignment: .top, spacing: 5) {
+                                    Image(systemName: "checklist.checked")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(MacAppTheme.accent)
+                                        .padding(.top, 1)
+                                    Text(item.subject)
+                                        .font(.caption)
+                                        .foregroundStyle(MacAppTheme.primaryText)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+
+                    HStack {
+                        Spacer()
+                        Text("View full brief")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(MacAppTheme.accent)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(MacAppTheme.accent)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .cursor(.pointingHand)
+        } else {
+            Button {
+                onOpenBrief?()
+            } label: {
+                MacCardEmptyState(
+                    icon: "sparkles",
+                    title: "No brief yet",
+                    subtitle: "Click to navigate to Brief or use refresh"
+                )
+            }
+            .buttonStyle(.plain)
+            .cursor(.pointingHand)
+        }
+    }
+}
+
+// MARK: - Action Items Card
+
+private struct MacActionItemsCard: View {
+    let items: [VaultActionItemRecord]
+    let isVaultReady: Bool
+
+    var body: some View {
+        MacDashboardCard {
+            VStack(alignment: .leading, spacing: 8) {
+                MacCardHeader(
+                    icon: "checklist",
+                    title: "ACTION ITEMS",
+                    count: items.isEmpty ? nil : items.count
+                )
+
+                Divider().opacity(0.15)
+
+                actionContent
+                    .animation(.easeOut(duration: 0.2), value: isVaultReady)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actionContent: some View {
+        if !isVaultReady {
+            MacCardEmptyState(
+                icon: "externaldrive.badge.xmark",
+                title: "Vault not connected",
+                subtitle: "Set up a vault in Settings"
+            )
+        } else if items.isEmpty {
+            MacCardEmptyState(
+                icon: "checkmark.circle",
+                title: "All clear",
+                subtitle: "No pending action items"
+            )
+        } else {
+            let preview = Array(items.prefix(3))
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(preview.enumerated()), id: \.element.id) { idx, item in
+                    MacActionItemPreviewRow(item: item)
+                    if idx < preview.count - 1 {
+                        Divider().opacity(0.1).padding(.leading, 18)
+                    }
+                }
+
+                Button {
+                    NotificationCenter.default.post(
+                        name: .macSelectRootTab,
+                        object: MacRootTab.actionItems.rawValue
+                    )
+                } label: {
+                    HStack(spacing: 3) {
+                        Spacer()
+                        Text(items.count > 3 ? "View all \(items.count)" : "View all")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(MacAppTheme.accent)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(MacAppTheme.accent)
+                    }
+                    .padding(.top, 6)
+                }
+                .buttonStyle(.plain)
+                .cursor(.pointingHand)
+            }
+        }
+    }
+}
+
+private struct MacActionItemPreviewRow: View {
+    let item: VaultActionItemRecord
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if let p = item.priority {
+                    Circle()
+                        .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 1.5)
+                } else {
+                    Circle()
+                        .strokeBorder(MacAppTheme.secondaryText.opacity(0.35), lineWidth: 1.5)
+                }
+            }
+            .frame(width: 10, height: 10)
+
+            Text(item.title)
+                .font(.caption)
+                .foregroundStyle(MacAppTheme.primaryText)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Account Updates Card
+
+private struct MacAccountUpdatesCard: View {
+    let unreadCount: Int
+    let starredCount: Int
+    let onCatchUp: (() -> Void)?
+    let onViewMore: (() -> Void)?
+
+    var body: some View {
+        MacDashboardCard {
+            VStack(alignment: .leading, spacing: 8) {
+                MacCardHeader(icon: "envelope", title: "ACCOUNT UPDATES")
+
+                Divider().opacity(0.15)
+
+                HStack(spacing: 8) {
+                    MacStatPill(label: "Unread", count: unreadCount, filled: true)
+                    MacStatPill(label: "Saved", count: starredCount, filled: false)
+                    Spacer()
+                }
+
+                Divider().opacity(0.1)
+
+                HStack(spacing: 8) {
+                    if let onCatchUp {
+                        Button("Catch Up") { onCatchUp() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(MacAppTheme.accent)
+                            .controlSize(.small)
+                    }
+                    if let onViewMore {
+                        Button("View More") { onViewMore() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+}
+
+private struct MacStatPill: View {
+    let label: String
+    let count: Int
+    let filled: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("\(count)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(filled ? .black : MacAppTheme.primaryText)
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(filled ? Color.black.opacity(0.7) : MacAppTheme.secondaryText)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(filled ? MacAppTheme.accent : Color.white.opacity(0.07))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(filled ? Color.clear : Color.white.opacity(0.12), lineWidth: 1))
+    }
+}
+
+// MARK: - Stories Feed Card
+
+private struct MacStoriesFeedCard: View {
+    let stories: [InsightCard]
+    let onViewAll: (() -> Void)?
+
+    var body: some View {
+        MacDashboardCard {
+            VStack(alignment: .leading, spacing: 8) {
+                MacCardHeader(
+                    icon: "rectangle.stack.fill",
+                    title: "STORIES",
+                    count: stories.isEmpty ? nil : stories.count
+                )
+
+                Divider().opacity(0.15)
+
+                storiesContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var storiesContent: some View {
+        if stories.isEmpty {
+            MacCardEmptyState(
+                icon: "rectangle.stack",
+                title: "No stories yet",
+                subtitle: "Stories appear as your newsletters are processed"
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(stories.enumerated()), id: \.element.id) { idx, story in
+                    MacStoryPreviewRow(story: story)
+                    if idx < stories.count - 1 {
+                        Divider().opacity(0.1).padding(.leading, 34)
+                    }
+                }
+
+                if let onViewAll {
+                    Button {
+                        onViewAll()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Spacer()
+                            Text("View all stories")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(MacAppTheme.accent)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9))
+                                .foregroundStyle(MacAppTheme.accent)
+                        }
+                        .padding(.top, 6)
+                    }
+                    .buttonStyle(.plain)
+                    .cursor(.pointingHand)
+                }
+            }
+        }
+    }
+}
+
+private struct MacStoryPreviewRow: View {
+    let story: InsightCard
+
+    private var initial: String {
+        String((story.senderName ?? story.sender).first.map(String.init)?.uppercased() ?? "?")
+    }
+
+    private var senderDisplay: String {
+        story.senderName?.isEmpty == false ? story.senderName! : story.sender
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(MacAppTheme.accent.opacity(0.14))
+                    .frame(width: 24, height: 24)
+                Text(initial)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(MacAppTheme.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(senderDisplay)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(MacAppTheme.secondaryText)
+                    .lineLimit(1)
+                Text(story.subject)
+                    .font(.caption)
+                    .foregroundStyle(MacAppTheme.primaryText)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9))
+                .foregroundStyle(MacAppTheme.secondaryText.opacity(0.3))
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+// MARK: - Account section (kept from original)
 
 private struct MacDashboardAccountSection: View {
     let account: EmailAccount
@@ -276,12 +839,10 @@ private struct MacDashboardAccountSection: View {
 
             HStack(spacing: 12) {
                 if let onViewMore {
-                    Button("View more") {
-                        onViewMore()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(MacAppTheme.accent)
-                    .controlSize(.small)
+                    Button("View more") { onViewMore() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(MacAppTheme.accent)
+                        .controlSize(.small)
                 }
 
                 if let onCatchUp, unread > 0 {
@@ -302,7 +863,7 @@ private struct MacDashboardAccountSection: View {
     }
 }
 
-// MARK: - Upcoming row
+// MARK: - Upcoming row (kept from original)
 
 private struct MacDashboardUpcomingEventRow: View {
     let event: GoogleCalendarDisplayEvent
@@ -333,5 +894,15 @@ private struct MacDashboardUpcomingEventRow: View {
         let start = event.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
         let end = event.end.formatted(date: .omitted, time: .shortened)
         return "\(start) – \(end)"
+    }
+}
+
+// MARK: - Cursor helper
+
+private extension View {
+    func cursor(_ cursor: NSCursor) -> some View {
+        self.onHover { inside in
+            if inside { cursor.push() } else { NSCursor.pop() }
+        }
     }
 }

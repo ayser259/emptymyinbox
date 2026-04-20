@@ -105,8 +105,8 @@ private struct DashboardMiniMonthCalendar: View {
             .padding(.horizontal, 4)
 
             HStack(spacing: 0) {
-                ForEach(weekdayInitials(), id: \.self) { s in
-                    Text(s)
+                ForEach(Array(weekdayThreeLetterLabels().enumerated()), id: \.offset) { _, label in
+                    Text(label)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(AppTheme.secondaryText.opacity(0.75))
                         .frame(maxWidth: .infinity)
@@ -139,10 +139,11 @@ private struct DashboardMiniMonthCalendar: View {
         }
     }
 
-    private func weekdayInitials() -> [String] {
+    /// Short weekday names truncated to three characters (e.g. Sat Sun Mon …), ordered by `firstWeekday`.
+    private func weekdayThreeLetterLabels() -> [String] {
         let syms = calendar.shortWeekdaySymbols
         let first = calendar.firstWeekday - 1
-        return (0..<7).map { i in String(syms[(first + i) % 7].prefix(1)) }
+        return (0..<7).map { i in String(syms[(first + i) % 7].prefix(3)) }
     }
 
     private func syncDisplayMonthFromSelection() {

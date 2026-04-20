@@ -3,18 +3,28 @@ import SwiftUI
 import UIKit
 #endif
 
+private enum StoriesSubRoute: Hashable {
+    case bookmarked
+}
+
+private enum StoriesVaultNudge {
+    static let userDefaultsKey = "vaultNudgeStoriesShown"
+}
+
 public struct NewsletterInsightDeckView: View {
     let emails: [EmailListItem]
     let onDiveDeeper: (Int) -> Void
     let onOpenLLMSettings: () -> Void
 
     @State private var cards: [InsightCard] = []
+    @State private var bookmarkedIds: Set<Int> = []
     @State private var isLoading = true
     @State private var hasKey = false
     @State private var isRefreshingStories = false
     @State private var refreshGeneration = 0
     @State private var refreshTask: Task<Void, Never>?
     @State private var aiStatusMessage: String?
+    @State private var showVaultNudgeAlert = false
 
     #if os(iOS)
     private let impact = UIImpactFeedbackGenerator(style: .light)
@@ -98,14 +108,38 @@ public struct NewsletterInsightDeckView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    scheduleRefreshContent(forceRefresh: true)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isRefreshingStories || !hasKey)
+                NavigationLink(value: StoriesSubRoute.bookmarked) {
+                    Image(systemName: "bookmark.fill")
+                }
+            }
+        }
+        .navigationDestination(for: StoriesSubRoute.self) { route in
+            switch route {
+            case .bookmarked:
+                StoriesBookmarkedDeckView(onDiveDeeper: onDiveDeeper)
+            }
+        }
         .task {
-            scheduleRefreshContent()
+            scheduleRefreshContent(forceRefresh: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            scheduleRefreshContent()
+            scheduleRefreshContent(forceRefresh: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
-            scheduleRefreshContent()
+            scheduleRefreshContent(forceRefresh: false)
+        }
+        .alert("Back up Stories", isPresented: $showVaultNudgeAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Add a Vault in Settings to sync your Stories to Google Drive or a folder.")
         }
     }
 
@@ -121,10 +155,27 @@ public struct NewsletterInsightDeckView: View {
                 Spacer()
                 Button {
                     Task {
-                        await StoriesFeedStore.shared.dismissStory(storyId: card.id)
-                        await MainActor.run {
-                            scheduleRefreshContent()
+                        let isBm = await StoriesFeedStore.shared.isBookmarked(storyId: card.id)
+                        if isBm {
+                            await StoriesFeedStore.shared.unbookmarkStory(storyId: card.id)
+                        } else {
+                            await StoriesFeedStore.shared.bookmarkStory(storyId: card.id)
                         }
+                        await reloadBookmarkIds()
+                        let s = await StoriesFeedStore.shared.stories()
+                        await MainActor.run { cards = s }
+                    }
+                } label: {
+                    Image(systemName: bookmarkedIds.contains(card.id) ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(SharedAppTheme.accent)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    Task {
+                        await StoriesFeedStore.shared.markReviewed(storyId: card.id)
+                        let s = await StoriesFeedStore.shared.stories()
+                        await MainActor.run { cards = s }
                     }
                 } label: {
                     Image(systemName: "checkmark.circle")
@@ -202,22 +253,30 @@ public struct NewsletterInsightDeckView: View {
         #endif
     }
 
+    private func reloadBookmarkIds() async {
+        let ids = await StoriesFeedStore.shared.bookmarkedStoryIdSet()
+        await MainActor.run {
+            bookmarkedIds = ids
+        }
+    }
+
     @MainActor
-    private func scheduleRefreshContent() {
+    private func scheduleRefreshContent(forceRefresh: Bool) {
         refreshGeneration += 1
         let generation = refreshGeneration
         refreshTask?.cancel()
         refreshTask = Task {
-            await refreshContent(generation: generation)
+            await refreshContent(generation: generation, forceRefresh: forceRefresh)
         }
     }
 
-    private func refreshContent(generation: Int) async {
+    private func refreshContent(generation: Int, forceRefresh: Bool) async {
         #if os(iOS)
         impact.prepare()
         #endif
 
         let persistedStories = await StoriesFeedStore.shared.stories()
+        await reloadBookmarkIds()
         guard !Task.isCancelled, isLatestRefresh(generation) else { return }
         await MainActor.run {
             cards = persistedStories
@@ -236,7 +295,11 @@ public struct NewsletterInsightDeckView: View {
             )
             guard !Task.isCancelled, isLatestRefresh(generation) else { return }
 
-            if !candidates.isEmpty {
+            let lastGen = await StoriesFeedStore.shared.lastGeneratedAt()
+            let ranToday = lastGen.map { Calendar.current.isDateInToday($0) } ?? false
+            let shouldRunLLM = !candidates.isEmpty && (forceRefresh || !ranToday)
+
+            if shouldRunLLM {
                 await MainActor.run {
                     isRefreshingStories = true
                 }
@@ -248,6 +311,18 @@ public struct NewsletterInsightDeckView: View {
                 if !batch.cards.isEmpty {
                     await StoriesFeedStore.shared.appendStories(batch.cards)
                     loadedStories = await StoriesFeedStore.shared.stories()
+                }
+                let anyNonFailure = batch.outcomes.contains { outcome in
+                    switch outcome.result {
+                    case .failed:
+                        return false
+                    case .success, .empty:
+                        return true
+                    }
+                }
+                if anyNonFailure {
+                    await StoriesFeedStore.shared.setLastGeneratedAt(Date())
+                    await maybeOfferVaultNudgeAfterGeneration()
                 }
                 await MainActor.run {
                     isRefreshingStories = false
@@ -267,7 +342,101 @@ public struct NewsletterInsightDeckView: View {
         }
     }
 
+    private func maybeOfferVaultNudgeAfterGeneration() async {
+        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
+        guard !ready else { return }
+        let shown = UserDefaults.standard.bool(forKey: StoriesVaultNudge.userDefaultsKey)
+        guard !shown else { return }
+        UserDefaults.standard.set(true, forKey: StoriesVaultNudge.userDefaultsKey)
+        await MainActor.run {
+            showVaultNudgeAlert = true
+        }
+    }
+
     private func isLatestRefresh(_ generation: Int) -> Bool {
         generation == refreshGeneration
+    }
+}
+
+// MARK: - Bookmarked
+
+public struct StoriesBookmarkedDeckView: View {
+    let onDiveDeeper: (Int) -> Void
+
+    @State private var cards: [InsightCard] = []
+
+    public init(onDiveDeeper: @escaping (Int) -> Void) {
+        self.onDiveDeeper = onDiveDeeper
+    }
+
+    public var body: some View {
+        Group {
+            if cards.isEmpty {
+                ContentUnavailableView(
+                    "No bookmarks",
+                    systemImage: "bookmark",
+                    description: Text("Bookmark stories from the main feed to keep them here.")
+                )
+            } else {
+                ScrollView {
+                    VStack(spacing: SharedAppTheme.spacingMedium) {
+                        ForEach(cards) { card in
+                            bookmarkedCard(card)
+                        }
+                    }
+                    .padding(.horizontal, SharedAppTheme.spacingMedium)
+                }
+            }
+        }
+        .navigationTitle("Bookmarked")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .task {
+            await load()
+        }
+    }
+
+    private func bookmarkedCard(_ card: InsightCard) -> some View {
+        VStack(alignment: .leading, spacing: SharedAppTheme.spacingMedium) {
+            HStack {
+                Text("#\(card.theme.tag)")
+                    .font(SharedAppTheme.caption)
+                    .foregroundStyle(SharedAppTheme.accent)
+                Spacer()
+                Button {
+                    Task {
+                        await StoriesFeedStore.shared.unbookmarkStory(storyId: card.id)
+                        await load()
+                    }
+                } label: {
+                    Image(systemName: "bookmark.slash")
+                        .foregroundStyle(SharedAppTheme.accent)
+                }
+                .buttonStyle(.plain)
+            }
+            Text(card.subject)
+                .font(SharedAppTheme.title3)
+                .foregroundStyle(SharedAppTheme.primaryText)
+            Text(card.summary)
+                .font(SharedAppTheme.body)
+                .foregroundStyle(SharedAppTheme.secondaryText)
+            Button("Dive Deeper") {
+                onDiveDeeper(card.emailId)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(SharedAppTheme.accent)
+        }
+        .padding(SharedAppTheme.spacingMedium)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SharedAppTheme.secondaryBackground)
+        .cornerRadius(SharedAppTheme.cornerRadiusLarge)
+    }
+
+    private func load() async {
+        let list = await StoriesFeedStore.shared.bookmarkedStories()
+        await MainActor.run {
+            cards = list
+        }
     }
 }

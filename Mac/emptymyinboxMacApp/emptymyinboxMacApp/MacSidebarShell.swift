@@ -206,7 +206,9 @@ private struct MacSidebarRefreshWidget: View {
         if seconds < 60 { return "\(seconds)s ago" }
         if seconds < 3600 { return "\(seconds / 60)m ago" }
         if seconds < 86400 { return "\(seconds / 3600)h ago" }
-        return "Yesterday"
+        let rel = RelativeDateTimeFormatter()
+        rel.unitsStyle = .abbreviated
+        return rel.localizedString(for: date, relativeTo: now)
     }
 }
 

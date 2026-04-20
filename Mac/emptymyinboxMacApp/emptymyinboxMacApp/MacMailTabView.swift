@@ -68,9 +68,6 @@ struct MacMailTabView: View {
     @State private var selection: MailSidebarSelection = .tool(.dashboard)
     @State private var navigationPath = NavigationPath()
     @State private var selectedEmailId: Int?
-    @State private var briefingPayload: DailyBriefingPayload?
-    /// `nil` until the first Brief-tab load checks the keychain (matches iOS: Brief is AI-only).
-    @State private var briefLLMKeyState: Bool?
     @State private var showLLMSettings = false
     @State private var catchUpContextualShortcuts: [MacSidebarContextualShortcut] = []
 
@@ -238,6 +235,12 @@ struct MacMailTabView: View {
                 },
                 onOpenCatchUp: {
                     selection = .tool(.catchUp)
+                },
+                onOpenBrief: {
+                    selection = .tool(.brief)
+                },
+                onOpenStories: {
+                    selection = .tool(.stories)
                 }
             )
         case .catchUp:
@@ -249,85 +252,29 @@ struct MacMailTabView: View {
                 onOpenLLMSettings: { showLLMSettings = true }
             )
         case .brief:
-            briefInlineDetail
+            Group {
+                if let snap = snapshot {
+                    DailyBriefingTabView(
+                        allEmails: snap.allEmails,
+                        onItemTap: { item in
+                            navigationPath.append(item.emailId)
+                        },
+                        onOpenLLMSettings: { showLLMSettings = true }
+                    )
+                    .id(snap.timestamp)
+                } else {
+                    ContentUnavailableView {
+                        Label("Daily Briefing", systemImage: "sparkles")
+                    } description: {
+                        Text("Refresh your mailbox to load briefing data.")
+                    }
+                }
+            }
         case .saved:
             MacStarredEmailListView(snapshot: snapshot, path: $navigationPath)
         }
     }
 
-    private var briefInlineDetail: some View {
-        Group {
-            if briefLLMKeyState == nil {
-                ProgressView("Loading…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if briefLLMKeyState == false {
-                LLMUpsellView(
-                    title: "Unlock AI Summary",
-                    subtitle: "Add your OpenAI API key to enable the Daily Executive Summary.",
-                    actionTitle: "Add API Key",
-                    onAction: { showLLMSettings = true }
-                )
-            } else if let briefingPayload {
-                DailyBriefingContent(payload: briefingPayload) { item in
-                    navigationPath.append(item.emailId)
-                }
-            } else if snapshot == nil {
-                ContentUnavailableView {
-                    Label("Daily Briefing", systemImage: "sparkles")
-                } description: {
-                    Text("Refresh your mailbox to load briefing data.")
-                }
-            } else {
-                ProgressView("Preparing briefing…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .navigationTitle("Daily Briefing")
-        .task(id: briefTaskId) {
-            guard case .tool(.brief) = selection else { return }
-            await loadBriefingForMacTab()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            Task {
-                guard case .tool(.brief) = selection else { return }
-                await loadBriefingForMacTab()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
-            Task {
-                guard case .tool(.brief) = selection else { return }
-                await loadBriefingForMacTab()
-            }
-        }
-    }
-
-    /// Identity for reloading Brief when the mailbox snapshot changes while the tab is open.
-    private var briefTaskId: String {
-        switch selection {
-        case .tool(.brief):
-            return "brief-\(snapshot?.timestamp.timeIntervalSince1970 ?? 0)-\(snapshot?.allEmails.count ?? 0)"
-        default:
-            return "brief-off"
-        }
-    }
-
-    private func loadBriefingForMacTab() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        guard hasKey else {
-            await MainActor.run {
-                briefLLMKeyState = false
-                briefingPayload = nil
-            }
-            return
-        }
-        await MainActor.run { briefLLMKeyState = true }
-        guard let snap = snapshot else {
-            await MainActor.run { briefingPayload = nil }
-            return
-        }
-        let payload = await DailyBriefingEngine.shared.buildPayload(from: snap.allEmails, sinceDate: nil)
-        await MainActor.run { briefingPayload = payload }
-    }
 }
 
 // MARK: - Mailbox read filter

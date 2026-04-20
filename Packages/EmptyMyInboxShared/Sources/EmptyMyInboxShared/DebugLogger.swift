@@ -207,10 +207,9 @@ public class DebugLogger: ObservableObject {
            let savedEntries = try? JSONDecoder().decode([LogEntry].self, from: data) {
             entries = savedEntries
             
-            // Add startup log
-            log("App launched - loaded \(savedEntries.count) persisted log entries", level: .info, category: "System")
+            log("App launched - loaded \(savedEntries.count) persisted log entries", level: .debug, category: "System")
         } else {
-            log("App launched - fresh log session", level: .info, category: "System")
+            log("App launched - fresh log session", level: .debug, category: "System")
         }
     }
 }

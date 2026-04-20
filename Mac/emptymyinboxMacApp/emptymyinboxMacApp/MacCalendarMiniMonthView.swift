@@ -47,8 +47,8 @@ struct MacCalendarMiniMonthView: View {
             .padding(.horizontal, 4)
 
             HStack(spacing: 0) {
-                ForEach(weekdayInitials(), id: \.self) { s in
-                    Text(s)
+                ForEach(Array(weekdayThreeLetterLabels().enumerated()), id: \.offset) { _, label in
+                    Text(label)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(MacAppTheme.secondaryText)
                         .frame(maxWidth: .infinity)
@@ -77,9 +77,11 @@ struct MacCalendarMiniMonthView: View {
         }
     }
 
-    private func weekdayInitials() -> [String] {
+    /// Short weekday names truncated to three characters (e.g. Sat Sun Mon …), ordered by `firstWeekday`.
+    private func weekdayThreeLetterLabels() -> [String] {
         let syms = calendar.shortWeekdaySymbols
-        return syms.map { String($0.prefix(1)) }
+        let first = calendar.firstWeekday - 1
+        return (0..<7).map { i in String(syms[(first + i) % 7].prefix(3)) }
     }
 
     private func syncDisplayMonthFromSelection() {

@@ -155,6 +155,7 @@ struct MacVaultCalendarTab: View {
                             actionItems: dashboardActionItems,
                             isRefreshing: isRefreshing,
                             refreshMessage: refreshMessage
+                            // onOpenBrief / onOpenStories not available in Calendar tab
                         )
                     case .starred, .calendar:
                         GoogleCalendarTabContent(
@@ -247,6 +248,7 @@ struct MacVaultCalendarTab: View {
                     )
                 }
             } catch {
+                if error.isURLSessionCancellation { continue }
                 sidebarCalendarsLoadError = "Could not load calendars."
                 logWarning("Mac calendar sidebar list failed: \(error)", category: "Calendar")
             }
@@ -1367,6 +1369,7 @@ struct MacVaultActionItemsTab: View {
                 actionItems: dashboardActionItems,
                 isRefreshing: isRefreshing,
                 refreshMessage: refreshMessage
+                // onOpenBrief / onOpenStories not available in Action Items tab
             )
         case .planner:
             MacPlannerPlaceholderView()

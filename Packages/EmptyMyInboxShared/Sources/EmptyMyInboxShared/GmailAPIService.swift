@@ -168,6 +168,22 @@ public struct GmailProfile: Codable {
     }
 }
 
+// MARK: - OAuth refresh (single-flight per account)
+
+private actor OAuthRefreshCoordinator {
+    private var tasks: [String: Task<String, Error>] = [:]
+
+    func run(accountId: String, operation: @escaping () async throws -> String) async throws -> String {
+        if let existing = tasks[accountId] {
+            return try await existing.value
+        }
+        let task = Task { try await operation() }
+        tasks[accountId] = task
+        defer { tasks[accountId] = nil }
+        return try await task.value
+    }
+}
+
 // MARK: - Service
 
 public class GmailAPIService {
@@ -184,6 +200,10 @@ public class GmailAPIService {
     private var accounts: [GmailAccount] = []
     private var accountsLoadStatus: AccountLoadStatus = .notFound
     private var nextEmailId: Int = 1000 // Starting ID for generated email IDs
+
+    /// Serializes Keychain access and co-located persistence (`SecItem*` is not safe for concurrent mutation).
+    private let persistenceLock = NSLock()
+    private let oauthRefreshCoordinator = OAuthRefreshCoordinator()
     
     // URLSession with timeout configuration to prevent hanging requests
     internal lazy var urlSession: URLSession = {
@@ -400,31 +420,30 @@ public class GmailAPIService {
     
     /// Get valid access token, refreshing if necessary (internal for use by extensions)
     public func getValidAccessToken(for account: GmailAccount) async throws -> String {
-        // Check if token needs refresh
         if let expiry = account.tokenExpiry, expiry > Date() {
-            // Token is still valid
             return account.accessToken
         }
-        
-        // Token expired, need to refresh
         guard let refreshToken = account.refreshToken else {
-            // No refresh token, need to re-authenticate
             throw GmailAPIError.tokenExpired
         }
-        
-        // Refresh the token
-        let newAccessToken = try await refreshAccessToken(refreshToken: refreshToken, clientID: getGoogleClientID(), clientSecret: getGoogleClientSecret())
-        
-        // Update account in array
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-            var updatedAccount = accounts[index]
-            updatedAccount.accessToken = newAccessToken
-            updatedAccount.tokenExpiry = Date().addingTimeInterval(3600)
-            accounts[index] = updatedAccount
-            saveAccounts()
+        let accountId = account.id
+        return try await oauthRefreshCoordinator.run(accountId: accountId) { [self] in
+            let newAccessToken = try await refreshAccessToken(
+                refreshToken: refreshToken,
+                clientID: getGoogleClientID(),
+                clientSecret: getGoogleClientSecret()
+            )
+            persistenceLock.lock()
+            defer { persistenceLock.unlock() }
+            if let index = accounts.firstIndex(where: { $0.id == accountId }) {
+                var updatedAccount = accounts[index]
+                updatedAccount.accessToken = newAccessToken
+                updatedAccount.tokenExpiry = Date().addingTimeInterval(3600)
+                accounts[index] = updatedAccount
+            }
+            saveAccountsWhileLocked()
+            return newAccessToken
         }
-        
-        return newAccessToken
     }
 
     // MARK: - Google Drive (vault)
@@ -908,20 +927,25 @@ public class GmailAPIService {
     }
     
     private func saveAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
+        saveAccountsWhileLocked()
+    }
+
+    /// Must be called with `persistenceLock` held (avoids nested lock while `loadSavedAccounts` calls migration).
+    private func saveAccountsWhileLocked() {
         guard let data = try? JSONEncoder().encode(accounts) else {
             logWarning("Failed to encode accounts for keychain", category: "Auth")
             return
         }
-        
-        // Delete existing first
+
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount
         ]
         SecItemDelete(deleteQuery as CFDictionary)
-        
-        // Add with proper accessibility for device
+
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -929,15 +953,15 @@ public class GmailAPIService {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
-        
+
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecSuccess {
-            logSuccess("Saved \(accounts.count) accounts to keychain", category: "Auth")
+            logDebug("Saved \(accounts.count) accounts to keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
             removeAccountsFileFallback()
             return
         }
-        
+
         logWarning(
             "Keychain save failed: \(keychainStatusDescription(status)). Using Application Support fallback.",
             category: "Auth"
@@ -950,6 +974,8 @@ public class GmailAPIService {
     }
     
     private func loadSavedAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -992,7 +1018,7 @@ public class GmailAPIService {
         do {
             let loadedAccounts = try JSONDecoder().decode([GmailAccount].self, from: data)
             accounts = loadedAccounts
-            logSuccess("Loaded \(accounts.count) accounts from keychain", category: "Auth")
+            logDebug("Loaded \(accounts.count) accounts from keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
             removeAccountsFileFallback()
         } catch {
@@ -1002,7 +1028,7 @@ public class GmailAPIService {
         }
     }
     
-    /// Migrate from old keychain format (without service identifier)
+    /// Migrate from old keychain format (without service identifier). Caller must hold `persistenceLock`.
     private func migrateOldKeychainData() -> Bool {
         let oldQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -1022,9 +1048,8 @@ public class GmailAPIService {
         
         logInfo("Migrating \(loadedAccounts.count) accounts from old keychain format", category: "Auth")
         accounts = loadedAccounts
-        
-        // Save to new format
-        saveAccounts()
+
+        saveAccountsWhileLocked()
         
         // Delete old format
         let deleteOldQuery: [String: Any] = [
@@ -1036,6 +1061,8 @@ public class GmailAPIService {
     }
     
     private func clearSavedAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,

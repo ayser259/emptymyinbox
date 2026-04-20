@@ -404,6 +404,70 @@ public final class VaultManager: ObservableObject {
         try await backend.remove(relativePath: path)
     }
 
+    // MARK: - Stories & Brief
+
+    /// Reads the stories feed aggregate from the vault, if present.
+    public func loadStoriesFeedFromVault() async throws -> VaultStoriesFeedPayload? {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.storiesFeedAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return nil
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<VaultStoriesFeedPayload>.self, from: data) else {
+            return nil
+        }
+        return env.payload
+    }
+
+    /// Writes the full stories feed snapshot (overwrites `Stories/stories_feed.json`).
+    public func saveStoriesFeedToVault(_ payload: VaultStoriesFeedPayload) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        try await backend.ensureStructure()
+        let path = VaultLayout.storiesFeedAggregatePath
+        let existing = try? await backend.read(relativePath: path)
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
+        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: payload)
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: path, data: data)
+    }
+
+    /// Writes bookmarked cards only (`Stories/bookmarked_stories.json`).
+    public func saveBookmarkedStoriesMirrorToVault(_ payload: VaultStoriesBookmarkedPayload) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        try await backend.ensureStructure()
+        let path = VaultLayout.storiesBookmarkedAggregatePath
+        let existing = try? await backend.read(relativePath: path)
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
+        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: payload)
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: path, data: data)
+    }
+
+    /// Reads the daily brief from the vault, if present.
+    public func loadDailyBriefFromVault() async throws -> DailyBriefingPayload? {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        let path = VaultLayout.briefDailyAggregatePath
+        guard let data = try? await backend.read(relativePath: path) else {
+            return nil
+        }
+        guard let env = try? VaultJSON.decoder().decode(VaultFileEnvelope<DailyBriefingPayload>.self, from: data) else {
+            return nil
+        }
+        return env.payload
+    }
+
+    /// Overwrites `Brief/daily_brief.json` with the latest briefing.
+    public func saveDailyBriefToVault(_ payload: DailyBriefingPayload) async throws {
+        guard let backend = folderBackend else { throw VaultError.notConfigured }
+        try await backend.ensureStructure()
+        let path = VaultLayout.briefDailyAggregatePath
+        let existing = try? await backend.read(relativePath: path)
+        let token = VaultLWWHelpers.nextWriteToken(existingData: existing)
+        let envelope = VaultFileEnvelope(updatedAt: Date(), writeToken: token, payload: payload)
+        let data = try VaultJSON.encoder().encode(envelope)
+        try await backend.write(relativePath: path, data: data)
+    }
+
     // MARK: - Action items
 
     /// Active (incomplete) items only — primary UI lists.

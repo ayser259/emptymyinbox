@@ -98,8 +98,6 @@ struct emptyMyInboxApp: App {
         // Only refresh once per day (first time app is opened that day)
         let userDefaults = UserDefaults.standard
         let lastAutoRefreshKey = "lastAutoRefreshDate"
-        let lastBriefingShownKey = "lastBriefingShownDate"
-        
         // Get today's date (just the date, not time)
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -123,16 +121,6 @@ struct emptyMyInboxApp: App {
             NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
             NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
 
-            let shouldShowBriefing: Bool
-            if let lastBriefingDate = userDefaults.object(forKey: lastBriefingShownKey) as? Date {
-                shouldShowBriefing = !calendar.isDate(today, inSameDayAs: calendar.startOfDay(for: lastBriefingDate))
-            } else {
-                shouldShowBriefing = true
-            }
-
-            if shouldShowBriefing {
-                NotificationCenter.default.post(name: .appShouldShowDailyBriefing, object: nil)
-            }
         }
     }
     
@@ -156,7 +144,6 @@ struct emptyMyInboxApp: App {
 
 extension Notification.Name {
     static let appShouldRefreshData = Notification.Name("AppShouldRefreshData")
-    static let appShouldShowDailyBriefing = Notification.Name("AppShouldShowDailyBriefing")
 }
 
 struct SplashView: View {

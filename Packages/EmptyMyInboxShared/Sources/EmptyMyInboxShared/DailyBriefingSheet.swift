@@ -15,11 +15,16 @@ public struct DailyBriefingContent: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: SharedAppTheme.spacingMedium) {
+            Text(Self.generatedLabel(for: payload.generatedAt))
+                .font(SharedAppTheme.caption)
+                .foregroundStyle(SharedAppTheme.secondaryText)
+                .padding(.horizontal, SharedAppTheme.spacingMedium)
+                .padding(.top, SharedAppTheme.spacingSmall)
+
             Text(payload.introText)
                 .font(SharedAppTheme.body)
                 .foregroundStyle(SharedAppTheme.secondaryText)
                 .padding(.horizontal, SharedAppTheme.spacingMedium)
-                .padding(.top, SharedAppTheme.spacingSmall)
 
             if payload.items.isEmpty {
                 Text("No important updates right now.")
@@ -75,6 +80,13 @@ public struct DailyBriefingContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(SharedAppTheme.primaryBackground)
+    }
+
+    private static func generatedLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "Generated \(formatter.string(from: date))"
     }
 
     private static func caption(for type: BriefingItemType) -> String {
