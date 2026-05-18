@@ -27,6 +27,31 @@ struct InsightEngineTests {
         #expect(candidates.isEmpty == true)
     }
 
+    @Test("Insight engine treats Gmail Updates category as newsletter")
+    func testUpdatesCategoryIsNewsletter() async {
+        let preferredAddress = await AccountInclusionStore.shared.primaryNewsletterAddress() ?? "insights@example.com"
+        let email = EmailListItem(
+            id: 3,
+            gmail_id: "msg-3",
+            subject: "Morning Brew",
+            sender: "hello@morningbrew.com",
+            sender_name: "Morning Brew",
+            snippet: "Today's top headlines",
+            is_read: false,
+            is_starred: false,
+            labels: ["INBOX", "CATEGORY_UPDATES"],
+            received_at: ISO8601DateFormatter().string(from: Date()),
+            account_email: preferredAddress,
+            marked_read_at: nil
+        )
+
+        let candidates = await InsightEngine.shared.selectUnpromptedCandidates(
+            from: [email],
+            promptStates: [:]
+        )
+        #expect(candidates.count == 1)
+    }
+
     @Test("Insight engine respects prompt cooldown and success suppression")
     func testSelectCandidatesUsesPromptState() async {
         let now = Date()

@@ -18,13 +18,13 @@ public actor LLMProviderRouter {
         }
     }
 
-    public func classifyBriefingItem(subject: String, snippet: String, sender: String) async throws -> BriefingItemType {
+    public func generateDailyBrief(candidates: DailyBriefCandidates) async throws -> DailyBriefLLMResponse {
         let provider = await selectedProvider()
         switch provider {
         case .openAI:
-            return try await OpenAIService.shared.classifyBriefingItem(subject: subject, snippet: snippet, sender: sender)
+            return try await OpenAIService.shared.generateDailyBrief(candidates: candidates)
         case .claude:
-            return try await ClaudeService.shared.classifyBriefingItem(subject: subject, snippet: snippet, sender: sender)
+            return try await ClaudeService.shared.generateDailyBrief(candidates: candidates)
         }
     }
 

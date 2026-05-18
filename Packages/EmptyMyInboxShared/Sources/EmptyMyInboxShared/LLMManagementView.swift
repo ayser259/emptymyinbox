@@ -145,20 +145,31 @@ public struct LLMManagementView: View {
             return
         }
 
+        let sample = DailyBriefCandidates(
+            todayDate: "2026-05-18",
+            yesterdayDate: "2026-05-17",
+            urgentToday: [
+                DailyBriefEmailCandidate(
+                    emailId: 1,
+                    sender: "calendar@google.com",
+                    senderName: "Calendar",
+                    subject: "Team sync tomorrow 10am",
+                    snippet: "Calendar invite attached",
+                    receivedAt: "2026-05-18T09:00:00Z",
+                    isRead: false,
+                    labels: ["INBOX", "UNREAD"]
+                )
+            ],
+            criticalReminders: [],
+            unreadFromYesterday: [],
+            receiptsAndTransactions: []
+        )
         do {
             switch settings.provider {
             case .openAI:
-                _ = try await OpenAIService.shared.classifyBriefingItem(
-                    subject: "Team sync tomorrow 10am",
-                    snippet: "Calendar invite attached",
-                    sender: "calendar@google.com"
-                )
+                _ = try await OpenAIService.shared.generateDailyBrief(candidates: sample)
             case .claude:
-                _ = try await ClaudeService.shared.classifyBriefingItem(
-                    subject: "Team sync tomorrow 10am",
-                    snippet: "Calendar invite attached",
-                    sender: "calendar@google.com"
-                )
+                _ = try await ClaudeService.shared.generateDailyBrief(candidates: sample)
             }
             await MainActor.run {
                 testResult = "\(settings.provider.displayName) connection successful."

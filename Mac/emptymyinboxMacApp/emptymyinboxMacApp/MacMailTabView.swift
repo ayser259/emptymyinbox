@@ -109,6 +109,11 @@ struct MacMailTabView: View {
                 catchUpContextualShortcuts = []
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .macSelectMailTool)) { notification in
+            guard let rawValue = notification.object as? String,
+                  let tool = MailTool(rawValue: rawValue) else { return }
+            selection = .tool(tool)
+        }
         .sheet(isPresented: $showLLMSettings) {
             NavigationStack {
                 LLMManagementView()
@@ -128,10 +133,14 @@ struct MacMailTabView: View {
     }
 
     private var mailFeatureShortcutSection: MacSidebarFeatureShortcutSection? {
+        let mailToolShortcuts = MacSidebarShortcutLibrary.mailTools
         if case .tool(.catchUp) = selection {
-            return MacSidebarFeatureShortcutSection(title: "Catch Up", shortcuts: catchUpContextualShortcuts)
+            return MacSidebarFeatureShortcutSection(
+                title: "Mail",
+                shortcuts: mailToolShortcuts + catchUpContextualShortcuts
+            )
         }
-        return nil
+        return MacSidebarFeatureShortcutSection(title: "Mail", shortcuts: mailToolShortcuts)
     }
 
     private var sidebar: some View {
@@ -244,13 +253,26 @@ struct MacMailTabView: View {
                 }
             )
         case .catchUp:
-            MacCatchUpFeedView(contextualShortcuts: $catchUpContextualShortcuts)
+            MacCatchUpFeedView(contextualShortcuts: $catchUpContextualShortcuts) {
+                selection = .tool(.dashboard)
+            }
         case .stories:
-            NewsletterInsightDeckView(
-                emails: snapshot?.allEmails ?? [],
-                onDiveDeeper: { id in navigationPath.append(id) },
-                onOpenLLMSettings: { showLLMSettings = true }
-            )
+            Group {
+                if let snap = snapshot {
+                    NewsletterInsightDeckView(
+                        emails: snap.allEmails,
+                        onDiveDeeper: { id in navigationPath.append(id) },
+                        onOpenLLMSettings: { showLLMSettings = true }
+                    )
+                    .id(snap.timestamp)
+                } else {
+                    ContentUnavailableView {
+                        Label("Stories", systemImage: "rectangle.stack.fill")
+                    } description: {
+                        Text("Refresh your mailbox to load newsletter data for stories.")
+                    }
+                }
+            }
         case .brief:
             Group {
                 if let snap = snapshot {

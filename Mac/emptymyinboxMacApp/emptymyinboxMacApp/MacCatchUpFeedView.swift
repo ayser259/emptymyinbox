@@ -18,6 +18,7 @@ import EmptyMyInboxShared
 struct MacCatchUpFeedView: View {
 
     @Binding var contextualShortcuts: [MacSidebarContextualShortcut]
+    var onDone: () -> Void = {}
 
     @StateObject private var loader = LazyEmailLoader()
     @StateObject private var accountOrderStore = CatchUpAccountOrderStore()
@@ -28,9 +29,12 @@ struct MacCatchUpFeedView: View {
     @State private var showReorderSheet = false
     @State private var replyComposerEmail: EmailDetail?
 
-    // MARK: - Session stats (for celebration view)
+    // MARK: - Session stats (for completion view)
     @State private var sessionStats = CatchUpSessionStats()
     @State private var sessionStartTime: Date? = nil
+    @State private var didPersistSessionMetrics = false
+    @State private var todaySendersReceived = 0
+    @State private var todayUnsubscribesTotal = 0
 
     // MARK: - Unified dismiss animation state (iOS-parity)
     @State private var dismissingCardId: Int? = nil
@@ -86,18 +90,17 @@ struct MacCatchUpFeedView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !loader.hasMoreEmails {
                 if sessionStats.reviewed > 0 {
-                    CelebrationView(
-                        emailsCleared: sessionStats.reviewed,
+                    MacCatchUpCompletionView(
+                        sessionStats: sessionStats,
                         sessionStartTime: sessionStartTime,
-                        accountEmail: loader.emailMetadata.first?.account_email,
-                        sessionStats: sessionStats
+                        todaySendersReceived: todaySendersReceived,
+                        todayUnsubscribesTotal: todayUnsubscribesTotal,
+                        onDone: onDone
                     )
+                    .task { await loadCompletionContext() }
+                    .onAppear { Task { await persistSessionMetricsIfNeeded() } }
                 } else {
-                    ContentUnavailableView {
-                        Label("All caught up", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("No unread emails in this view.")
-                    }
+                    catchUpEmptyState
                 }
             } else {
                 GeometryReader { geo in
@@ -469,6 +472,46 @@ struct MacCatchUpFeedView: View {
         if sessionStartTime == nil { sessionStartTime = Date() }
     }
 
+    private var catchUpEmptyState: some View {
+        VStack(spacing: 20) {
+            ContentUnavailableView {
+                Label("All caught up", systemImage: "checkmark.circle")
+            } description: {
+                Text("No unread emails in this view.")
+            }
+            Button("Back to Dashboard", action: onDone)
+                .buttonStyle(.borderedProminent)
+                .tint(MacAppTheme.accent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func loadCompletionContext() async {
+        let todayMetric = await InboxMetricsStore.shared.metric(forDayContaining: Date())
+        await MainActor.run {
+            todaySendersReceived = todayMetric?.uniqueSendersReceived ?? sessionStats.reviewedSenders.count
+            todayUnsubscribesTotal = todayMetric?.successfulUnsubscribes ?? sessionStats.successfulUnsubscribes
+        }
+    }
+
+    private func persistSessionMetricsIfNeeded() async {
+        guard !didPersistSessionMetrics, sessionStats.reviewed > 0 else { return }
+        didPersistSessionMetrics = true
+        await InboxMetricsStore.shared.recordCatchUpSession(
+            stats: sessionStats,
+            sessionStart: sessionStartTime
+        )
+        await loadCompletionContext()
+    }
+
+    private func recordSenderForReviewedEmail(_ email: EmailDetail) {
+        sessionStats.reviewedSenders.insert(email.sender.lowercased())
+        if hasUnsubscribeAvailable {
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+        }
+    }
+
     private func handleReply() async {
         guard let email = loader.currentEmail else { return }
         await MainActor.run {
@@ -496,6 +539,7 @@ struct MacCatchUpFeedView: View {
 
         sessionStats.reviewed += 1
         sessionStats.starred += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isProcessing = false
@@ -514,6 +558,7 @@ struct MacCatchUpFeedView: View {
 
         sessionStats.reviewed += 1
         sessionStats.keptUnread += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isAnimating = false
@@ -537,6 +582,7 @@ struct MacCatchUpFeedView: View {
 
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isProcessing = false
@@ -552,12 +598,15 @@ struct MacCatchUpFeedView: View {
         if let method = await UnsubscribeService.shared.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
             let result = await UnsubscribeService.shared.executeUnsubscribe(method: method, userEmail: email.account_email)
             if result.success {
+                sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
                 if result.requiresManualAction, let url = result.manualActionURL {
                     await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
                 } else {
                     await performDismissalAnimation(cardId: email.id, direction: .right)
                     loader.removeCurrentEmail()
                     sessionStats.reviewed += 1
+                    sessionStats.successfulUnsubscribes += 1
+                    recordSenderForReviewedEmail(email)
                     resetAnimationState()
                 }
             } else if let url = result.manualActionURL {

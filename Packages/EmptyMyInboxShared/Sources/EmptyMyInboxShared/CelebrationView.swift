@@ -16,19 +16,31 @@ public struct CatchUpSessionStats: Sendable {
     public var keptUnread: Int = 0
     public var starred: Int = 0
     public var uniqueUnsubscribeDomains: Set<String> = []
+    /// Lowercased sender addresses reviewed this session.
+    public var reviewedSenders: Set<String> = []
+    /// Senders where List-Unsubscribe was available during review.
+    public var potentialUnsubscribeSenders: Set<String> = []
+    /// Successful automated unsubscribes in this session.
+    public var successfulUnsubscribes: Int = 0
 
     public init(
         reviewed: Int = 0,
         markedAsRead: Int = 0,
         keptUnread: Int = 0,
         starred: Int = 0,
-        uniqueUnsubscribeDomains: Set<String> = []
+        uniqueUnsubscribeDomains: Set<String> = [],
+        reviewedSenders: Set<String> = [],
+        potentialUnsubscribeSenders: Set<String> = [],
+        successfulUnsubscribes: Int = 0
     ) {
         self.reviewed = reviewed
         self.markedAsRead = markedAsRead
         self.keptUnread = keptUnread
         self.starred = starred
         self.uniqueUnsubscribeDomains = uniqueUnsubscribeDomains
+        self.reviewedSenders = reviewedSenders
+        self.potentialUnsubscribeSenders = potentialUnsubscribeSenders
+        self.successfulUnsubscribes = successfulUnsubscribes
     }
 }
 

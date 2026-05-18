@@ -10,6 +10,7 @@ public struct SettingsShortcutsView: View {
         List {
             #if os(macOS)
             shortcutSection(title: "Global", items: SettingsShortcutsReference.global)
+            shortcutSection(title: "Mail", items: SettingsShortcutsReference.mailTools)
             shortcutSection(title: "Mail — Catch Up", items: SettingsShortcutsReference.mailCatchUp)
             shortcutSection(title: "Calendar", items: SettingsShortcutsReference.calendarModes)
             shortcutSection(title: "Action Items", items: SettingsShortcutsReference.actionItems)
@@ -21,6 +22,7 @@ public struct SettingsShortcutsView: View {
                 }
             } else {
                 shortcutSection(title: "Global", items: SettingsShortcutsReference.global)
+                shortcutSection(title: "Mail", items: SettingsShortcutsReference.mailTools)
                 shortcutSection(title: "Mail — Catch Up", items: SettingsShortcutsReference.mailCatchUp)
                 shortcutSection(title: "Calendar", items: SettingsShortcutsReference.calendarModes)
                 shortcutSection(title: "Action Items", items: SettingsShortcutsReference.actionItems)

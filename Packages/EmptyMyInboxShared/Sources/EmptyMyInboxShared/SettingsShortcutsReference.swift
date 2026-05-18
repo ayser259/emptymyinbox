@@ -23,6 +23,13 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Next primary tab", shortcutDisplay: "⌃Tab"),
     ]
 
+    /// Mail tab — detail tools.
+    public static let mailTools: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Catch Up", shortcutDisplay: "⌥C"),
+        SettingsShortcutReference(title: "Stories", shortcutDisplay: "⌥S"),
+        SettingsShortcutReference(title: "Brief", shortcutDisplay: "⌥B"),
+    ]
+
     /// Calendar tab — Calendar or Starred tools.
     public static let calendarModes: [SettingsShortcutReference] = [
         SettingsShortcutReference(title: "Events", shortcutDisplay: "E"),

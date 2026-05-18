@@ -76,7 +76,7 @@ public struct SettingsCorePluginsView: View {
         } header: {
             Text("Brief")
         } footer: {
-            Text("Classifies inbox items for the briefing: pick accounts and adjust the prompt.")
+            Text("Builds your daily executive brief: pick accounts and adjust the prompt.")
         }
 
         Section {
@@ -128,7 +128,7 @@ struct SettingsPluginModelSettingsView: View {
         var description: String {
             switch self {
             case .brief:
-                return "Pick the model used when classifying daily briefing items."
+                return "Pick the model used when generating your daily executive brief."
             case .stories:
                 return "Pick the model used when generating newsletter insight cards."
             case .quickReply:
@@ -303,11 +303,26 @@ struct SettingsPluginModelSettingsView: View {
         do {
             switch kind {
             case .brief:
-                _ = try await LLMProviderRouter.shared.classifyBriefingItem(
-                    subject: "Leadership sync tomorrow 10am",
-                    snippet: "Calendar invite attached",
-                    sender: "calendar@company.com"
+                let sample = DailyBriefCandidates(
+                    todayDate: "2026-05-18",
+                    yesterdayDate: "2026-05-17",
+                    urgentToday: [
+                        DailyBriefEmailCandidate(
+                            emailId: 1,
+                            sender: "boss@company.com",
+                            senderName: "Boss",
+                            subject: "Need your review before noon",
+                            snippet: "Please review the attached deck and reply today.",
+                            receivedAt: "2026-05-18T09:00:00Z",
+                            isRead: false,
+                            labels: ["INBOX", "UNREAD"]
+                        )
+                    ],
+                    criticalReminders: [],
+                    unreadFromYesterday: [],
+                    receiptsAndTransactions: []
                 )
+                _ = try await LLMProviderRouter.shared.generateDailyBrief(candidates: sample)
             case .stories:
                 _ = try await LLMProviderRouter.shared.summarizeNewsletterStories(
                     subject: "Weekly Product Digest",
@@ -355,7 +370,7 @@ struct SettingsPluginPromptEditorView: View {
         var systemPromptDescription: String {
             switch self {
             case .brief:
-                return "Sets behavior for the assistant when classifying a single email (JSON output, safety rules)."
+                return "Sets behavior when building your daily executive brief (JSON output, safety rules)."
             case .stories:
                 return "Sets behavior when turning newsletter content into story cards (JSON output, safety rules)."
             case .quickReply:

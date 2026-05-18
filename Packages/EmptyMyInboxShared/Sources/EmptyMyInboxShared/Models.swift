@@ -409,6 +409,40 @@ public enum BriefingItemType: String, Codable, CaseIterable {
     case directCommunication
     case calendarInvite
     case urgentNotification
+    case receipt
+}
+
+public enum BriefingSectionKind: String, Codable, CaseIterable {
+    case urgentToday
+    case criticalReminders
+    case unreadFromYesterday
+    case receiptsAndTransactions
+
+    public var defaultTitle: String {
+        switch self {
+        case .urgentToday:
+            return "Needs attention today"
+        case .criticalReminders:
+            return "Reminders & deadlines"
+        case .unreadFromYesterday:
+            return "Still unread from yesterday"
+        case .receiptsAndTransactions:
+            return "Receipts & transactions"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .urgentToday:
+            return "exclamationmark.circle.fill"
+        case .criticalReminders:
+            return "bell.fill"
+        case .unreadFromYesterday:
+            return "envelope.badge"
+        case .receiptsAndTransactions:
+            return "creditcard.fill"
+        }
+    }
 }
 
 public struct DailyBriefingItem: Codable, Identifiable, Hashable {
@@ -423,13 +457,157 @@ public struct DailyBriefingItem: Codable, Identifiable, Hashable {
     public let snippet: String
     public let receivedAt: String
     public let type: BriefingItemType
+    public let section: BriefingSectionKind
+    public let summary: String?
+    public let actionItems: [String]
+    public let sourceLabel: String?
+
+    public init(
+        id: Int,
+        emailId: Int,
+        gmailId: String,
+        threadId: String?,
+        accountEmail: String,
+        sender: String,
+        senderName: String?,
+        subject: String,
+        snippet: String,
+        receivedAt: String,
+        type: BriefingItemType,
+        section: BriefingSectionKind,
+        summary: String? = nil,
+        actionItems: [String] = [],
+        sourceLabel: String? = nil
+    ) {
+        self.id = id
+        self.emailId = emailId
+        self.gmailId = gmailId
+        self.threadId = threadId
+        self.accountEmail = accountEmail
+        self.sender = sender
+        self.senderName = senderName
+        self.subject = subject
+        self.snippet = snippet
+        self.receivedAt = receivedAt
+        self.type = type
+        self.section = section
+        self.summary = summary
+        self.actionItems = actionItems
+        self.sourceLabel = sourceLabel
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        emailId = try container.decode(Int.self, forKey: .emailId)
+        gmailId = try container.decode(String.self, forKey: .gmailId)
+        threadId = try container.decodeIfPresent(String.self, forKey: .threadId)
+        accountEmail = try container.decode(String.self, forKey: .accountEmail)
+        sender = try container.decode(String.self, forKey: .sender)
+        senderName = try container.decodeIfPresent(String.self, forKey: .senderName)
+        subject = try container.decode(String.self, forKey: .subject)
+        snippet = try container.decode(String.self, forKey: .snippet)
+        receivedAt = try container.decode(String.self, forKey: .receivedAt)
+        type = try container.decode(BriefingItemType.self, forKey: .type)
+        section = try container.decodeIfPresent(BriefingSectionKind.self, forKey: .section)
+            ?? Self.sectionKind(for: type)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        actionItems = try container.decodeIfPresent([String].self, forKey: .actionItems) ?? []
+        sourceLabel = try container.decodeIfPresent(String.self, forKey: .sourceLabel)
+    }
+
+    private static func sectionKind(for type: BriefingItemType) -> BriefingSectionKind {
+        switch type {
+        case .urgentNotification:
+            return .urgentToday
+        case .calendarInvite:
+            return .criticalReminders
+        case .receipt:
+            return .receiptsAndTransactions
+        case .directCommunication:
+            return .unreadFromYesterday
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, emailId, gmailId, threadId, accountEmail, sender, senderName
+        case subject, snippet, receivedAt, type, section, summary, actionItems, sourceLabel
+    }
+}
+
+public struct DailyBriefingSection: Codable, Identifiable, Hashable {
+    public var id: String { kind.rawValue }
+    public let kind: BriefingSectionKind
+    public let title: String
+    public let items: [DailyBriefingItem]
+
+    public init(kind: BriefingSectionKind, title: String? = nil, items: [DailyBriefingItem]) {
+        self.kind = kind
+        self.title = title ?? kind.defaultTitle
+        self.items = items
+    }
 }
 
 public struct DailyBriefingPayload: Codable {
     public let generatedAt: Date
     public let sinceDate: Date?
     public let introText: String
-    public let items: [DailyBriefingItem]
+    public let sections: [DailyBriefingSection]
+
+    public var items: [DailyBriefingItem] {
+        sections.flatMap(\.items)
+    }
+
+    public init(
+        generatedAt: Date,
+        sinceDate: Date?,
+        introText: String,
+        sections: [DailyBriefingSection]
+    ) {
+        self.generatedAt = generatedAt
+        self.sinceDate = sinceDate
+        self.introText = introText
+        self.sections = sections
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        sinceDate = try container.decodeIfPresent(Date.self, forKey: .sinceDate)
+        introText = try container.decode(String.self, forKey: .introText)
+        if let decodedSections = try container.decodeIfPresent([DailyBriefingSection].self, forKey: .sections),
+           !decodedSections.isEmpty {
+            sections = decodedSections
+        } else if let legacyItems = try container.decodeIfPresent([DailyBriefingItem].self, forKey: .items),
+                  !legacyItems.isEmpty {
+            sections = Self.sections(fromLegacyItems: legacyItems)
+        } else {
+            sections = []
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encodeIfPresent(sinceDate, forKey: .sinceDate)
+        try container.encode(introText, forKey: .introText)
+        try container.encode(sections, forKey: .sections)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case generatedAt, sinceDate, introText, sections, items
+    }
+
+    private static func sections(fromLegacyItems items: [DailyBriefingItem]) -> [DailyBriefingSection] {
+        var grouped: [BriefingSectionKind: [DailyBriefingItem]] = [:]
+        for item in items {
+            grouped[item.section, default: []].append(item)
+        }
+        return BriefingSectionKind.allCases.compactMap { kind in
+            guard let sectionItems = grouped[kind], !sectionItems.isEmpty else { return nil }
+            return DailyBriefingSection(kind: kind, items: sectionItems)
+        }
+    }
 }
 
 // MARK: - Newsletter Insights

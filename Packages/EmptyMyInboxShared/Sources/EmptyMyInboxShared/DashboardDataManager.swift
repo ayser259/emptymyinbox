@@ -312,6 +312,7 @@ public actor DashboardDataManager {
             labels: labels
         )
         await dashboardCache.saveSnapshot(snapshot)
+        await InboxMetricsStore.shared.updateReceivedCounts(from: sortedInbox)
         Telemetry.event("dashboard.refresh.snapshot_saved", metadata: [
             "inbox_count": "\(sortedInbox.count)",
             "unread_count": "\(sortedUnreadOnly.count)",
@@ -432,6 +433,7 @@ public actor DashboardDataManager {
                 labels: labels
             )
             await dashboardCache.saveSnapshot(updatedSnapshot)
+            await InboxMetricsStore.shared.updateReceivedCounts(from: mergedInbox)
             Telemetry.event("dashboard.refresh.account.complete", metadata: [
                 "account_scope": "single_account",
                 "elapsed_ms": "\(Int(Date().timeIntervalSince(refreshStart) * 1000))",

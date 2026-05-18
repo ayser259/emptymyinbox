@@ -68,6 +68,9 @@ struct MacUnifiedDashboardView: View {
                 await calendarModel.refresh()
             }
         }
+        .onChange(of: snapshot?.timestamp) { _, _ in
+            Task { await loadRecentStories() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .briefingPayloadDidPersist)) { _ in
             Task { await refreshBriefBadge() }
         }
@@ -170,6 +173,8 @@ struct MacUnifiedDashboardView: View {
                         .font(.body)
                         .foregroundStyle(MacAppTheme.secondaryText)
                 }
+
+                MacInboxMetricsCard()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -346,7 +351,7 @@ private func MacDashboardSectionTitle(_ text: String) -> some View {
 
 // MARK: - Mac card shell
 
-private struct MacDashboardCard<Content: View>: View {
+struct MacDashboardCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -364,7 +369,7 @@ private struct MacDashboardCard<Content: View>: View {
 
 // MARK: - Mac card header
 
-private struct MacCardHeader: View {
+struct MacCardHeader: View {
     let icon: String
     let title: String
     var count: Int? = nil
@@ -502,15 +507,23 @@ private struct MacDailyBriefCard: View {
                         VStack(alignment: .leading, spacing: 3) {
                             ForEach(items) { item in
                                 HStack(alignment: .top, spacing: 5) {
-                                    Image(systemName: "checklist.checked")
+                                    Image(systemName: item.section.iconName)
                                         .font(.system(size: 9))
                                         .foregroundStyle(MacAppTheme.accent)
                                         .padding(.top, 1)
-                                    Text(item.subject)
-                                        .font(.caption)
-                                        .foregroundStyle(MacAppTheme.primaryText)
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.subject)
+                                            .font(.caption)
+                                            .foregroundStyle(MacAppTheme.primaryText)
+                                            .lineLimit(1)
+                                        if let summary = item.summary, !summary.isEmpty {
+                                            Text(summary)
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(MacAppTheme.secondaryText)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
                         }

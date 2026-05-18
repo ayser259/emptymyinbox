@@ -81,6 +81,19 @@ struct emptymyinboxMacAppApp: App {
                     NotificationCenter.default.post(name: .macRefreshCurrentRootTab, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: .command)
+                Divider()
+                Button("Catch Up") {
+                    NotificationCenter.default.post(name: .macSelectMailTool, object: "catchUp")
+                }
+                .keyboardShortcut("c", modifiers: .option)
+                Button("Stories") {
+                    NotificationCenter.default.post(name: .macSelectMailTool, object: "stories")
+                }
+                .keyboardShortcut("s", modifiers: .option)
+                Button("Brief") {
+                    NotificationCenter.default.post(name: .macSelectMailTool, object: "brief")
+                }
+                .keyboardShortcut("b", modifiers: .option)
             }
             CommandMenu("Account") {
                 Button("Sign Out") {

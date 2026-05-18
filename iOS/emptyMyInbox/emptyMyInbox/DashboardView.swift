@@ -202,88 +202,67 @@ struct DashboardView: View {
                 .padding(.horizontal, AppTheme.spacingMedium)
                 .padding(.bottom, AppTheme.spacingSmall)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    feedColumnScroll
-                        .frame(maxWidth: .infinity)
-                    calendarSidebarScroll
-                        .frame(width: 280)
-                }
-                .padding(.horizontal, AppTheme.spacingMedium)
-
+            ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
-                    feedColumnScroll
-                    calendarSidebarScroll
+                    feedColumnContent
+                    calendarSidebarContent
                 }
                 .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingLarge)
+            }
+            .refreshable {
+                await refreshDashboard(shouldSync: true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    /// Left column: greeting + widgets + quick actions + account-grouped inbox cards.
-    private var feedColumnScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-                // Greeting
-                DashboardGreetingSection(name: firstName)
-                    .padding(.top, AppTheme.spacingSmall)
+    /// Mail/dashboard feed: greeting, widgets, quick actions, account inbox cards.
+    private var feedColumnContent: some View {
+        VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+            DashboardGreetingSection(name: firstName)
+                .padding(.top, AppTheme.spacingSmall)
 
-                // Brief + Action Items side by side
-                HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
-                    DashboardDailyBriefCard(
-                        payload: dailyBriefingPayload,
-                        hasLLMKey: hasLLMKey,
-                        isGenerating: isBriefGenerating,
-                        onRefresh: { refreshBrief() },
-                        onOpenLLMSettings: {
-                            navigationPath.append("llm_management")
-                        }
-                    )
-                    .frame(maxWidth: .infinity)
-
-                    DashboardActionItemsCard(
-                        items: dashboardActionItems,
-                        isVaultReady: VaultManager.shared.isVaultReady
-                    )
-                    .frame(width: 160)
-                }
-
-                // Account Updates
-                DashboardAccountUpdatesCard(
-                    unreadCount: unreadCount,
-                    starredCount: starredEmails.count
+            HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
+                DashboardDailyBriefCard(
+                    payload: dailyBriefingPayload,
+                    hasLLMKey: hasLLMKey,
+                    isGenerating: isBriefGenerating,
+                    onRefresh: { refreshBrief() },
+                    onOpenLLMSettings: {
+                        navigationPath.append("llm_management")
+                    }
                 )
+                .frame(maxWidth: .infinity)
 
-                // Stories Feed
-                DashboardStoriesFeedCard(stories: recentStories)
-
-                // Quick action buttons
-                actionButtonsSection
-                    .padding(.top, AppTheme.spacingSmall)
-
-                // Inbox feed header + account cards
-                inboxFeedHeader
-                    .padding(.top, AppTheme.spacingSmall)
-                    .padding(.bottom, AppTheme.spacingSmall)
-
-                accountSummaryCards
-                    .padding(.bottom, AppTheme.spacingLarge)
-
-                Spacer()
-                    .frame(height: 40)
+                DashboardActionItemsCard(
+                    items: dashboardActionItems,
+                    isVaultReady: VaultManager.shared.isVaultReady
+                )
+                .frame(width: 160)
             }
-        }
-        .refreshable {
-            await refreshDashboard(shouldSync: true)
+
+            DashboardAccountUpdatesCard(
+                unreadCount: unreadCount,
+                starredCount: starredEmails.count
+            )
+
+            DashboardStoriesFeedCard(stories: recentStories)
+
+            actionButtonsSection
+                .padding(.top, AppTheme.spacingSmall)
+
+            inboxFeedHeader
+                .padding(.top, AppTheme.spacingSmall)
+                .padding(.bottom, AppTheme.spacingSmall)
+
+            accountSummaryCards
         }
     }
 
-    /// Right column: mini month + upcoming events.
-    private var calendarSidebarScroll: some View {
-        ScrollView {
-            DashboardCalendarSidebar(model: calendarModel)
-        }
+    /// Calendar section below the mail feed.
+    private var calendarSidebarContent: some View {
+        DashboardCalendarSidebar(model: calendarModel)
     }
 
     private var inboxFeedHeader: some View {

@@ -229,15 +229,23 @@ struct DashboardDailyBriefCard: View {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(previewItems) { item in
                                 HStack(alignment: .top, spacing: 6) {
-                                    Image(systemName: "checklist.checked")
+                                    Image(systemName: item.section.iconName)
                                         .font(.system(size: 10))
                                         .foregroundStyle(AppTheme.accent)
                                         .padding(.top, 1.5)
-                                    Text(item.subject)
-                                        .font(AppTheme.caption)
-                                        .foregroundStyle(AppTheme.primaryText)
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.subject)
+                                            .font(AppTheme.caption)
+                                            .foregroundStyle(AppTheme.primaryText)
+                                            .lineLimit(1)
+                                        if let summary = item.summary, !summary.isEmpty {
+                                            Text(summary)
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(AppTheme.secondaryText)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
                         }

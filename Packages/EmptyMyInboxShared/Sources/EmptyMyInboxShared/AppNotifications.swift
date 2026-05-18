@@ -14,4 +14,6 @@ public extension Notification.Name {
     static let macActionItemsShouldReload = Notification.Name("MacActionItemsShouldReload")
     /// Mail dashboard refreshed (first open, daily foreground, etc.); Calendar + Action Items sync to match.
     static let companionVaultCalendarActionItemsRefresh = Notification.Name("CompanionVaultCalendarActionItemsRefresh")
+    /// Daily inbox metrics file was updated (refresh or catch-up session).
+    static let inboxMetricsDidUpdate = Notification.Name("InboxMetricsDidUpdate")
 }

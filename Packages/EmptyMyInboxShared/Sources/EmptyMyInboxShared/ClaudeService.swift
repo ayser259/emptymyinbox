@@ -27,33 +27,26 @@ public actor ClaudeService {
         .notConnectedToInternet
     ]
 
-    public func classifyBriefingItem(subject: String, snippet: String, sender: String) async throws -> BriefingItemType {
+    public func generateDailyBrief(candidates: DailyBriefCandidates) async throws -> DailyBriefLLMResponse {
         let settings = await LLMSettingsStore.shared.currentSettings()
-        let inputJSON = encodePromptInput([
-            "sender": sender,
-            "subject": subject,
-            "snippet": snippet
-        ])
+        let inputJSON = encodePromptJSON(candidates)
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedBriefPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
         let response = try await runPrompt(
-            feature: "briefing.classify",
+            feature: "briefing.generate",
             systemPrompt: systemPrompt,
             userPrompt: prompt,
             model: settings.briefModel,
-            maxTokens: 100
+            maxTokens: 2500
         )
 
         let normalizedJSON = normalizeJSONText(response)
         guard let data = normalizedJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let typeString = object["type"] as? String else {
+              let decoded = try? JSONDecoder().decode(DailyBriefLLMResponse.self, from: data) else {
             throw ClaudeServiceError.invalidResponse
         }
-
-        let normalized = typeString.trimmingCharacters(in: .whitespacesAndNewlines)
-        return BriefingItemType(rawValue: normalized) ?? .directCommunication
+        return decoded
     }
 
     public func summarizeNewsletterStories(
@@ -227,6 +220,16 @@ public actor ClaudeService {
 
     private func encodePromptInput(_ payload: [String: String]) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return encoded
+    }
+
+    private func encodePromptJSON<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
               let encoded = String(data: data, encoding: .utf8) else {
             return "{}"
         }
