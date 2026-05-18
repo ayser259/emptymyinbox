@@ -51,6 +51,7 @@ struct emptymyinboxMacAppApp: App {
                 .tint(MacAppTheme.accent)
                 .task {
                     await VaultManager.shared.reloadFromPreferences()
+                    await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
                     await AppLifecycleCloudSync.performStartupSync()
                 }
                 .onOpenURL { url in
@@ -58,6 +59,29 @@ struct emptymyinboxMacAppApp: App {
                 }
         }
         .commands {
+            CommandMenu("Go") {
+                Button("Mail") {
+                    NotificationCenter.default.post(name: .macSelectRootTab, object: MacRootTab.mail.rawValue)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+                Button("Calendar") {
+                    NotificationCenter.default.post(name: .macSelectRootTab, object: MacRootTab.calendar.rawValue)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+                Button("Action Items") {
+                    NotificationCenter.default.post(name: .macSelectRootTab, object: MacRootTab.actionItems.rawValue)
+                }
+                .keyboardShortcut("3", modifiers: .command)
+                Divider()
+                Button("Next Primary Tab") {
+                    NotificationCenter.default.post(name: .macCycleRootTabForward, object: nil)
+                }
+                .keyboardShortcut(.tab, modifiers: .control)
+                Button("Refresh") {
+                    NotificationCenter.default.post(name: .macRefreshCurrentRootTab, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
             CommandMenu("Account") {
                 Button("Sign Out") {
                     authManager.logout()

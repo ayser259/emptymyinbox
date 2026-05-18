@@ -21,7 +21,7 @@ public actor CalendarVisibilityStore {
 
         for email in connectedEmails {
             if !updated.contains(where: { $0.accountEmail.caseInsensitiveCompare(email) == .orderedSame }) {
-                updated.append(CalendarAccountVisibilityRecord(accountEmail: email, showAccountInCalendar: true, calendarVisibility: [:]))
+                updated.append(CalendarAccountVisibilityRecord(accountEmail: email, showAccountInCalendar: true, calendarVisibility: [:], starredCalendarIds: []))
             }
         }
 
@@ -31,6 +31,7 @@ public actor CalendarVisibilityStore {
 
     public func setShowAccountInCalendar(accountEmail: String, show: Bool) async {
         await ensureLoaded()
+        await ensureRecord(for: accountEmail)
         guard let index = indexOf(email: accountEmail) else { return }
         cached[index].showAccountInCalendar = show
         await persist()
@@ -39,10 +40,34 @@ public actor CalendarVisibilityStore {
 
     public func setCalendarVisible(accountEmail: String, calendarId: String, visible: Bool) async {
         await ensureLoaded()
+        await ensureRecord(for: accountEmail)
         guard let index = indexOf(email: accountEmail) else { return }
         cached[index].calendarVisibility[calendarId] = visible
         await persist()
         notifyVisibilityChanged()
+    }
+
+    public func setCalendarStarred(accountEmail: String, calendarId: String, starred: Bool) async {
+        await ensureLoaded()
+        await ensureRecord(for: accountEmail)
+        guard let index = indexOf(email: accountEmail) else { return }
+        var ids = Set(cached[index].starredCalendarIds)
+        if starred {
+            ids.insert(calendarId)
+        } else {
+            ids.remove(calendarId)
+        }
+        cached[index].starredCalendarIds = ids.sorted()
+        await persist()
+        notifyVisibilityChanged()
+    }
+
+    public func isCalendarStarred(accountEmail: String, calendarId: String) async -> Bool {
+        await ensureLoaded()
+        guard let record = cached.first(where: { $0.accountEmail.caseInsensitiveCompare(accountEmail) == .orderedSame }) else {
+            return false
+        }
+        return record.starredCalendarIds.contains(calendarId)
     }
 
     public func isAccountEnabledForCalendar(accountEmail: String) async -> Bool {
@@ -68,6 +93,23 @@ public actor CalendarVisibilityStore {
 
     private func indexOf(email: String) -> Int? {
         cached.firstIndex(where: { $0.accountEmail.caseInsensitiveCompare(email) == .orderedSame })
+    }
+
+    /// Ensures `cached` has a row for this account. Without it, mutators would no-op while readers
+    /// still default to “visible”, so toggles in the UI snap back (e.g. after a new account connects
+    /// before `refreshFromConnectedAccounts` has run).
+    private func ensureRecord(for accountEmail: String) async {
+        if indexOf(email: accountEmail) != nil { return }
+        await refreshFromConnectedAccounts()
+        if indexOf(email: accountEmail) != nil { return }
+        cached.append(
+            CalendarAccountVisibilityRecord(
+                accountEmail: accountEmail,
+                showAccountInCalendar: true,
+                calendarVisibility: [:],
+                starredCalendarIds: []
+            )
+        )
     }
 
     private func ensureLoaded() async {

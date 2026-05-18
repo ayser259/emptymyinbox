@@ -60,6 +60,7 @@ struct CatchUpView: View {
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
     @State private var currentLoadRetryCount = 0
+    @State private var replyComposerEmail: EmailDetail?
     
     // Session tracking
     @State private var sessionStartTime: Date?
@@ -110,6 +111,9 @@ struct CatchUpView: View {
             if let url = unsubscribeManualURL {
                 UnsubscribeWebView(url: url)
             }
+        }
+        .sheet(item: $replyComposerEmail) { email in
+            EmailReplyComposerView(email: email)
         }
         .task {
             await onAppear()
@@ -445,8 +449,7 @@ struct CatchUpView: View {
             isProcessing: isButtonDisabled,
             showReply: true,
             onReply: {
-                // Reply functionality - placeholder for now
-                logDebug("Reply to email", category: "Email")
+                await handleReply()
             },
             onStar: {
                 await handleStar()
@@ -491,6 +494,13 @@ struct CatchUpView: View {
             await MainActor.run {
                 hasUnsubscribeAvailable = false
             }
+        }
+    }
+
+    private func handleReply() async {
+        guard let current = emailLoader.currentEmail else { return }
+        await MainActor.run {
+            replyComposerEmail = current
         }
     }
     

@@ -108,6 +108,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AEFBF45A2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "emptymyinboxMacApp" */;
 			buildPhases = (
+				AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */,
 				AEFBF4352F79ADFE00AA180E /* Sources */,
 				AEFBF4362F79ADFE00AA180E /* Frameworks */,
 				AEFBF4372F79ADFE00AA180E /* Resources */,
@@ -247,6 +248,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sync shared icons from iOS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nIOS_ASSETS=\"${SRCROOT}/../../iOS/emptyMyInbox/emptyMyInbox/Assets.xcassets\"\nMAC_ASSETS=\"${SRCROOT}/emptymyinboxMacApp/Assets.xcassets\"\nmkdir -p \"${MAC_ASSETS}\"\nrsync -a --delete \"${IOS_ASSETS}/AppIcon.appiconset/\" \"${MAC_ASSETS}/AppIcon.appiconset/\"\nrsync -a --delete \"${IOS_ASSETS}/Logo.imageset/\" \"${MAC_ASSETS}/Logo.imageset/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		AEFBF4352F79ADFE00AA180E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -323,7 +346,7 @@
 				DEVELOPMENT_TEAM = XFXK72ST27;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -387,7 +410,7 @@
 				DEVELOPMENT_TEAM = XFXK72ST27;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

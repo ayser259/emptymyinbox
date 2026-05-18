@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 import EmptyMyInboxShared
 
 struct MainAppTopBar<Center: View>: View {
@@ -78,52 +79,64 @@ struct CalendarSkeletonView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
-            Task { await calendarModel.refresh() }
+            Task { await calendarRefresh() }
         }
     }
 
+    private func calendarRefresh() async {
+        await VaultManager.shared.performLifecycleSync(postNotification: false)
+        await calendarModel.refresh()
+    }
+
     private var calendarModeCarousel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AppTheme.spacingMedium) {
-                ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppTheme.spacingMedium) {
+                    ForEach(GoogleCalendarViewModel.ViewMode.allCases, id: \.self) { mode in
+                        Button {
+                            calendarModel.mode = mode
+                        } label: {
+                            Text(mode.rawValue.capitalized)
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(calendarModel.mode == mode ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(calendarModel.mode == mode ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(AppTheme.accent.opacity(calendarModel.mode == mode ? 0.5 : 0.15), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Button {
-                        calendarModel.mode = mode
+                        Task { await calendarRefresh() }
                     } label: {
-                        Text(mode.rawValue.capitalized)
-                            .font(AppTheme.subheadline)
-                            .foregroundColor(calendarModel.mode == mode ? AppTheme.primaryText : AppTheme.secondaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .fill(calendarModel.mode == mode ? AppTheme.secondaryBackground : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .stroke(AppTheme.accent.opacity(calendarModel.mode == mode ? 0.5 : 0.15), lineWidth: 1)
-                            )
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Refresh")
+                                .font(AppTheme.subheadline)
+                        }
+                        .foregroundColor(AppTheme.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.secondaryBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
                     }
                     .buttonStyle(.plain)
                 }
-
-                Button {
-                    Task { await calendarModel.refresh() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh")
-                            .font(AppTheme.subheadline)
-                    }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
-                }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, AppTheme.spacingSmall)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.vertical, AppTheme.spacingSmall)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, AppTheme.spacingSmall)
         }
     }
 }
@@ -162,30 +175,87 @@ private struct ActionItemsCenteredColumn<Content: View>: View {
 struct ActionItemsSkeletonView: View {
     var onMenuTap: () -> Void
 
-    @ObservedObject private var vaultManager = VaultManager.shared
-    @State private var mode: ActionItemsChromeMode = .today
+    @ObservedObject private var vaultManager: VaultManager = .shared
     @State private var allItems: [VaultActionItemRecord] = []
-    @State private var scheduledToday: [VaultActionItemRecord] = []
-    @State private var unscheduledToday: [VaultActionItemRecord] = []
     @State private var subjectGroups: [(key: String, items: [VaultActionItemRecord])] = []
-    @State private var selectedSubject: String?
-    @State private var calendarMonth: Date = Date()
-    @State private var calendarByDay: [(day: Date, items: [VaultActionItemRecord])] = []
+    @State private var projectGroups: [(key: String, items: [VaultActionItemRecord])] = []
+    @State private var selectedSubjectKey: String?
+    @State private var selectedProjectKey: String?
     @State private var errorText: String?
     @State private var editorPayload: ActionItemEditorPayload?
     @State private var contextDefinitions: [VaultContextDefinition] = []
+    @State private var projectDefinitions: [VaultProjectDefinition] = []
     @State private var typeDefinitions: [VaultActionTypeDefinition] = []
     @State private var showTagLibrary = false
     @State private var checklistScale: [String: CGFloat] = [:]
+    @State private var priorityFilter: Int?
+    @State private var urgencyFilter: Int?
+    /// When set, shows a transient “Added / Undo” bar after creating an item.
+    @State private var lastAddedItemUndoId: String?
 
     private let typePresets = ["Action item", "Learning", "Time block", "Meeting", "Event", "Reminder"]
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                AppTheme.primaryBackground
-                    .ignoresSafeArea()
+            actionItemsRootZStack
+                .navigationBarHidden(true)
+        }
+        .task {
+            await reloadTagDefinitions()
+            await reload()
+        }
+        .onChange(of: priorityFilter) { _, _ in
+            Task { await reload() }
+        }
+        .onChange(of: urgencyFilter) { _, _ in
+            Task { await reload() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task {
+                await reloadTagDefinitions()
+                await reload()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
+            Task {
+                await reloadTagDefinitions()
+                await reload()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
+            Task {
+                await reloadTagDefinitions()
+                await reload()
+            }
+        }
+        .sheet(item: $editorPayload, content: editorSheet)
+        .onChange(of: editorPayload) { _, new in
+            if new == nil { lastAddedItemUndoId = nil }
+        }
+        .task(id: lastAddedItemUndoId) {
+            guard lastAddedItemUndoId != nil else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            lastAddedItemUndoId = nil
+        }
+        .sheet(isPresented: $showTagLibrary) {
+            NavigationStack {
+                ActionItemTagLibraryView()
+                    .primaryBackground()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showTagLibrary = false }
+                        }
+                    }
+            }
+        }
+    }
 
+    private var actionItemsRootZStack: some View {
+        ZStack(alignment: .bottomTrailing) {
+            AppTheme.primaryBackground
+                .ignoresSafeArea()
+
+            if vaultManager.isVaultReady {
                 VStack(spacing: 0) {
                     MainAppTopBar(center: {
                         Text("Action Items")
@@ -193,7 +263,7 @@ struct ActionItemsSkeletonView: View {
                             .primaryText()
                     }, onMenuTap: onMenuTap)
 
-                    actionItemsModeCarousel
+                    actionItemsFilterCarousel
 
                     if let errorText {
                         Text(errorText)
@@ -203,16 +273,7 @@ struct ActionItemsSkeletonView: View {
                     }
 
                     ActionItemsCenteredColumn {
-                        Group {
-                            switch mode {
-                            case .today:
-                                todayContent
-                            case .context:
-                                contextContent
-                            case .calendar:
-                                calendarContent
-                            }
-                        }
+                        listContent
                     }
                 }
 
@@ -233,55 +294,60 @@ struct ActionItemsSkeletonView: View {
                 .padding(.trailing, AppTheme.spacingMedium)
                 .padding(.bottom, 56)
                 .accessibilityLabel("Add Action Item")
-            }
-            .navigationBarHidden(true)
-        }
-        .task {
-            await reload()
-            await reloadTagDefinitions()
-        }
-        .onChange(of: mode) { _, _ in
-            Task { await reload() }
-        }
-        .onChange(of: calendarMonth) { _, _ in
-            Task { await reload() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
-            Task {
-                await reload()
-                await reloadTagDefinitions()
+            } else {
+                VStack(spacing: 0) {
+                    MainAppTopBar(center: {
+                        Text("Action Items")
+                            .font(AppTheme.headline)
+                            .primaryText()
+                    }, onMenuTap: onMenuTap)
+
+                    ScrollView {
+                        ConfigureVaultPanel()
+                            .padding(.horizontal, AppTheme.spacingMedium)
+                            .padding(.vertical, AppTheme.spacingSmall)
+                    }
+                    .background(AppTheme.primaryBackground)
+                }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
-            Task {
-                await reload()
-                await reloadTagDefinitions()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
-            Task {
-                await reload()
-                await reloadTagDefinitions()
-            }
-        }
-        .sheet(item: $editorPayload) { payload in
+    }
+
+    @ViewBuilder
+    private func editorSheet(payload: ActionItemEditorPayload) -> some View {
+        ZStack(alignment: .bottom) {
             NavigationStack {
                 ActionItemQuickEntryView(
                     initial: payload.item,
                     isNew: payload.isNew,
                     contexts: contextDefinitions,
+                    projects: projectDefinitions,
                     types: typeDefinitions,
                     typePresets: typePresets,
                     allTasks: allItems,
                     style: .iosSheet,
                     vaultManager: vaultManager,
-                    onSave: {
+                    onSave: { saved, isNew in
                         await reload()
+                        await reloadTagDefinitions()
+                        if isNew {
+                            lastAddedItemUndoId = saved.id
+                            if #available(iOS 17.0, *) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+                        } else {
+                            lastAddedItemUndoId = nil
+                            editorPayload = nil
+                        }
+                    },
+                    onCancel: {
+                        lastAddedItemUndoId = nil
                         editorPayload = nil
                     },
-                    onCancel: { editorPayload = nil },
                     onManageTags: { showTagLibrary = true }
                 )
+                .id(payload.id)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         Text(payload.isNew ? "New action" : "Edit action")
@@ -290,197 +356,256 @@ struct ActionItemsSkeletonView: View {
                     }
                 }
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showTagLibrary) {
-            NavigationStack {
-                ActionItemTagLibraryView()
-                    .primaryBackground()
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showTagLibrary = false }
+
+            if let undoId = lastAddedItemUndoId {
+                HStack(spacing: 12) {
+                    Text("Added")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.primaryText)
+                    Spacer(minLength: 0)
+                    Button("Undo") {
+                        Task {
+                            try? await vaultManager.deleteActionItem(id: undoId)
+                            lastAddedItemUndoId = nil
+                            await reload()
+                            await reloadTagDefinitions()
                         }
                     }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.accent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                        .fill(AppTheme.secondaryBackground)
+                        .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: lastAddedItemUndoId)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     private func reloadTagDefinitions() async {
-        contextDefinitions = (try? await vaultManager.listContextDefinitions()) ?? []
-        typeDefinitions = (try? await vaultManager.listActionTypeDefinitions()) ?? []
+        let vault = VaultManager.shared
+        guard vault.isVaultReady else {
+            contextDefinitions = []
+            projectDefinitions = []
+            typeDefinitions = []
+            return
+        }
+        try? await vault.ensureDefaultContextDefinitions()
+        _ = try? await vault.ensureGeneralProjectDefinition()
+        contextDefinitions = (try? await vault.listContextDefinitions()) ?? []
+        projectDefinitions = (try? await vault.listProjectDefinitions()) ?? []
+        typeDefinitions = (try? await vault.listActionTypeDefinitions()) ?? []
     }
 
-    private var actionItemsModeCarousel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AppTheme.spacingMedium) {
-                ForEach(ActionItemsChromeMode.allCases) { m in
+    private func applyFilters(_ items: [VaultActionItemRecord]) -> [VaultActionItemRecord] {
+        var filtered = items
+        if let p = priorityFilter {
+            filtered = filtered.filter { $0.priority == p }
+        }
+        if let u = urgencyFilter {
+            filtered = filtered.filter { $0.urgency == u }
+        }
+        if let selectedSubjectKey {
+            filtered = filtered.filter {
+                ActionItemsFeatureModel.contextBucketKey(for: $0, definitions: contextDefinitions) == selectedSubjectKey
+            }
+        }
+        if let selectedProjectKey {
+            let projectById = Dictionary(uniqueKeysWithValues: projectDefinitions.map { ($0.id, $0) })
+            filtered = filtered.filter { item in
+                guard let pid = item.projectId, let def = projectById[pid] else {
+                    return selectedProjectKey == ActionItemsFeatureModel.generalProjectName
+                }
+                return ActionItemsFeatureModel.normalizedProjectKey(def.name) == selectedProjectKey
+            }
+        }
+        return filtered
+    }
+
+    private var filteredItems: [VaultActionItemRecord] {
+        ActionItemsFeatureModel.defaultSorted(applyFilters(allItems))
+    }
+
+    private var actionItemsFilterCarousel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppTheme.spacingMedium) {
                     Button {
-                        mode = m
+                        selectedSubjectKey = nil
+                        selectedProjectKey = nil
                     } label: {
-                        Text(m.title)
+                        Text("All")
                             .font(AppTheme.subheadline)
-                            .foregroundColor(mode == m ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .foregroundColor(selectedSubjectKey == nil && selectedProjectKey == nil ? AppTheme.primaryText : AppTheme.secondaryText)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .fill(mode == m ? AppTheme.secondaryBackground : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
-                                    .stroke(AppTheme.accent.opacity(mode == m ? 0.5 : 0.15), lineWidth: 1)
+                                    .fill(selectedSubjectKey == nil && selectedProjectKey == nil ? AppTheme.secondaryBackground : Color.clear)
                             )
                     }
                     .buttonStyle(.plain)
-                }
 
-                Button {
-                    showTagLibrary = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "tag")
-                        Text("Tags")
-                            .font(AppTheme.subheadline)
+                    ForEach(subjectGroups, id: \.key) { group in
+                        Button {
+                            selectedSubjectKey = selectedSubjectKey == group.key ? nil : group.key
+                            if selectedSubjectKey != nil { selectedProjectKey = nil }
+                        } label: {
+                            Text(ActionItemsFeatureModel.displaySubjectHash(group.key))
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(selectedSubjectKey == group.key ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(selectedSubjectKey == group.key ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
-                }
-                .buttonStyle(.plain)
 
-                Button {
-                    Task { await reload() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh")
-                            .font(AppTheme.subheadline)
+                    ForEach(projectGroups, id: \.key) { group in
+                        Button {
+                            selectedProjectKey = selectedProjectKey == group.key ? nil : group.key
+                            if selectedProjectKey != nil { selectedSubjectKey = nil }
+                        } label: {
+                            Text(ActionItemsFeatureModel.displayProjectPath(group.key))
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(selectedProjectKey == group.key ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(selectedProjectKey == group.key ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .foregroundColor(AppTheme.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.secondaryBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+
+                    Button {
+                        Task { await reload() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Refresh")
+                                .font(AppTheme.subheadline)
+                        }
+                        .foregroundColor(AppTheme.accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.secondaryBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        showTagLibrary = true
+                    } label: {
+                        Text("Contexts")
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(AppTheme.accent)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(AppTheme.secondaryBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(0 ... 4, id: \.self) { p in
+                        Button {
+                            priorityFilter = p
+                        } label: {
+                            Text("P\(p)")
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(priorityFilter == p ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(priorityFilter == p ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(
+                                            (priorityFilter == p ? ActionItemPriorityColors.color(forStoredPriority: p) : AppTheme.accent)
+                                                .opacity(priorityFilter == p ? 0.55 : 0.15),
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button {
+                        urgencyFilter = nil
+                    } label: {
+                        Text("All U")
+                            .font(AppTheme.subheadline)
+                            .foregroundColor(urgencyFilter == nil ? AppTheme.primaryText : AppTheme.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                    .fill(urgencyFilter == nil ? AppTheme.secondaryBackground : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(0 ... 4, id: \.self) { u in
+                        Button {
+                            urgencyFilter = u
+                        } label: {
+                            Text("U\(u)")
+                                .font(AppTheme.subheadline)
+                                .foregroundColor(urgencyFilter == u ? AppTheme.primaryText : AppTheme.secondaryText)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .fill(urgencyFilter == u ? AppTheme.secondaryBackground : Color.clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall)
+                                        .stroke(
+                                            (urgencyFilter == u ? ActionItemPriorityColors.color(forStoredPriority: u) : AppTheme.accent)
+                                                .opacity(urgencyFilter == u ? 0.55 : 0.15),
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.bottom, AppTheme.spacingSmall)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
         }
     }
 
-    // MARK: - Today
-
     @ViewBuilder
-    private var todayContent: some View {
+    private var listContent: some View {
         List {
-            if !scheduledToday.isEmpty {
-                Section("Scheduled") {
-                    ForEach(scheduledToday) { item in
-                        actionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(scheduledToday, offsets: offsets) }
-                }
+            ForEach(filteredItems) { item in
+                actionRow(item)
             }
-            Section("Unscheduled") {
-                ForEach(unscheduledToday) { item in
-                    actionRow(item)
-                }
-                .onDelete { offsets in deleteFrom(unscheduledToday, offsets: offsets) }
-            }
+            .onDelete { offsets in deleteFrom(filteredItems, offsets: offsets) }
         }
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-    }
-
-    // MARK: - Context (sidebar channels)
-
-    @ViewBuilder
-    private var contextContent: some View {
-        NavigationSplitView {
-            List(selection: $selectedSubject) {
-                ForEach(subjectGroups, id: \.key) { group in
-                    HStack {
-                        Text(group.key)
-                            .primaryText()
-                        Spacer()
-                        Text("\(group.items.count)")
-                            .font(AppTheme.caption)
-                            .secondaryText()
-                    }
-                    .tag(group.key as String?)
-                    .listRowBackground(AppTheme.secondaryBackground.opacity(0.35))
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .navigationTitle("Contexts")
-        } detail: {
-            if let key = selectedSubject, let group = subjectGroups.first(where: { $0.key == key }) {
-                List {
-                    ForEach(group.items) { item in
-                        actionRow(item)
-                    }
-                    .onDelete { offsets in deleteFrom(group.items, offsets: offsets) }
-                }
-                .scrollContentBackground(.hidden)
-                .navigationTitle(key)
-            } else {
-                ContentUnavailableView {
-                    Label("Select a context", systemImage: "tray")
-                }
-            }
-        }
-    }
-
-    // MARK: - Calendar (month sections by day)
-
-    @ViewBuilder
-    private var calendarContent: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: -1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                Spacer()
-                Text(calendarMonth.formatted(.dateTime.month(.wide).year()))
-                    .font(AppTheme.headline)
-                    .primaryText()
-                Spacer()
-                Button {
-                    calendarMonth = Calendar.current.date(byAdding: .month, value: 1, to: calendarMonth) ?? calendarMonth
-                } label: {
-                    Image(systemName: "chevron.right")
-                }
-            }
-            .padding(.horizontal, AppTheme.spacingMedium)
-            .padding(.vertical, AppTheme.spacingSmall)
-
-            List {
-                if calendarByDay.isEmpty {
-                    Section {
-                        Text("No tasks with dates in this month")
-                            .font(AppTheme.caption)
-                            .secondaryText()
-                    }
-                } else {
-                    ForEach(calendarByDay, id: \.day.timeIntervalSince1970) { section in
-                        Section(section.day.formatted(date: .abbreviated, time: .omitted)) {
-                            ForEach(section.items) { item in
-                                actionRow(item)
-                            }
-                            .onDelete { offsets in deleteFrom(section.items, offsets: offsets) }
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .listStyle(.plain)
-        }
     }
 
     @ViewBuilder
@@ -489,9 +614,22 @@ struct ActionItemsSkeletonView: View {
             Button {
                 Task { await toggleCompletion(for: item) }
             } label: {
-                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isDone ? AppTheme.accent : AppTheme.secondaryText)
-                    .scaleEffect(checklistScale[item.id] ?? 1)
+                ZStack {
+                    if item.isDone {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AppTheme.accent)
+                    } else {
+                        if let p = item.priority {
+                            Circle()
+                                .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 2)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "circle")
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                }
+                .scaleEffect(checklistScale[item.id] ?? 1)
             }
             .buttonStyle(.plain)
 
@@ -500,11 +638,6 @@ struct ActionItemsSkeletonView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        if item.numericId > 0 {
-                            Text("#\(item.numericId)")
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.accent)
-                        }
                         Text(item.title)
                             .font(AppTheme.body)
                             .strikethrough(item.isDone)
@@ -513,13 +646,21 @@ struct ActionItemsSkeletonView: View {
                     if let p = item.priority {
                         Text("P\(p)")
                             .font(.caption2)
-                            .secondaryText()
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: p))
                     }
-                    if let s = item.startDate {
-                        Text(s.formatted(date: .abbreviated, time: .shortened))
+                    if let u = item.urgency {
+                        Text("U\(u)")
                             .font(.caption2)
-                            .secondaryText()
+                            .foregroundStyle(ActionItemPriorityColors.color(forStoredPriority: u))
                     }
+                    if let ctxLabel = ActionItemsFeatureModel.resolvedContextDisplayName(for: item, definitions: contextDefinitions) {
+                        Text(ActionItemsFeatureModel.displaySubjectHash(ctxLabel))
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Text(ActionItemsFeatureModel.displayProjectPath(projectName(forProjectId: item.projectId)))
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -543,32 +684,34 @@ struct ActionItemsSkeletonView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             checklistScale[item.id] = 1
         }
-        try? await vaultManager.updateActionItemCompletion(id: item.id, isDone: true)
+        do {
+            try await vaultManager.updateActionItemCompletion(id: item.id, isDone: true)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
         try? await Task.sleep(nanoseconds: 220_000_000)
         await reload()
     }
 
+    private func templateDraftForNewItem() -> VaultActionItemRecord {
+        ActionItemDraftComposer.newDraft(
+            selectedSubjectKey: selectedSubjectKey,
+            selectedProjectKey: selectedProjectKey,
+            contextDefinitions: contextDefinitions,
+            projectDefinitions: projectDefinitions,
+            defaultGeneralProjectWhenNoProjectSelected: false
+        )
+    }
+
     private func presentAddSheet() {
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
-        var draft = VaultActionItemRecord(title: "")
-        switch mode {
-        case .today:
-            draft.startDate = todayStart
-        case .context:
-            if let key = selectedSubject, key != "Uncategorized" {
-                draft.subjectLabel = key
-            }
-        case .calendar:
-            if cal.isDate(Date(), equalTo: calendarMonth, toGranularity: .month) {
-                draft.startDate = todayStart
-            } else if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                draft.startDate = interval.start
-            } else {
-                draft.startDate = todayStart
-            }
-        }
-        editorPayload = ActionItemEditorPayload(item: draft, isNew: true)
+        lastAddedItemUndoId = nil
+        editorPayload = ActionItemEditorPayload(item: templateDraftForNewItem(), isNew: true)
+    }
+
+    private func projectName(forProjectId projectId: String?) -> String {
+        guard let projectId else { return ActionItemsFeatureModel.generalProjectName }
+        return projectDefinitions.first(where: { $0.id == projectId })?.name ?? ActionItemsFeatureModel.generalProjectName
     }
 
     private func deleteFrom(_ list: [VaultActionItemRecord], offsets: IndexSet) {
@@ -582,48 +725,39 @@ struct ActionItemsSkeletonView: View {
 
     private func reload() async {
         errorText = nil
-        await vaultManager.performLifecycleSync(postNotification: false)
+        let vault = VaultManager.shared
+        guard vault.isVaultReady else {
+            allItems = []
+            subjectGroups = []
+            projectGroups = []
+            return
+        }
+        await refreshListsFromVault(using: vault)
+        await vault.performLifecycleSync(postNotification: false)
+        await refreshListsFromVault(using: vault)
+    }
+
+    private func refreshListsFromVault(using vault: VaultManager) async {
         do {
-            allItems = try await vaultManager.listActionItems()
-            let todayParts = ActionItemsFeatureModel.itemsForTodayList(allItems, referenceDay: Date(), calendar: .current)
-            scheduledToday = todayParts.scheduled
-            unscheduledToday = todayParts.unscheduled
-            subjectGroups = ActionItemsFeatureModel.groupedBySubject(allItems)
-            if selectedSubject == nil {
-                selectedSubject = subjectGroups.first?.key
-            }
-            let cal = Calendar.current
-            if let interval = cal.dateInterval(of: .month, for: calendarMonth) {
-                let monthItems = ActionItemsFeatureModel.itemsIntersectingRange(
-                    allItems,
-                    rangeStart: interval.start,
-                    rangeEnd: interval.end,
-                    calendar: cal
-                )
-                let grouped = Dictionary(grouping: monthItems) { item -> Date in
-                    let anchor = item.startDate ?? item.endDate ?? Date()
-                    return cal.startOfDay(for: anchor)
-                }
-                calendarByDay = grouped.keys.sorted().map { day in
-                    (day, ActionItemsFeatureModel.defaultSortedForCalendar(grouped[day] ?? []))
-                }
-            } else {
-                calendarByDay = []
-            }
+            allItems = try await vault.listActionItems()
+            let filtered = applyFilters(allItems)
+            subjectGroups = ActionItemsFeatureModel.groupedBySubjectForSidebar(
+                definitions: contextDefinitions,
+                items: filtered
+            )
+            projectGroups = ActionItemsFeatureModel.groupedByProject(definitions: projectDefinitions, items: filtered)
         } catch {
             errorText = error.localizedDescription
             allItems = []
-            scheduledToday = []
-            unscheduledToday = []
             subjectGroups = []
-            calendarByDay = []
+            projectGroups = []
         }
     }
 }
 
 // MARK: - Editor payload (iOS)
 
-private struct ActionItemEditorPayload: Identifiable {
+private struct ActionItemEditorPayload: Identifiable, Equatable {
     let id = UUID()
     var item: VaultActionItemRecord
     var isNew: Bool

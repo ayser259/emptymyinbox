@@ -18,16 +18,14 @@ struct MenuView: View {
     @State private var isAddingAccount = false
 
     var body: some View {
-        NavigationStack {
-            AppSettingsMenuContent(
-                vaultSettings: { VaultSettingsView() },
-                isAddingAccount: $isAddingAccount,
-                onAddGmailAccount: { addGmailAccount() },
-                onDismiss: { dismiss() },
-                accentColor: AppTheme.accent
-            )
-            .environmentObject(authManager)
-        }
+        SettingsContainerView(
+            vaultSettings: { VaultSettingsView() },
+            isAddingAccount: $isAddingAccount,
+            onAddGmailAccount: { addGmailAccount() },
+            onDismiss: { dismiss() },
+            accentColor: AppTheme.accent
+        )
+        .environmentObject(authManager)
     }
 
     private func addGmailAccount() {

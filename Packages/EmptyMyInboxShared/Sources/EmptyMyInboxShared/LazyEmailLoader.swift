@@ -54,7 +54,15 @@ public class LazyEmailLoader: ObservableObject {
     
     /// Count of emails removed during this session
     @Published public private(set) var removedCount: Int = 0
+
+    /// IDs of emails the user has already processed (kept unread or removed) this session.
+    /// Used as a safety net to prevent a background metadata sort from re-surfacing them.
+    @Published public private(set) var sessionSeenEmailIds: Set<Int> = []
     
+    /// Desired account order for grouped sorting (account emails in priority order).
+    /// Set this before calling `loadMetadata()` or any time before the background sort completes.
+    public var accountOrder: [String] = []
+
     // MARK: - Private State
     
     private let gmailService = GmailAPIService.shared
@@ -324,8 +332,17 @@ public class LazyEmailLoader: ObservableObject {
             }
         }
         
-        // Sort by received_at descending (newest first)
-        emailMetadata.sort { $0.received_at > $1.received_at }
+        // Sort by account order (if set) then by received_at descending within each account.
+        // Only sort the *unseen* portion (from currentIndex onwards) so that already-processed
+        // emails are never displaced back into the visible deck by a background sort.
+        if currentIndex > 0 && currentIndex <= emailMetadata.count {
+            let seen = Array(emailMetadata[0..<currentIndex])
+            var unseen = Array(emailMetadata[currentIndex...])
+            sortEmails(&unseen)
+            emailMetadata = seen + unseen
+        } else {
+            sortEmails(&emailMetadata)
+        }
         
         // Save to cache and notify dashboard
         await saveToCacheAndNotify(emailMetadata)
@@ -333,6 +350,21 @@ public class LazyEmailLoader: ObservableObject {
         logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails", category: "Email")
     }
     
+    /// Sort emails: by accountOrder position first, then by received_at descending within each account.
+    /// If accountOrder is empty, sort purely by received_at descending.
+    private func sortEmails(_ emails: inout [EmailMetadata]) {
+        if accountOrder.isEmpty {
+            emails.sort { $0.received_at > $1.received_at }
+        } else {
+            emails.sort { a, b in
+                let ai = accountOrder.firstIndex(of: a.account_email) ?? accountOrder.count
+                let bi = accountOrder.firstIndex(of: b.account_email) ?? accountOrder.count
+                if ai != bi { return ai < bi }
+                return a.received_at > b.received_at
+            }
+        }
+    }
+
     /// Load next batch of full emails in background
     private func loadNextBatchInBackground() async {
         // Load emails 2-5 in background
@@ -368,20 +400,53 @@ public class LazyEmailLoader: ObservableObject {
         guard currentIndex < emailMetadata.count else { return }
         
         let metadata = emailMetadata[currentIndex]
+        sessionSeenEmailIds.insert(metadata.id)
         emailMetadata.remove(at: currentIndex)
         loadedEmails.removeValue(forKey: metadata.id)
         loadStates.removeValue(forKey: metadata.id)
         removedCount += 1
-        
-        // Don't increment currentIndex since we removed the item
-        // Just trigger prefetch for next batch
+
+        if !emailMetadata.isEmpty, currentIndex >= emailMetadata.count {
+            currentIndex = max(0, emailMetadata.count - 1)
+        }
+
+        // Skip any emails that were already processed (safety net for race with background sort)
+        advancePastSeen()
+        triggerPrefetch()
+    }
+
+    /// Move to the previous email in the deck (desktop feed navigation).
+    public func moveToPrevious() {
+        guard currentIndex > 0 else { return }
+        currentIndex -= 1
+        triggerPrefetch()
+    }
+
+    /// Focus a specific row (desktop feed tap); keeps prefetch aligned with the focused card.
+    public func selectIndex(_ index: Int) {
+        guard index >= 0, index < emailMetadata.count else { return }
+        currentIndex = index
         triggerPrefetch()
     }
     
     /// Move to next email (for "Keep Unread" action - email stays in Gmail)
     public func moveToNext() {
+        if currentIndex < emailMetadata.count {
+            sessionSeenEmailIds.insert(emailMetadata[currentIndex].id)
+        }
         currentIndex += 1
+        // Skip past any emails that were already seen (safety net for background sort races)
+        advancePastSeen()
         triggerPrefetch()
+    }
+
+    /// Advance currentIndex past any emails already in sessionSeenEmailIds.
+    /// Called after moveToNext / removeCurrentEmail and after background metadata arrives.
+    private func advancePastSeen() {
+        while currentIndex < emailMetadata.count,
+              sessionSeenEmailIds.contains(emailMetadata[currentIndex].id) {
+            currentIndex += 1
+        }
     }
     
     /// Reset the loader for a fresh start
@@ -393,6 +458,7 @@ public class LazyEmailLoader: ObservableObject {
         currentIndex = 0
         isReadyToShow = false
         removedCount = 0
+        sessionSeenEmailIds = []
     }
     
     // MARK: - Progressive Loading

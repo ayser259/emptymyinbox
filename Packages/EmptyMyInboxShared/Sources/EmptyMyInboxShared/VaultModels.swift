@@ -9,20 +9,37 @@ import Foundation
 
 // MARK: - Layout constants
 
+/// Relative paths under the vault root (`vault_manifest.json` lives at the root next to `Inbox/`, `Calendar/`, `ActionItems/`).
+///
+/// **iOS and macOS** both use `EmptyMyInboxShared` only: there are no platform-specific filenames for vault data. The same `VaultLayout` strings are passed to `VaultFolderBackend` on every platform.
+///
+/// **Multiple devices** see the same logical files when they use the **same vault configuration**—for `.googleDrive`, the same Gmail account and `driveRootFolderId` so `VaultSyncCoordinator` pulls/pushes the same paths on Drive. Purely local vaults (`.local`) are per-machine unless you point both apps at the same folder via `.externalFolder` with a synced directory.
 public enum VaultLayout {
     public static let manifestFileName = "vault_manifest.json"
     public static let syncLogFileName = "vault_sync_log.json"
     public static let inboxFolder = "Inbox"
     public static let calendarFolder = "Calendar"
     public static let actionItemsFolder = "ActionItems"
+    public static let storiesFolder = "Stories"
+    public static let briefFolder = "Brief"
     public static let inboxThreadsSubfolder = "threads"
     public static let calendarEventsSubfolder = "events"
-    public static let actionItemsSubfolder = "items"
-    public static let actionItemsCompletedSubfolder = "completed"
-    public static let actionItemsMetaSubfolder = "meta"
-    public static let actionItemSequenceFileName = "action_item_sequence.json"
-    public static let actionItemsContextsSubfolder = "contexts"
-    public static let actionItemsTypesSubfolder = "types"
+
+    /// Legacy per-item layout (migration only).
+    public static let actionItemsLegacyItemsSubfolder = "items"
+    public static let actionItemsLegacyCompletedSubfolder = "completed"
+    public static let actionItemsLegacyContextsSubfolder = "contexts"
+    public static let actionItemsLegacyTypesSubfolder = "types"
+
+    public static let actionItemsActiveAggregateFileName = "active_items.json"
+    public static let actionItemsCompletedAggregateFileName = "completed_items.json"
+    public static let actionItemsContextsAggregateFileName = "context_definitions.json"
+    public static let actionItemsTypesAggregateFileName = "type_definitions.json"
+    public static let actionItemsProjectsAggregateFileName = "project_definitions.json"
+    public static let actionItemsStarredChannelsAggregateFileName = "starred_channels.json"
+    public static let storiesFeedFileName = "stories_feed.json"
+    public static let storiesBookmarkedFileName = "bookmarked_stories.json"
+    public static let briefDailyFileName = "daily_brief.json"
 
     public static let currentSchemaVersion = 1
 
@@ -30,16 +47,58 @@ public enum VaultLayout {
         [
             "\(inboxFolder)/\(inboxThreadsSubfolder)",
             "\(calendarFolder)/\(calendarEventsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsCompletedSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsMetaSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsContextsSubfolder)",
-            "\(actionItemsFolder)/\(actionItemsTypesSubfolder)"
+            actionItemsFolder,
+            storiesFolder,
+            briefFolder
         ]
     }
 
-    public static var actionItemSequenceRelativePath: String {
-        "\(actionItemsFolder)/\(actionItemsMetaSubfolder)/\(actionItemSequenceFileName)"
+    public static var actionItemsActiveAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsActiveAggregateFileName)"
+    }
+
+    public static var actionItemsCompletedAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsCompletedAggregateFileName)"
+    }
+
+    public static var actionItemsContextsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsContextsAggregateFileName)"
+    }
+
+    public static var actionItemsTypesAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsTypesAggregateFileName)"
+    }
+
+    public static var actionItemsProjectsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsProjectsAggregateFileName)"
+    }
+
+    public static var actionItemsStarredChannelsAggregatePath: String {
+        "\(actionItemsFolder)/\(actionItemsStarredChannelsAggregateFileName)"
+    }
+
+    /// All JSON blobs for action items, labels (context/type definitions), and their sync targets. Keep in sync with `VaultManager` read/write sites.
+    public static var actionItemAggregateRelativePaths: [String] {
+        [
+            actionItemsActiveAggregatePath,
+            actionItemsCompletedAggregatePath,
+            actionItemsContextsAggregatePath,
+            actionItemsTypesAggregatePath,
+            actionItemsProjectsAggregatePath,
+            actionItemsStarredChannelsAggregatePath
+        ]
+    }
+
+    public static var storiesFeedAggregatePath: String {
+        "\(storiesFolder)/\(storiesFeedFileName)"
+    }
+
+    public static var storiesBookmarkedAggregatePath: String {
+        "\(storiesFolder)/\(storiesBookmarkedFileName)"
+    }
+
+    public static var briefDailyAggregatePath: String {
+        "\(briefFolder)/\(briefDailyFileName)"
     }
 }
 
@@ -49,6 +108,15 @@ public enum VaultBackendKind: String, Codable, Sendable, CaseIterable {
     case local
     case externalFolder
     case googleDrive
+
+    /// Short label for settings / account rows.
+    public var settingsDisplayName: String {
+        switch self {
+        case .local: return "On device"
+        case .externalFolder: return "Folder"
+        case .googleDrive: return "Google Drive"
+        }
+    }
 }
 
 // MARK: - Active configuration (persisted)
@@ -64,6 +132,8 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
     public var driveRootFolderId: String?
     /// Gmail account email whose OAuth token is used for Drive API
     public var driveAccountEmail: String?
+    /// Google account this vault is tied to (all backends). Used for settings / disconnect clarity. For Google Drive vaults, defaults to `driveAccountEmail` when unset.
+    public var ownerAccountEmail: String?
 
     public init(
         vaultId: String = UUID().uuidString,
@@ -71,7 +141,8 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
         displayName: String? = nil,
         securityScopedBookmarkData: Data? = nil,
         driveRootFolderId: String? = nil,
-        driveAccountEmail: String? = nil
+        driveAccountEmail: String? = nil,
+        ownerAccountEmail: String? = nil
     ) {
         self.vaultId = vaultId
         self.backend = backend
@@ -79,6 +150,30 @@ public struct VaultActiveConfiguration: Codable, Sendable, Equatable {
         self.securityScopedBookmarkData = securityScopedBookmarkData
         self.driveRootFolderId = driveRootFolderId
         self.driveAccountEmail = driveAccountEmail
+        self.ownerAccountEmail = ownerAccountEmail
+    }
+
+    /// Owner for display and disconnect copy (`driveAccountEmail` for legacy Drive-only configs).
+    public var resolvedOwnerEmail: String? {
+        ownerAccountEmail ?? driveAccountEmail
+    }
+
+    /// Web URL for the vault root folder (Safari or Google Drive app on iOS).
+    public var googleDriveRootWebURL: URL? {
+        guard backend == .googleDrive else { return nil }
+        guard let id = driveRootFolderId else { return nil }
+        return GoogleDriveWebLinks.folderURL(folderId: id)
+    }
+}
+
+// MARK: - Google Drive (web)
+
+public enum GoogleDriveWebLinks {
+    /// `https://drive.google.com/drive/folders/…` — opens in the browser or the Drive app when available.
+    public static func folderURL(folderId: String) -> URL? {
+        let trimmed = folderId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: "https://drive.google.com/drive/folders/\(trimmed)")
     }
 }
 
@@ -93,6 +188,11 @@ public struct VaultManifest: Codable, Sendable, Equatable {
     /// Google Drive `changes` API start page token (optional incremental sync)
     public var driveChangesPageToken: String?
     public var lastSuccessfulSyncAt: Date?
+    /// Persisted so a Drive vault can be reopened from disk (tokens stay in Keychain).
+    public var driveRootFolderId: String?
+    public var driveAccountEmail: String?
+    /// Optional label for discovery UI (not required for sync).
+    public var displayName: String?
 
     public init(
         vaultId: String,
@@ -101,7 +201,10 @@ public struct VaultManifest: Codable, Sendable, Equatable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         driveChangesPageToken: String? = nil,
-        lastSuccessfulSyncAt: Date? = nil
+        lastSuccessfulSyncAt: Date? = nil,
+        driveRootFolderId: String? = nil,
+        driveAccountEmail: String? = nil,
+        displayName: String? = nil
     ) {
         self.vaultId = vaultId
         self.schemaVersion = schemaVersion
@@ -110,6 +213,9 @@ public struct VaultManifest: Codable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.driveChangesPageToken = driveChangesPageToken
         self.lastSuccessfulSyncAt = lastSuccessfulSyncAt
+        self.driveRootFolderId = driveRootFolderId
+        self.driveAccountEmail = driveAccountEmail
+        self.displayName = displayName
     }
 }
 
@@ -170,7 +276,7 @@ public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equ
     public var createdAt: Date
     public var text: String
 
-    public init(id: String = UUID().uuidString, createdAt: Date = Date(), text: String) {
+    public init(id: String = ULID.generate(), createdAt: Date = Date(), text: String) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
@@ -178,18 +284,15 @@ public struct VaultActionItemCommentRecord: Codable, Sendable, Identifiable, Equ
 }
 
 public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable {
+    /// Stable identifier (ULID string for new items; legacy vault rows may still use UUID strings).
     public var id: String
-    /// Monotonic human-visible id (e.g. "#42"); persisted and unique across active + completed.
-    public var numericId: Int
     public var title: String
     public var isDone: Bool
     public var notes: String?
-    /// Optional scheduled / tracked start (used for Today and Calendar views).
-    public var startDate: Date?
-    /// Optional scheduled / tracked end.
-    public var endDate: Date?
-    /// Optional priority on a 0...3 scale (3 = highest).
+    /// Optional priority on a 0...4 scale (`p0` = highest urgency, `p4` = lowest among set priorities).
     public var priority: Int?
+    /// Optional urgency on a 0...4 scale (`u0` = most urgent, `u4` = least urgent among set urgencies).
+    public var urgency: Int?
     /// Longer documentation for the task (JSON key `"description"`).
     public var taskDescription: String?
     /// Extra structured-ish context (tags, freeform).
@@ -198,34 +301,39 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
     public var parentTaskId: String?
     /// Context / channel / subject grouping.
     public var subjectLabel: String?
-    /// Optional link to a saved context definition (`ActionItems/contexts/*.json`).
+    /// Optional link to a saved context definition.
     public var contextId: String?
     /// Work type: learning block, time block, action item, meeting, etc.
     public var typeLabel: String?
-    /// Optional link to a saved type definition (`ActionItems/types/*.json`).
+    /// Optional link to a saved type definition.
     public var typeId: String?
+    /// Optional link to a project definition.
+    public var projectId: String?
     public var createdAt: Date?
     public var updatedAt: Date?
     public var completedAt: Date?
+    /// Calendar day the task is scheduled for (start-of-day semantics in the UI). `nil` means not scheduled.
+    public var scheduledDate: Date?
+    /// Pinned for the **Starred** hub (quick access across categories).
+    public var isStarred: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, numericId, title, isDone, notes
-        case startDate, endDate, priority
+        case id, title, isDone, notes
+        case priority, urgency
         case taskDescription = "description"
         case contextNotes, comments
-        case parentTaskId, subjectLabel, contextId, typeLabel, typeId
-        case createdAt, updatedAt, completedAt
+        case parentTaskId, subjectLabel, contextId, typeLabel, typeId, projectId
+        case createdAt, updatedAt, completedAt, scheduledDate
+        case isStarred
     }
 
     public init(
-        id: String = UUID().uuidString,
-        numericId: Int = 0,
+        id: String = ULID.generate(),
         title: String,
         isDone: Bool = false,
         notes: String? = nil,
-        startDate: Date? = nil,
-        endDate: Date? = nil,
         priority: Int? = nil,
+        urgency: Int? = nil,
         taskDescription: String? = nil,
         contextNotes: String? = nil,
         comments: [VaultActionItemCommentRecord] = [],
@@ -234,18 +342,19 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         contextId: String? = nil,
         typeLabel: String? = nil,
         typeId: String? = nil,
+        projectId: String? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        scheduledDate: Date? = nil,
+        isStarred: Bool = false
     ) {
         self.id = id
-        self.numericId = numericId
         self.title = title
         self.isDone = isDone
         self.notes = notes
-        self.startDate = startDate
-        self.endDate = endDate
         self.priority = priority
+        self.urgency = urgency
         self.taskDescription = taskDescription
         self.contextNotes = contextNotes
         self.comments = comments
@@ -254,21 +363,22 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         self.contextId = contextId
         self.typeLabel = typeLabel
         self.typeId = typeId
+        self.projectId = projectId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.completedAt = completedAt
+        self.scheduledDate = scheduledDate
+        self.isStarred = isStarred
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        numericId = try c.decodeIfPresent(Int.self, forKey: .numericId) ?? 0
         title = try c.decode(String.self, forKey: .title)
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
-        startDate = try c.decodeIfPresent(Date.self, forKey: .startDate)
-        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate)
         priority = try c.decodeIfPresent(Int.self, forKey: .priority)
+        urgency = try c.decodeIfPresent(Int.self, forKey: .urgency)
         taskDescription = try c.decodeIfPresent(String.self, forKey: .taskDescription)
         contextNotes = try c.decodeIfPresent(String.self, forKey: .contextNotes)
         comments = try c.decodeIfPresent([VaultActionItemCommentRecord].self, forKey: .comments) ?? []
@@ -277,21 +387,22 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         contextId = try c.decodeIfPresent(String.self, forKey: .contextId)
         typeLabel = try c.decodeIfPresent(String.self, forKey: .typeLabel)
         typeId = try c.decodeIfPresent(String.self, forKey: .typeId)
+        projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        scheduledDate = try c.decodeIfPresent(Date.self, forKey: .scheduledDate)
+        isStarred = try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(numericId, forKey: .numericId)
         try c.encode(title, forKey: .title)
         try c.encode(isDone, forKey: .isDone)
         try c.encodeIfPresent(notes, forKey: .notes)
-        try c.encodeIfPresent(startDate, forKey: .startDate)
-        try c.encodeIfPresent(endDate, forKey: .endDate)
         try c.encodeIfPresent(priority, forKey: .priority)
+        try c.encodeIfPresent(urgency, forKey: .urgency)
         try c.encodeIfPresent(taskDescription, forKey: .taskDescription)
         try c.encodeIfPresent(contextNotes, forKey: .contextNotes)
         try c.encode(comments, forKey: .comments)
@@ -300,20 +411,54 @@ public struct VaultActionItemRecord: Codable, Sendable, Identifiable, Equatable 
         try c.encodeIfPresent(contextId, forKey: .contextId)
         try c.encodeIfPresent(typeLabel, forKey: .typeLabel)
         try c.encodeIfPresent(typeId, forKey: .typeId)
+        try c.encodeIfPresent(projectId, forKey: .projectId)
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(completedAt, forKey: .completedAt)
+        try c.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
+        try c.encode(isStarred, forKey: .isStarred)
     }
 }
 
-// MARK: - Action item sequence (numeric IDs)
+// MARK: - Action item aggregate files (one JSON per bucket)
 
-public struct VaultActionItemSequenceState: Codable, Sendable, Equatable {
-    /// Next value to assign when creating a new action item (`numericId`).
-    public var nextNumericId: Int
+public struct VaultActionItemsFilePayload: Codable, Sendable, Equatable {
+    public var items: [VaultActionItemRecord]
 
-    public init(nextNumericId: Int = 1) {
-        self.nextNumericId = nextNumericId
+    public init(items: [VaultActionItemRecord] = []) {
+        self.items = items
+    }
+}
+
+public struct VaultContextDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultContextDefinition]
+
+    public init(definitions: [VaultContextDefinition] = []) {
+        self.definitions = definitions
+    }
+}
+
+public struct VaultActionTypeDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultActionTypeDefinition]
+
+    public init(definitions: [VaultActionTypeDefinition] = []) {
+        self.definitions = definitions
+    }
+}
+
+public struct VaultProjectDefinitionsFilePayload: Codable, Sendable, Equatable {
+    public var definitions: [VaultProjectDefinition]
+
+    public init(definitions: [VaultProjectDefinition] = []) {
+        self.definitions = definitions
+    }
+}
+
+public struct VaultStarredSidebarChannelsPayload: Codable, Sendable, Equatable {
+    public var pins: [ActionItemsSidebarPin]
+
+    public init(pins: [ActionItemsSidebarPin] = []) {
+        self.pins = pins
     }
 }
 
@@ -330,7 +475,7 @@ public struct VaultContextDefinition: Codable, Sendable, Identifiable, Equatable
     public var updatedAt: Date?
 
     public init(
-        id: String = UUID().uuidString,
+        id: String = ULID.generate(),
         name: String,
         notes: String? = nil,
         accentColorHex: String? = nil,
@@ -361,7 +506,7 @@ public struct VaultActionTypeDefinition: Codable, Sendable, Identifiable, Equata
     public var updatedAt: Date?
 
     public init(
-        id: String = UUID().uuidString,
+        id: String = ULID.generate(),
         name: String,
         notes: String? = nil,
         accentColorHex: String? = nil,
@@ -378,6 +523,74 @@ public struct VaultActionTypeDefinition: Codable, Sendable, Identifiable, Equata
         self.sortOrder = sortOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+public struct VaultProjectDefinition: Codable, Sendable, Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var notes: String?
+    public var accentColorHex: String?
+    public var symbolName: String?
+    public var sortOrder: Int
+    public var parentProjectId: String?
+    public var createdAt: Date?
+    public var updatedAt: Date?
+
+    public init(
+        id: String = ULID.generate(),
+        name: String,
+        notes: String? = nil,
+        accentColorHex: String? = nil,
+        symbolName: String? = nil,
+        sortOrder: Int = 0,
+        parentProjectId: String? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.notes = notes
+        self.accentColorHex = accentColorHex
+        self.symbolName = symbolName
+        self.sortOrder = sortOrder
+        self.parentProjectId = parentProjectId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+// MARK: - Stories & Brief (vault mirrors)
+
+/// Full stories feed snapshot for vault sync (matches `StoriesFeedStore` logical state).
+public struct VaultStoriesFeedPayload: Codable, Sendable {
+    public var stories: [InsightCard]
+    public var bookmarkedStoryIds: [Int]
+    public var reviewedStoryIds: [Int]
+    public var lastGeneratedAt: Date?
+    public var promptStates: [Int: StoryPromptState]
+
+    public init(
+        stories: [InsightCard] = [],
+        bookmarkedStoryIds: [Int] = [],
+        reviewedStoryIds: [Int] = [],
+        lastGeneratedAt: Date? = nil,
+        promptStates: [Int: StoryPromptState] = [:]
+    ) {
+        self.stories = stories
+        self.bookmarkedStoryIds = bookmarkedStoryIds
+        self.reviewedStoryIds = reviewedStoryIds
+        self.lastGeneratedAt = lastGeneratedAt
+        self.promptStates = promptStates
+    }
+}
+
+/// Bookmarked-only mirror for easy browsing in the vault folder.
+public struct VaultStoriesBookmarkedPayload: Codable, Sendable {
+    public var stories: [InsightCard]
+
+    public init(stories: [InsightCard] = []) {
+        self.stories = stories
     }
 }
 

@@ -1,80 +1,73 @@
-import Security
 import SwiftUI
 
-/// LLM API key and model settings (iOS + macOS).
+/// Provider model selection and runtime settings (API keys live under Settings → Keys).
 public struct LLMManagementView: View {
     @State private var settings: LLMSettings = .default
-    @State private var apiKey: String = ""
-    @State private var keyStatus: LLMAPIKeyStatus?
     @State private var isSaving = false
     @State private var testResult: String?
-    @State private var keyMutationInFlight = false
-    @State private var statusNonce = 0
-
-    private let modelOptions = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o"]
 
     public init() {}
 
     public var body: some View {
         Form {
-            Section("OpenAI API Key") {
-                SecureField("sk-...", text: $apiKey)
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .disableAutocorrection(true)
+            Section {
+                Text("Add or update your provider API key under Settings → Keys.")
+                    .font(SharedAppTheme.caption)
+                    .foregroundStyle(SharedAppTheme.secondaryText)
+            } header: {
+                Text("API Key")
+            }
 
-                if let keyStatus {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Stored Key: \(keyStatus.maskedKey)")
-                            .font(SharedAppTheme.caption)
-                            .foregroundStyle(SharedAppTheme.secondaryText)
-                        Text("Added: \(formattedDate(keyStatus.addedAt))")
-                            .font(SharedAppTheme.caption)
-                            .foregroundStyle(SharedAppTheme.secondaryText)
+            Section("Provider") {
+                Picker("Provider", selection: $settings.provider) {
+                    ForEach(LLMProvider.allCases, id: \.self) { provider in
+                        Text(provider.displayName).tag(provider)
                     }
                 }
-
-                HStack {
-                    Button("Save API Key") {
-                        Task { await saveAPIKey() }
-                    }
-                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .disabled(keyMutationInFlight)
-
-                    Button("Clear Key", role: .destructive) {
-                        Task {
-                            let nonce = await beginStatusOperation()
-                            let result = await LLMSettingsStore.shared.clearAPIKeyResult()
-                            await load()
-                            await setStatus(result.message, nonce: nonce)
-                            await MainActor.run { keyMutationInFlight = false }
-                        }
-                    }
-                    .disabled(keyMutationInFlight)
+                .onChange(of: settings.provider) { _, _ in
+                    applyProviderModelDefaultsIfNeeded()
                 }
             }
 
             Section("Model Selection") {
-                Picker("Default Model", selection: $settings.defaultModel) {
-                    ForEach(modelOptions, id: \.self) { model in
+                Picker("Default Model", selection: defaultModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.defaultModel), id: \.self) { model in
                         Text(model).tag(model)
                     }
                 }
 
-                Picker("Initial Pass Model", selection: $settings.initialPassModel) {
-                    ForEach(modelOptions, id: \.self) { model in
+                Picker("Initial Pass Model", selection: initialPassModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.initialPassModel), id: \.self) { model in
                         Text(model).tag(model)
                     }
                 }
 
-                Picker("Pro Model", selection: $settings.proModel) {
-                    ForEach(modelOptions, id: \.self) { model in
+                Picker("Pro Model", selection: proModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.proModel), id: \.self) { model in
                         Text(model).tag(model)
                     }
                 }
 
-                Toggle("Use Pro model for deep analysis", isOn: $settings.useProModelForDeepAnalysis)
+            }
+
+            Section("Plugin Models") {
+                Picker("Brief", selection: briefModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.briefModel), id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+
+                Picker("Stories", selection: storiesModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.storiesModel), id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+
+                Picker("Quick Reply", selection: quickReplyModelBinding) {
+                    ForEach(modelOptionsIncludingCurrent(settings.quickReplyModel), id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
             }
 
             Section("Runtime") {
@@ -105,6 +98,11 @@ public struct LLMManagementView: View {
                 }
             }
         }
+        #if os(macOS)
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(SharedAppTheme.primaryBackground)
+        #endif
         .navigationTitle("LLM Management")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -116,91 +114,139 @@ public struct LLMManagementView: View {
 
     private func load() async {
         let loaded = await LLMSettingsStore.shared.currentSettings()
-        let status = await LLMSettingsStore.shared.apiKeyStatus()
         await MainActor.run {
             settings = loaded
-            keyStatus = status
+            applyProviderModelDefaultsIfNeeded()
         }
-    }
-
-    private func saveAPIKey() async {
-        let nonce = await beginStatusOperation()
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let result = await LLMSettingsStore.shared.saveAPIKeyResult(trimmed)
-        await load()
-        if result.success {
-            await MainActor.run { apiKey = "" }
-            await setStatus(result.message, nonce: nonce)
-        } else {
-            await setStatus(result.message, nonce: nonce)
-        }
-        await MainActor.run { keyMutationInFlight = false }
     }
 
     private func saveSettings() async {
         await MainActor.run { isSaving = true }
-        let pendingKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        var keySaveResult = LLMKeychainOperationResult(success: true, status: errSecSuccess, message: "No key update.", keyValue: nil)
-        if !pendingKey.isEmpty {
-            keySaveResult = await LLMSettingsStore.shared.saveAPIKeyResult(pendingKey)
-        }
-        if keySaveResult.success {
-            await LLMSettingsStore.shared.updateSettings(settings)
-            await load()
-        }
+        await LLMSettingsStore.shared.updateSettings(settings)
+        await load()
         await MainActor.run {
             isSaving = false
-            if keySaveResult.success {
-                apiKey = ""
-                testResult = "Settings saved."
-            } else {
-                testResult = keySaveResult.message
-            }
+            testResult = "Settings saved."
         }
     }
 
     private func testConnection() async {
-        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        let hasKey: Bool
+        switch settings.provider {
+        case .openAI:
+            hasKey = await LLMSettingsStore.shared.hasAPIKey()
+        case .claude:
+            hasKey = await ClaudeAPIKeyStore.shared.hasAPIKey()
+        }
         guard hasKey else {
             await MainActor.run {
-                testResult = "Add and save an API key first."
+                testResult = "Add a \(settings.provider.displayName) API key under Settings → Keys first."
             }
             return
         }
 
         do {
-            _ = try await OpenAIService.shared.classifyBriefingItem(
-                subject: "Team sync tomorrow 10am",
-                snippet: "Calendar invite attached",
-                sender: "calendar@google.com"
-            )
+            switch settings.provider {
+            case .openAI:
+                _ = try await OpenAIService.shared.classifyBriefingItem(
+                    subject: "Team sync tomorrow 10am",
+                    snippet: "Calendar invite attached",
+                    sender: "calendar@google.com"
+                )
+            case .claude:
+                _ = try await ClaudeService.shared.classifyBriefingItem(
+                    subject: "Team sync tomorrow 10am",
+                    snippet: "Calendar invite attached",
+                    sender: "calendar@google.com"
+                )
+            }
             await MainActor.run {
-                testResult = "Connection successful."
+                testResult = "\(settings.provider.displayName) connection successful."
             }
         } catch {
             await MainActor.run {
-                testResult = "Connection failed: \(error.localizedDescription)"
+                testResult = "\(settings.provider.displayName) connection failed: \(error.localizedDescription)"
             }
         }
     }
 
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+    private var modelOptions: [String] {
+        LLMModelCatalog.models(for: settings.provider)
     }
 
-    @MainActor
-    private func beginStatusOperation() -> Int {
-        keyMutationInFlight = true
-        statusNonce += 1
-        return statusNonce
+    private var defaultModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.defaultModel, fallback: LLMModelCatalog.defaults(for: settings.provider).defaultModel) },
+            set: { settings.defaultModel = $0 }
+        )
     }
 
-    @MainActor
-    private func setStatus(_ message: String, nonce: Int) {
-        guard nonce == statusNonce else { return }
-        testResult = message
+    private var initialPassModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.initialPassModel, fallback: LLMModelCatalog.defaults(for: settings.provider).initialPassModel) },
+            set: { settings.initialPassModel = $0 }
+        )
+    }
+
+    private var proModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.proModel, fallback: LLMModelCatalog.defaults(for: settings.provider).proModel) },
+            set: { settings.proModel = $0 }
+        )
+    }
+
+    private var briefModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.briefModel, fallback: LLMModelCatalog.defaults(for: settings.provider).initialPassModel) },
+            set: { settings.briefModel = $0 }
+        )
+    }
+
+    private var storiesModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.storiesModel, fallback: LLMModelCatalog.defaults(for: settings.provider).initialPassModel) },
+            set: { settings.storiesModel = $0 }
+        )
+    }
+
+    private var quickReplyModelBinding: Binding<String> {
+        Binding(
+            get: { validModelSelection(for: settings.quickReplyModel, fallback: LLMModelCatalog.defaults(for: settings.provider).defaultModel) },
+            set: { settings.quickReplyModel = $0 }
+        )
+    }
+
+    private func validModelSelection(for model: String, fallback: String) -> String {
+        LLMModelCatalog.contains(model, provider: settings.provider) ? model : fallback
+    }
+
+    private func modelOptionsIncludingCurrent(_ current: String) -> [String] {
+        let models = modelOptions
+        if models.contains(current) {
+            return models
+        }
+        return [current] + models
+    }
+
+    private func applyProviderModelDefaultsIfNeeded() {
+        let defaults = LLMModelCatalog.defaults(for: settings.provider)
+        if !LLMModelCatalog.contains(settings.defaultModel, provider: settings.provider) {
+            settings.defaultModel = defaults.defaultModel
+        }
+        if !LLMModelCatalog.contains(settings.initialPassModel, provider: settings.provider) {
+            settings.initialPassModel = defaults.initialPassModel
+        }
+        if !LLMModelCatalog.contains(settings.proModel, provider: settings.provider) {
+            settings.proModel = defaults.proModel
+        }
+        if !LLMModelCatalog.contains(settings.briefModel, provider: settings.provider) {
+            settings.briefModel = defaults.initialPassModel
+        }
+        if !LLMModelCatalog.contains(settings.storiesModel, provider: settings.provider) {
+            settings.storiesModel = defaults.initialPassModel
+        }
+        if !LLMModelCatalog.contains(settings.quickReplyModel, provider: settings.provider) {
+            settings.quickReplyModel = defaults.defaultModel
+        }
     }
 }

@@ -23,8 +23,10 @@ struct LLMSettingsStoreTests {
     @Test("LLM settings default to cost-efficient initial model")
     func testDefaultSettingsValues() {
         let settings = LLMSettings.default
+        #expect(settings.provider == .openAI)
         #expect(settings.defaultModel == "gpt-4o-mini")
         #expect(settings.initialPassModel == "gpt-4o-mini")
+        #expect(settings.quickReplyModel == "gpt-4o-mini")
         #expect(settings.proModel.contains("gpt"))
         #expect(settings.maxRetries >= 0)
     }
@@ -43,6 +45,9 @@ struct LLMSettingsStoreTests {
         await store.updateSettings(newSettings)
         let loaded = await store.currentSettings()
         #expect(loaded.defaultModel == "gpt-4.1-mini")
+        #expect(loaded.briefModel == "gpt-4o-mini")
+        #expect(loaded.storiesModel == "gpt-4o-mini")
+        #expect(loaded.quickReplyModel == "gpt-4.1-mini")
         #expect(loaded.useProModelForDeepAnalysis == true)
         #expect(loaded.requestTimeoutSeconds == 45)
     }
@@ -108,6 +113,7 @@ struct LLMSettingsStoreTests {
         let (store, _) = makeStore(testName: "model-fallback")
         await store.updateSettings(
             LLMSettings(
+                provider: .openAI,
                 defaultModel: "unknown-model",
                 initialPassModel: "gpt-4o-mini",
                 proModel: "deprecated",
@@ -119,5 +125,99 @@ struct LLMSettingsStoreTests {
         let loaded = await store.currentSettings()
         #expect(loaded.defaultModel == "gpt-4o-mini")
         #expect(loaded.proModel == "gpt-4.1")
+        #expect(loaded.quickReplyModel == "gpt-4o-mini")
+    }
+
+    @Test("LLM settings persist provider and Claude models")
+    func testProviderAndClaudeModelRoundTrip() async {
+        let (store, _) = makeStore(testName: "provider-roundtrip")
+        let newSettings = LLMSettings(
+            provider: .claude,
+            defaultModel: "claude-sonnet-4-6",
+            initialPassModel: "claude-haiku-4-5",
+            proModel: "claude-sonnet-4-6",
+            briefModel: "claude-haiku-4-5",
+            storiesModel: "claude-sonnet-4-6",
+            quickReplyModel: "claude-sonnet-4-6",
+            useProModelForDeepAnalysis: true,
+            requestTimeoutSeconds: 35,
+            maxRetries: 2
+        )
+        await store.updateSettings(newSettings)
+        let loaded = await store.currentSettings()
+        #expect(loaded.provider == .claude)
+        #expect(loaded.defaultModel == "claude-sonnet-4-6")
+        #expect(loaded.briefModel == "claude-haiku-4-5")
+        #expect(loaded.storiesModel == "claude-sonnet-4-6")
+        #expect(loaded.quickReplyModel == "claude-sonnet-4-6")
+        #expect(loaded.initialPassModel == "claude-haiku-4-5")
+    }
+
+    @Test("Invalid Claude model names fall back to Claude defaults")
+    func testInvalidClaudeModelSettingsFallback() async {
+        let (store, _) = makeStore(testName: "claude-model-fallback")
+        await store.updateSettings(
+            LLMSettings(
+                provider: .claude,
+                defaultModel: "unknown-claude-default",
+                initialPassModel: "unknown-claude-initial",
+                proModel: "unknown-claude-pro",
+                useProModelForDeepAnalysis: false,
+                requestTimeoutSeconds: 30,
+                maxRetries: 2
+            )
+        )
+        let loaded = await store.currentSettings()
+        #expect(loaded.provider == .claude)
+        #expect(loaded.defaultModel == "claude-sonnet-4-6")
+        #expect(loaded.initialPassModel == "claude-haiku-4-5")
+        #expect(loaded.proModel == "claude-sonnet-4-6")
+        #expect(loaded.briefModel == "claude-haiku-4-5")
+        #expect(loaded.storiesModel == "claude-haiku-4-5")
+        #expect(loaded.quickReplyModel == "claude-sonnet-4-6")
+    }
+
+    @Test("Claude legacy aliases migrate to latest supported IDs")
+    func testClaudeLatestAliasMigration() async {
+        let (store, _) = makeStore(testName: "claude-alias-migration")
+        await store.updateSettings(
+            LLMSettings(
+                provider: .claude,
+                defaultModel: "claude-3-5-sonnet-latest",
+                initialPassModel: "claude-3-5-haiku-latest",
+                proModel: "claude-3-5-sonnet-latest",
+                briefModel: "claude-3-5-haiku-latest",
+                storiesModel: "claude-3-5-sonnet-latest",
+                quickReplyModel: "claude-3-5-sonnet-latest",
+                useProModelForDeepAnalysis: false,
+                requestTimeoutSeconds: 30,
+                maxRetries: 2
+            )
+        )
+
+        let loaded = await store.currentSettings()
+        #expect(loaded.defaultModel == "claude-sonnet-4-6")
+        #expect(loaded.initialPassModel == "claude-haiku-4-5")
+        #expect(loaded.briefModel == "claude-haiku-4-5")
+        #expect(loaded.storiesModel == "claude-sonnet-4-6")
+        #expect(loaded.quickReplyModel == "claude-sonnet-4-6")
+    }
+
+    @Test("Legacy settings without provider decode as OpenAI")
+    func testLegacySettingsDecodeDefaultsProvider() throws {
+        let legacyJSON = """
+        {
+          "defaultModel": "gpt-4o-mini",
+          "initialPassModel": "gpt-4o-mini",
+          "proModel": "gpt-4.1",
+          "useProModelForDeepAnalysis": false,
+          "requestTimeoutSeconds": 30,
+          "maxRetries": 2
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+        let decoded = try JSONDecoder().decode(LLMSettings.self, from: data)
+        #expect(decoded.provider == .openAI)
+        #expect(decoded.quickReplyModel == "gpt-4o-mini")
     }
 }

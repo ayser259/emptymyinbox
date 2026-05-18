@@ -27,6 +27,10 @@ public struct GmailAccount: Codable, Identifiable {
     public var tokenExpiry: Date?
     public var lastSync: Date?
     public var unreadEmailsNextPageToken: String?
+    /// Last known Calendar API scope grant (from Google Sign-In). `nil` in legacy saves → treat as granted.
+    public var hasGoogleCalendarReadonlyScope: Bool?
+    /// Last known Drive `drive.file` scope grant (vault). `nil`/false until user authorizes Drive.
+    public var hasGoogleDriveFileScope: Bool?
 
     public init(
         id: String,
@@ -36,7 +40,9 @@ public struct GmailAccount: Codable, Identifiable {
         refreshToken: String?,
         tokenExpiry: Date?,
         lastSync: Date?,
-        unreadEmailsNextPageToken: String?
+        unreadEmailsNextPageToken: String?,
+        hasGoogleCalendarReadonlyScope: Bool? = nil,
+        hasGoogleDriveFileScope: Bool? = nil
     ) {
         self.id = id
         self.email = email
@@ -46,6 +52,18 @@ public struct GmailAccount: Codable, Identifiable {
         self.tokenExpiry = tokenExpiry
         self.lastSync = lastSync
         self.unreadEmailsNextPageToken = unreadEmailsNextPageToken
+        self.hasGoogleCalendarReadonlyScope = hasGoogleCalendarReadonlyScope
+        self.hasGoogleDriveFileScope = hasGoogleDriveFileScope
+    }
+
+    /// Gmail + Calendar are requested at initial sign-in; missing legacy flag means “yes”.
+    public var hasCalendarAccessForSettings: Bool {
+        hasGoogleCalendarReadonlyScope ?? true
+    }
+
+    /// Drive file access is granted only after the vault / Drive scope flow.
+    public var hasDriveFileAccessForSettings: Bool {
+        hasGoogleDriveFileScope ?? false
     }
     
     // Generate a stable numeric ID for compatibility with existing code
@@ -150,6 +168,22 @@ public struct GmailProfile: Codable {
     }
 }
 
+// MARK: - OAuth refresh (single-flight per account)
+
+private actor OAuthRefreshCoordinator {
+    private var tasks: [String: Task<String, Error>] = [:]
+
+    func run(accountId: String, operation: @escaping () async throws -> String) async throws -> String {
+        if let existing = tasks[accountId] {
+            return try await existing.value
+        }
+        let task = Task { try await operation() }
+        tasks[accountId] = task
+        defer { tasks[accountId] = nil }
+        return try await task.value
+    }
+}
+
 // MARK: - Service
 
 public class GmailAPIService {
@@ -162,13 +196,17 @@ public class GmailAPIService {
     
     public static let shared = GmailAPIService()
     
-    private let baseURL = "https://gmail.googleapis.com/gmail/v1"
+    internal let baseURL = "https://gmail.googleapis.com/gmail/v1"
     private var accounts: [GmailAccount] = []
     private var accountsLoadStatus: AccountLoadStatus = .notFound
     private var nextEmailId: Int = 1000 // Starting ID for generated email IDs
+
+    /// Serializes Keychain access and co-located persistence (`SecItem*` is not safe for concurrent mutation).
+    private let persistenceLock = NSLock()
+    private let oauthRefreshCoordinator = OAuthRefreshCoordinator()
     
     // URLSession with timeout configuration to prevent hanging requests
-    private lazy var urlSession: URLSession = {
+    internal lazy var urlSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30.0 // 30 second timeout per request
         configuration.timeoutIntervalForResource = 60.0 // 60 second total timeout
@@ -207,79 +245,49 @@ public class GmailAPIService {
     }
     
     // MARK: - Google Sign-In
-    
-    #if canImport(UIKit)
+
+    /// `GIDSignInErrorCode.scopesAlreadyGranted` (-8): user is already signed in and has all requested scopes.
+    private static func isGoogleSignInScopesAlreadyGranted(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.code == -8 else { return false }
+        return ns.domain == "com.google.GIDSignIn"
+    }
+
     @MainActor
-    public func signIn(presentingViewController: UIViewController) async throws -> GmailAccount {
-        let clientID = getGoogleClientID()
-        guard !clientID.isEmpty else {
-            throw GmailAPIError.configurationError
-        }
-        
-        let config = GIDConfiguration(clientID: clientID)
-        GIDSignIn.sharedInstance.configuration = config
-        
-        let scopes = [
-            "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/gmail.settings.basic",
-            "https://www.googleapis.com/auth/gmail.send",
-            Self.googleCalendarReadonlyScope
-        ]
-        
-        guard let result = try? await GIDSignIn.sharedInstance.signIn(
-            withPresenting: presentingViewController,
-            hint: nil,
-            additionalScopes: scopes
-        ) else {
-            throw GmailAPIError.signInFailed
-        }
-        
-        // Verify we have a valid user token
-        guard result.user.idToken != nil else {
+    private func applyGrantedScopes(from user: GIDGoogleUser, to account: inout GmailAccount) {
+        let granted = Set(user.grantedScopes ?? [])
+        account.hasGoogleCalendarReadonlyScope = granted.contains(Self.googleCalendarReadonlyScope)
+        account.hasGoogleDriveFileScope = granted.contains(Self.googleDriveFileScope)
+    }
+
+    @MainActor
+    private func upsertGmailAccountFromGoogleUser(_ user: GIDGoogleUser) throws -> GmailAccount {
+        guard user.idToken != nil else {
             throw GmailAPIError.noToken
         }
-        
-        // Get access token from Google Sign-In
-        let accessToken = result.user.accessToken.tokenString
-        
-        // Get refreshToken
-        // In Google Sign-In SDK, refreshToken may be nil on first sign-in
-        // It's provided when user grants offline access
-        // Note: refreshToken property exists but may not always be populated
+        let accessToken = user.accessToken.tokenString
         let refreshToken: String? = {
-            // Try to access refreshToken - handle SDK version differences
-            // Some versions have it as optional, others as always-present but may be empty
-            let rt = result.user.refreshToken
+            let rt = user.refreshToken
             return rt.tokenString.isEmpty ? nil : rt.tokenString
         }()
-        
-        // Get user's email from Google Sign-In
-        let email = result.user.profile?.email ?? ""
-        
-        // Get user's name from Google Sign-In profile
-        let name = result.user.profile?.name
-        
-        // Get token expiry (typically 1 hour)
+        let email = user.profile?.email ?? ""
+        let name = user.profile?.name
         let tokenExpiry = Date().addingTimeInterval(3600)
-        
-        // Check if account already exists
+
         if let existingIndex = accounts.firstIndex(where: { $0.email == email }) {
-            // Update existing account
             var updatedAccount = accounts[existingIndex]
             updatedAccount.accessToken = accessToken
             updatedAccount.refreshToken = refreshToken ?? updatedAccount.refreshToken
             updatedAccount.tokenExpiry = tokenExpiry
-            // Update name if available (don't overwrite with nil if name already exists)
             if let name = name {
                 updatedAccount.name = name
             }
+            applyGrantedScopes(from: user, to: &updatedAccount)
             accounts[existingIndex] = updatedAccount
             saveAccounts()
             return updatedAccount
         } else {
-            // Create new account
-            let account = GmailAccount(
+            var account = GmailAccount(
                 id: email,
                 email: email,
                 name: name,
@@ -289,12 +297,55 @@ public class GmailAPIService {
                 lastSync: nil,
                 unreadEmailsNextPageToken: nil
             )
-            
+            applyGrantedScopes(from: user, to: &account)
             accounts.append(account)
             saveAccounts()
-            
             return account
         }
+    }
+
+    #if canImport(UIKit)
+    @MainActor
+    public func signIn(presentingViewController: UIViewController) async throws -> GmailAccount {
+        let clientID = getGoogleClientID()
+        guard !clientID.isEmpty else {
+            throw GmailAPIError.configurationError
+        }
+
+        let config = GIDConfiguration(clientID: clientID)
+        GIDSignIn.sharedInstance.configuration = config
+
+        let scopes = [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.settings.basic",
+            "https://www.googleapis.com/auth/gmail.send",
+            Self.googleCalendarReadonlyScope
+        ]
+
+        let googleUser: GIDGoogleUser
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(
+                withPresenting: presentingViewController,
+                hint: nil,
+                additionalScopes: scopes
+            )
+            googleUser = result.user
+        } catch {
+            if Self.isGoogleSignInScopesAlreadyGranted(error),
+               let current = GIDSignIn.sharedInstance.currentUser {
+                googleUser = current
+            } else if Self.isGoogleSignInScopesAlreadyGranted(error) {
+                throw GmailAPIError.apiError(
+                    "Google Sign-In reported scopes already granted but no active session. Try again or disconnect the app in Google account settings and sign in again."
+                )
+            } else {
+                logWarning("Google Sign-In (iOS): \(error)", category: "Auth")
+                throw GmailAPIError.apiError(error.localizedDescription)
+            }
+        }
+
+        return try upsertGmailAccountFromGoogleUser(googleUser)
     }
     #endif
     
@@ -324,61 +375,29 @@ public class GmailAPIService {
         NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
 
-        let result: GIDSignInResult
+        let googleUser: GIDGoogleUser
         do {
-            result = try await GIDSignIn.sharedInstance.signIn(
+            let result = try await GIDSignIn.sharedInstance.signIn(
                 withPresenting: window,
                 hint: nil,
                 additionalScopes: scopes
             )
+            googleUser = result.user
         } catch {
-            logWarning("Google Sign-In (macOS): \(error)", category: "Auth")
-            throw GmailAPIError.apiError(error.localizedDescription)
-        }
-        
-        guard result.user.idToken != nil else {
-            throw GmailAPIError.noToken
-        }
-        
-        let accessToken = result.user.accessToken.tokenString
-        
-        let refreshToken: String? = {
-            let rt = result.user.refreshToken
-            return rt.tokenString.isEmpty ? nil : rt.tokenString
-        }()
-        
-        let email = result.user.profile?.email ?? ""
-        let name = result.user.profile?.name
-        let tokenExpiry = Date().addingTimeInterval(3600)
-        
-        if let existingIndex = accounts.firstIndex(where: { $0.email == email }) {
-            var updatedAccount = accounts[existingIndex]
-            updatedAccount.accessToken = accessToken
-            updatedAccount.refreshToken = refreshToken ?? updatedAccount.refreshToken
-            updatedAccount.tokenExpiry = tokenExpiry
-            if let name = name {
-                updatedAccount.name = name
+            if Self.isGoogleSignInScopesAlreadyGranted(error),
+               let current = GIDSignIn.sharedInstance.currentUser {
+                googleUser = current
+            } else if Self.isGoogleSignInScopesAlreadyGranted(error) {
+                throw GmailAPIError.apiError(
+                    "Google Sign-In reported scopes already granted but no active session. Try again or disconnect the app in Google account settings and sign in again."
+                )
+            } else {
+                logWarning("Google Sign-In (macOS): \(error)", category: "Auth")
+                throw GmailAPIError.apiError(error.localizedDescription)
             }
-            accounts[existingIndex] = updatedAccount
-            saveAccounts()
-            return updatedAccount
-        } else {
-            let account = GmailAccount(
-                id: email,
-                email: email,
-                name: name,
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-                tokenExpiry: tokenExpiry,
-                lastSync: nil,
-                unreadEmailsNextPageToken: nil
-            )
-            
-            accounts.append(account)
-            saveAccounts()
-            
-            return account
         }
+
+        return try upsertGmailAccountFromGoogleUser(googleUser)
     }
     #endif
     
@@ -401,31 +420,30 @@ public class GmailAPIService {
     
     /// Get valid access token, refreshing if necessary (internal for use by extensions)
     public func getValidAccessToken(for account: GmailAccount) async throws -> String {
-        // Check if token needs refresh
         if let expiry = account.tokenExpiry, expiry > Date() {
-            // Token is still valid
             return account.accessToken
         }
-        
-        // Token expired, need to refresh
         guard let refreshToken = account.refreshToken else {
-            // No refresh token, need to re-authenticate
             throw GmailAPIError.tokenExpired
         }
-        
-        // Refresh the token
-        let newAccessToken = try await refreshAccessToken(refreshToken: refreshToken, clientID: getGoogleClientID(), clientSecret: getGoogleClientSecret())
-        
-        // Update account in array
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-            var updatedAccount = accounts[index]
-            updatedAccount.accessToken = newAccessToken
-            updatedAccount.tokenExpiry = Date().addingTimeInterval(3600)
-            accounts[index] = updatedAccount
-            saveAccounts()
+        let accountId = account.id
+        return try await oauthRefreshCoordinator.run(accountId: accountId) { [self] in
+            let newAccessToken = try await refreshAccessToken(
+                refreshToken: refreshToken,
+                clientID: getGoogleClientID(),
+                clientSecret: getGoogleClientSecret()
+            )
+            persistenceLock.lock()
+            defer { persistenceLock.unlock() }
+            if let index = accounts.firstIndex(where: { $0.id == accountId }) {
+                var updatedAccount = accounts[index]
+                updatedAccount.accessToken = newAccessToken
+                updatedAccount.tokenExpiry = Date().addingTimeInterval(3600)
+                accounts[index] = updatedAccount
+            }
+            saveAccountsWhileLocked()
+            return newAccessToken
         }
-        
-        return newAccessToken
     }
 
     // MARK: - Google Drive (vault)
@@ -435,42 +453,76 @@ public class GmailAPIService {
     /// Read-only access to calendars and events (Google Calendar API).
     public static let googleCalendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
 
+    /// Restores the Google Sign-In SDK session so `GIDSignIn.sharedInstance.currentUser` is set. Call after launch if you persist Gmail accounts; otherwise `addScopes` / Drive vault flows see no `currentUser` and throw "Not authenticated with Gmail".
+    @MainActor
+    public func restoreGoogleSignInSessionIfNeeded() async {
+        guard !accounts.isEmpty else { return }
+        if GIDSignIn.sharedInstance.currentUser != nil { return }
+        do {
+            _ = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            logSuccess("Google Sign-In: restored previous session", category: "Auth")
+        } catch {
+            logWarning("Google Sign-In: restorePreviousSignIn — \(error.localizedDescription)", category: "Auth")
+        }
+    }
+
     #if canImport(UIKit)
     @MainActor
     public func requestGoogleDriveFileScope(presentingViewController: UIViewController) async throws {
+        await restoreGoogleSignInSessionIfNeeded()
         guard let user = GIDSignIn.sharedInstance.currentUser else {
             throw GmailAPIError.notAuthenticated
         }
-        let result = try await user.addScopes([Self.googleDriveFileScope], presenting: presentingViewController)
-        try updateAccountAccessTokenFromSignIn(result)
+        do {
+            let result = try await user.addScopes([Self.googleDriveFileScope], presenting: presentingViewController)
+            try updateAccountAccessTokenFromGoogleUser(result.user)
+        } catch {
+            if Self.isGoogleSignInScopesAlreadyGranted(error) {
+                try updateAccountAccessTokenFromGoogleUser(user)
+            } else {
+                throw error
+            }
+        }
     }
     #endif
 
     #if os(macOS)
     @MainActor
     public func requestGoogleDriveFileScope(presentingWindow: NSWindow?) async throws {
+        await restoreGoogleSignInSessionIfNeeded()
         guard let user = GIDSignIn.sharedInstance.currentUser else {
             throw GmailAPIError.notAuthenticated
         }
         guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
             throw GmailAPIError.configurationError
         }
-        let result = try await user.addScopes([Self.googleDriveFileScope], presenting: window)
-        try updateAccountAccessTokenFromSignIn(result)
+        do {
+            let result = try await user.addScopes([Self.googleDriveFileScope], presenting: window)
+            try updateAccountAccessTokenFromGoogleUser(result.user)
+        } catch {
+            if Self.isGoogleSignInScopesAlreadyGranted(error) {
+                try updateAccountAccessTokenFromGoogleUser(user)
+            } else {
+                throw error
+            }
+        }
     }
     #endif
 
     @MainActor
-    private func updateAccountAccessTokenFromSignIn(_ result: GIDSignInResult) throws {
-        let email = result.user.profile?.email ?? ""
+    private func updateAccountAccessTokenFromGoogleUser(_ user: GIDGoogleUser) throws {
+        let email = user.profile?.email ?? ""
         guard !email.isEmpty else { throw GmailAPIError.noToken }
-        let accessToken = result.user.accessToken.tokenString
+        let accessToken = user.accessToken.tokenString
         let tokenExpiry = Date().addingTimeInterval(3600)
         guard let idx = accounts.firstIndex(where: { $0.email == email }) else {
             throw GmailAPIError.notAuthenticated
         }
-        accounts[idx].accessToken = accessToken
-        accounts[idx].tokenExpiry = tokenExpiry
+        var acc = accounts[idx]
+        acc.accessToken = accessToken
+        acc.tokenExpiry = tokenExpiry
+        applyGrantedScopes(from: user, to: &acc)
+        accounts[idx] = acc
         saveAccounts()
     }
 
@@ -875,20 +927,25 @@ public class GmailAPIService {
     }
     
     private func saveAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
+        saveAccountsWhileLocked()
+    }
+
+    /// Must be called with `persistenceLock` held (avoids nested lock while `loadSavedAccounts` calls migration).
+    private func saveAccountsWhileLocked() {
         guard let data = try? JSONEncoder().encode(accounts) else {
             logWarning("Failed to encode accounts for keychain", category: "Auth")
             return
         }
-        
-        // Delete existing first
+
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount
         ]
         SecItemDelete(deleteQuery as CFDictionary)
-        
-        // Add with proper accessibility for device
+
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -896,15 +953,15 @@ public class GmailAPIService {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
-        
+
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecSuccess {
-            logSuccess("Saved \(accounts.count) accounts to keychain", category: "Auth")
+            logDebug("Saved \(accounts.count) accounts to keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
             removeAccountsFileFallback()
             return
         }
-        
+
         logWarning(
             "Keychain save failed: \(keychainStatusDescription(status)). Using Application Support fallback.",
             category: "Auth"
@@ -917,6 +974,8 @@ public class GmailAPIService {
     }
     
     private func loadSavedAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -959,7 +1018,7 @@ public class GmailAPIService {
         do {
             let loadedAccounts = try JSONDecoder().decode([GmailAccount].self, from: data)
             accounts = loadedAccounts
-            logSuccess("Loaded \(accounts.count) accounts from keychain", category: "Auth")
+            logDebug("Loaded \(accounts.count) accounts from keychain", category: "Auth")
             accountsLoadStatus = accounts.isEmpty ? .notFound : .loaded
             removeAccountsFileFallback()
         } catch {
@@ -969,7 +1028,7 @@ public class GmailAPIService {
         }
     }
     
-    /// Migrate from old keychain format (without service identifier)
+    /// Migrate from old keychain format (without service identifier). Caller must hold `persistenceLock`.
     private func migrateOldKeychainData() -> Bool {
         let oldQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -989,9 +1048,8 @@ public class GmailAPIService {
         
         logInfo("Migrating \(loadedAccounts.count) accounts from old keychain format", category: "Auth")
         accounts = loadedAccounts
-        
-        // Save to new format
-        saveAccounts()
+
+        saveAccountsWhileLocked()
         
         // Delete old format
         let deleteOldQuery: [String: Any] = [
@@ -1003,6 +1061,8 @@ public class GmailAPIService {
     }
     
     private func clearSavedAccounts() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -1241,6 +1301,59 @@ public class GmailAPIService {
         // Update lastSync timestamp
         updateAccountLastSync(email: account.email)
         
+        return allMetadata
+    }
+
+    /// Sync inbox email metadata (read and unread) — same lightweight path as unread sync, wider query.
+    public func syncInboxEmailMetadata(for account: GmailAccount, maxResults: Int = 1000, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
+        let (messageRefs, _) = try await listMessages(
+            for: account,
+            query: "in:inbox",
+            maxResults: maxResults,
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
+        )
+
+        guard !messageRefs.isEmpty else {
+            updateAccountLastSync(email: account.email)
+            return []
+        }
+
+        let totalCount = messageRefs.count
+        await progressCallback?(0, totalCount)
+
+        var allMetadata: [EmailMetadata] = []
+        let batchSize = 20
+
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+
+        var processedCount = 0
+
+        for batch in batches {
+            let batchIds = batch.map { $0.id }
+            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
+
+            for gmailMessage in messages {
+                guard gmailMessage.labelIds.contains("INBOX") else {
+                    continue
+                }
+
+                let emailId = getEmailId(for: gmailMessage.id)
+                let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                allMetadata.append(metadata)
+            }
+
+            processedCount += batch.count
+            await progressCallback?(processedCount, totalCount)
+        }
+
+        allMetadata.sort { $0.received_at > $1.received_at }
+
+        updateAccountLastSync(email: account.email)
+
         return allMetadata
     }
     
@@ -1708,7 +1821,7 @@ public enum GmailAPIError: LocalizedError {
         case .noToken:
             return "No authentication token"
         case .notAuthenticated:
-            return "Not authenticated with Gmail"
+            return "Google Sign-In has no active session. Add your Google account again from the app menu, then retry (Drive features need the Google Sign-In session, not only saved tokens)."
         case .tokenExpired:
             return "Authentication token expired. Please sign in again."
         case .tokenRefreshFailed:

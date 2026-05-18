@@ -523,44 +523,157 @@ public struct FeatureAccountInclusion: Codable, Identifiable, Hashable {
     public let accountEmail: String
     public var includeInDailyBriefing: Bool
     public var includeInNewsletterInsights: Bool
+    public var includeInQuickReply: Bool
     public var isPrimaryNewsletterAddress: Bool
+
+    public init(
+        accountEmail: String,
+        includeInDailyBriefing: Bool,
+        includeInNewsletterInsights: Bool,
+        includeInQuickReply: Bool = true,
+        isPrimaryNewsletterAddress: Bool
+    ) {
+        self.accountEmail = accountEmail
+        self.includeInDailyBriefing = includeInDailyBriefing
+        self.includeInNewsletterInsights = includeInNewsletterInsights
+        self.includeInQuickReply = includeInQuickReply
+        self.isPrimaryNewsletterAddress = isPrimaryNewsletterAddress
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accountEmail = try container.decode(String.self, forKey: .accountEmail)
+        includeInDailyBriefing = try container.decode(Bool.self, forKey: .includeInDailyBriefing)
+        includeInNewsletterInsights = try container.decode(Bool.self, forKey: .includeInNewsletterInsights)
+        includeInQuickReply = try container.decodeIfPresent(Bool.self, forKey: .includeInQuickReply) ?? true
+        isPrimaryNewsletterAddress = try container.decode(Bool.self, forKey: .isPrimaryNewsletterAddress)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(accountEmail, forKey: .accountEmail)
+        try container.encode(includeInDailyBriefing, forKey: .includeInDailyBriefing)
+        try container.encode(includeInNewsletterInsights, forKey: .includeInNewsletterInsights)
+        try container.encode(includeInQuickReply, forKey: .includeInQuickReply)
+        try container.encode(isPrimaryNewsletterAddress, forKey: .isPrimaryNewsletterAddress)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case accountEmail
+        case includeInDailyBriefing
+        case includeInNewsletterInsights
+        case includeInQuickReply
+        case isPrimaryNewsletterAddress
+    }
 }
 
 // MARK: - LLM Settings
 
 public struct LLMSettings: Codable {
+    public var provider: LLMProvider
     public var defaultModel: String
     public var initialPassModel: String
     public var proModel: String
+    public var briefModel: String
+    public var storiesModel: String
+    public var quickReplyModel: String
     public var useProModelForDeepAnalysis: Bool
     public var requestTimeoutSeconds: Double
     public var maxRetries: Int
 
     public init(
+        provider: LLMProvider = .openAI,
         defaultModel: String,
         initialPassModel: String,
         proModel: String,
+        briefModel: String? = nil,
+        storiesModel: String? = nil,
+        quickReplyModel: String? = nil,
         useProModelForDeepAnalysis: Bool,
         requestTimeoutSeconds: Double,
         maxRetries: Int
     ) {
+        self.provider = provider
         self.defaultModel = defaultModel
         self.initialPassModel = initialPassModel
         self.proModel = proModel
+        self.briefModel = briefModel ?? initialPassModel
+        self.storiesModel = storiesModel ?? initialPassModel
+        self.quickReplyModel = quickReplyModel ?? defaultModel
         self.useProModelForDeepAnalysis = useProModelForDeepAnalysis
         self.requestTimeoutSeconds = requestTimeoutSeconds
         self.maxRetries = maxRetries
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decodeIfPresent(LLMProvider.self, forKey: .provider) ?? .openAI
+        defaultModel = try container.decode(String.self, forKey: .defaultModel)
+        initialPassModel = try container.decode(String.self, forKey: .initialPassModel)
+        proModel = try container.decode(String.self, forKey: .proModel)
+        useProModelForDeepAnalysis = try container.decode(Bool.self, forKey: .useProModelForDeepAnalysis)
+        briefModel = try container.decodeIfPresent(String.self, forKey: .briefModel) ?? initialPassModel
+        storiesModel = try container.decodeIfPresent(String.self, forKey: .storiesModel)
+            ?? (useProModelForDeepAnalysis ? proModel : initialPassModel)
+        quickReplyModel = try container.decodeIfPresent(String.self, forKey: .quickReplyModel) ?? defaultModel
+        requestTimeoutSeconds = try container.decode(Double.self, forKey: .requestTimeoutSeconds)
+        maxRetries = try container.decode(Int.self, forKey: .maxRetries)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(defaultModel, forKey: .defaultModel)
+        try container.encode(initialPassModel, forKey: .initialPassModel)
+        try container.encode(proModel, forKey: .proModel)
+        try container.encode(briefModel, forKey: .briefModel)
+        try container.encode(storiesModel, forKey: .storiesModel)
+        try container.encode(quickReplyModel, forKey: .quickReplyModel)
+        try container.encode(useProModelForDeepAnalysis, forKey: .useProModelForDeepAnalysis)
+        try container.encode(requestTimeoutSeconds, forKey: .requestTimeoutSeconds)
+        try container.encode(maxRetries, forKey: .maxRetries)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case defaultModel
+        case initialPassModel
+        case proModel
+        case briefModel
+        case storiesModel
+        case quickReplyModel
+        case useProModelForDeepAnalysis
+        case requestTimeoutSeconds
+        case maxRetries
+    }
+
     public static var `default`: LLMSettings {
         LLMSettings(
+            provider: .openAI,
             defaultModel: "gpt-4o-mini",
             initialPassModel: "gpt-4o-mini",
             proModel: "gpt-4.1",
+            briefModel: "gpt-4o-mini",
+            storiesModel: "gpt-4o-mini",
+            quickReplyModel: "gpt-4o-mini",
             useProModelForDeepAnalysis: false,
             requestTimeoutSeconds: 30,
             maxRetries: 2
         )
+    }
+}
+
+public enum LLMProvider: String, Codable, CaseIterable {
+    case openAI
+    case claude
+
+    public var displayName: String {
+        switch self {
+        case .openAI:
+            return "OpenAI"
+        case .claude:
+            return "Anthropic Claude"
+        }
     }
 }
 

@@ -8,23 +8,37 @@
 import SwiftUI
 import EmptyMyInboxShared
 
-private enum MacRootTab: Int, CaseIterable, Identifiable, Hashable {
-    case mail
-    case calendar
-    case actionItems
+struct ContentView: View {
+    /// Persist sidebar “last refresh” times across app launches (UserDefaults).
+    private enum SidebarRefreshPersistence {
+        static let mailKey = "mac.sidebar.lastMailRefreshAt"
+        static let calendarKey = "mac.sidebar.lastCalendarRefreshAt"
+        static let actionItemsKey = "mac.sidebar.lastActionItemsRefreshAt"
 
-    var id: Int { rawValue }
+        static func restore() -> (mail: Date?, calendar: Date?, actionItems: Date?) {
+            let d = UserDefaults.standard
+            return (
+                d.object(forKey: mailKey) as? Date,
+                d.object(forKey: calendarKey) as? Date,
+                d.object(forKey: actionItemsKey) as? Date
+            )
+        }
 
-    var title: String {
-        switch self {
-        case .mail: return "Mail"
-        case .calendar: return "Calendar"
-        case .actionItems: return "Action Items"
+        static func save(mail: Date?, calendar: Date?, actionItems: Date?) {
+            let d = UserDefaults.standard
+            if let mail { d.set(mail, forKey: mailKey) } else { d.removeObject(forKey: mailKey) }
+            if let calendar { d.set(calendar, forKey: calendarKey) } else { d.removeObject(forKey: calendarKey) }
+            if let actionItems { d.set(actionItems, forKey: actionItemsKey) } else { d.removeObject(forKey: actionItemsKey) }
+        }
+
+        static func clear() {
+            let d = UserDefaults.standard
+            d.removeObject(forKey: mailKey)
+            d.removeObject(forKey: calendarKey)
+            d.removeObject(forKey: actionItemsKey)
         }
     }
-}
 
-struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var calendarModel = GoogleCalendarViewModel()
@@ -35,8 +49,20 @@ struct ContentView: View {
     @State private var showVaultSettings = false
     @State private var showAppSettings = false
     @State private var isAddingGmailAccount = false
+    @State private var lastMailRefreshAt: Date?
     @State private var lastCalendarRefreshAt: Date?
     @State private var lastActionItemsRefreshAt: Date?
+    @State private var dashboardActionItems: [VaultActionItemRecord] = []
+
+    private var sidebarRefreshState: MacSidebarRefreshState {
+        MacSidebarRefreshState(
+            isRefreshingMail: isRefreshing,
+            isRefreshingCalendar: calendarModel.isLoading,
+            lastMailRefreshAt: lastMailRefreshAt,
+            lastCalendarRefreshAt: lastCalendarRefreshAt,
+            lastActionItemsRefreshAt: lastActionItemsRefreshAt
+        )
+    }
 
     var body: some View {
         Group {
@@ -52,20 +78,21 @@ struct ContentView: View {
         .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
         .sheet(isPresented: $showVaultSettings) {
-            MacVaultSettingsView()
+            NavigationStack {
+                MacVaultSettingsView()
+            }
+            .frame(minWidth: 440, minHeight: 400)
         }
         .sheet(isPresented: $showAppSettings) {
-            NavigationStack {
-                AppSettingsMenuContent(
-                    vaultSettings: { MacVaultSettingsView() },
-                    isAddingAccount: $isAddingGmailAccount,
-                    onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
-                    onDismiss: { showAppSettings = false },
-                    accentColor: MacAppTheme.accent
-                )
-                .environmentObject(authManager)
-            }
-            .frame(minWidth: 520, minHeight: 640)
+            SettingsContainerView(
+                vaultSettings: { MacVaultSettingsView(showDismissToolbar: false) },
+                isAddingAccount: $isAddingGmailAccount,
+                onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
+                onDismiss: { showAppSettings = false },
+                accentColor: MacAppTheme.accent
+            )
+            .environmentObject(authManager)
+            .frame(minWidth: 760, minHeight: 560)
         }
         .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
             showVaultSettings = true
@@ -78,19 +105,56 @@ struct ContentView: View {
                 checkMacForegroundCompanionIfNeeded()
             }
         }
+        .onChange(of: authManager.sessionState) { _, new in
+            if case .needsLogin = new {
+                lastMailRefreshAt = nil
+                lastCalendarRefreshAt = nil
+                lastActionItemsRefreshAt = nil
+                SidebarRefreshPersistence.clear()
+            }
+        }
     }
 
     @ViewBuilder
     private var mainChrome: some View {
-        Group {
-            switch rootTab {
-            case .mail:
-                mailSplitView
-            case .calendar:
-                MacVaultCalendarTab(model: calendarModel, onOpenSettings: { showAppSettings = true })
-            case .actionItems:
-                MacVaultActionItemsTab(onOpenSettings: { showAppSettings = true })
+        VStack(spacing: 0) {
+            Group {
+                switch rootTab {
+                case .mail:
+                    mailSplitView
+                case .calendar:
+                    MacVaultCalendarTab(
+                        model: calendarModel,
+                        snapshot: snapshot,
+                        dashboardActionItems: dashboardActionItems,
+                        isRefreshing: isRefreshing,
+                        refreshMessage: refreshMessage,
+                        refreshState: sidebarRefreshState,
+                        onOpenSettings: { showAppSettings = true }
+                    )
+                case .actionItems:
+                    MacVaultActionItemsTab(
+                        calendarModel: calendarModel,
+                        snapshot: snapshot,
+                        dashboardActionItems: dashboardActionItems,
+                        isRefreshing: isRefreshing,
+                        refreshMessage: refreshMessage,
+                        refreshState: sidebarRefreshState,
+                        onOpenSettings: { showAppSettings = true }
+                    )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MacAppTheme.primaryBackground)
+
+            Divider()
+                .opacity(0.35)
+
+            VaultRefreshStatusLabel(font: .caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(MacAppTheme.secondaryBackground.opacity(0.45))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
@@ -129,19 +193,43 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: .macSelectRootTab)) { notification in
+            guard let raw = notification.object as? Int, let tab = MacRootTab(rawValue: raw) else { return }
+            rootTab = tab
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macCycleRootTabForward)) { _ in
+            let order = MacRootTab.allCases
+            guard let idx = order.firstIndex(of: rootTab) else { return }
+            rootTab = order[(idx + 1) % order.count]
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macRefreshCurrentRootTab)) { _ in
+            Task { await refreshCurrentTab() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
+            Task { await loadDashboardActionItems() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
+            Task { await loadDashboardActionItems() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
             Task {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
                 await calendarModel.refresh()
                 lastCalendarRefreshAt = Date()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
                 lastActionItemsRefreshAt = Date()
+                persistSidebarRefreshTimestamps()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
             Task {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
                 await calendarModel.refresh()
                 NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
+            Task { await loadSnapshot() }
         }
     }
 
@@ -151,32 +239,66 @@ struct ContentView: View {
             snapshot: $snapshot,
             isRefreshing: $isRefreshing,
             refreshMessage: $refreshMessage,
+            calendarModel: calendarModel,
+            dashboardActionItems: dashboardActionItems,
+            refreshState: sidebarRefreshState,
             onRefreshMailbox: { Task { await refreshMailbox() } },
-            onOpenSettings: { showAppSettings = true }
+            onOpenSettings: { showAppSettings = true },
+            onAddAccount: { Task { await addGmailAccountFromSettings() } }
         )
         .environmentObject(authManager)
         .background(MacAppTheme.primaryBackground)
         .task(id: authManager.sessionState) {
             if case .authenticated = authManager.sessionState {
+                let restored = SidebarRefreshPersistence.restore()
+                lastMailRefreshAt = restored.mail
+                lastCalendarRefreshAt = restored.calendar
+                lastActionItemsRefreshAt = restored.actionItems
                 await loadSnapshot()
+                await loadDashboardActionItems()
                 NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .macActionItemsShouldReload)) { _ in
             lastActionItemsRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
         }
     }
 
     private func loadSnapshot() async {
-        snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
+        let loaded = await DashboardDataManager.shared.loadCachedSnapshot()
+        snapshot = loaded
+        // Prefer dashboard snapshot time (same as on-disk cache); keep UserDefaults restore if no snapshot yet.
+        if let ts = loaded?.timestamp {
+            lastMailRefreshAt = ts
+        }
+        persistSidebarRefreshTimestamps()
+        // No cached data at all — trigger a full fetch so the user sees their emails immediately.
+        if loaded == nil, !isRefreshing {
+            await refreshMailbox()
+        }
+    }
+
+    private func persistSidebarRefreshTimestamps() {
+        SidebarRefreshPersistence.save(
+            mail: lastMailRefreshAt,
+            calendar: lastCalendarRefreshAt,
+            actionItems: lastActionItemsRefreshAt
+        )
+    }
+
+    private func loadDashboardActionItems() async {
+        dashboardActionItems = (try? await VaultManager.shared.listActionItems()) ?? []
     }
 
     private func refreshMailbox() async {
         isRefreshing = true
         refreshMessage = nil
         defer { isRefreshing = false }
+        await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
+        await loadDashboardActionItems()
         refreshMessage = "Updated \(snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
         NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
@@ -186,11 +308,15 @@ struct ContentView: View {
         case .mail:
             await refreshMailbox()
         case .calendar:
+            await VaultManager.shared.performLifecycleSync(postNotification: false)
             await calendarModel.refresh()
             lastCalendarRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
         case .actionItems:
             NotificationCenter.default.post(name: .macActionItemsShouldReload, object: nil)
             lastActionItemsRefreshAt = Date()
+            persistSidebarRefreshTimestamps()
+            Task { await loadDashboardActionItems() }
         }
     }
 
@@ -296,104 +422,6 @@ private struct MacSplashView: View {
                 .foregroundStyle(MacAppTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MacAppTheme.primaryBackground)
-    }
-}
-
-// MARK: - Dashboard
-
-private func unreadCount(snapshot: DashboardDataSnapshot, accountEmail: String) -> Int {
-    snapshot.emails.filter {
-        $0.account_email.caseInsensitiveCompare(accountEmail) == .orderedSame && !$0.is_read
-    }.count
-}
-
-struct MacDashboardDetailView: View {
-    let snapshot: DashboardDataSnapshot?
-    let isRefreshing: Bool
-    let refreshMessage: String?
-    let onRefresh: () -> Void
-
-    var body: some View {
-        Group {
-            if let snapshot {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        if isRefreshing {
-                            HStack {
-                                Spacer(minLength: 0)
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
-                        }
-                        if let refreshMessage {
-                            Text(refreshMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 12) {
-                            ForEach(snapshot.accounts, id: \.id) { account in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(account.email)
-                                        .font(.headline)
-                                        .foregroundStyle(MacAppTheme.primaryText)
-                                        .lineLimit(1)
-                                    Text("\(unreadCount(snapshot: snapshot, accountEmail: account.email)) unread")
-                                        .font(.caption)
-                                        .foregroundStyle(MacAppTheme.secondaryText)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding()
-                                .background(MacAppTheme.secondaryBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            }
-                        }
-
-                        Text("Last snapshot: \(snapshot.timestamp.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption2)
-                            .foregroundStyle(MacAppTheme.secondaryText.opacity(0.75))
-
-                        Text("Tip: Use ⌘R to refresh mailbox data from Gmail.")
-                            .font(.caption)
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    }
-                    .padding(24)
-                }
-            } else {
-                ContentUnavailableView {
-                    Label("No dashboard data yet", systemImage: "tray")
-                } description: {
-                    Text("Tap Refresh in the toolbar to pull your latest Gmail data.")
-                } actions: {
-                    Button("Refresh now", action: onRefresh)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .navigationTitle("Dashboard")
-    }
-}
-
-// MARK: - Accounts
-
-struct MacAccountsListView: View {
-    let accounts: [GmailAccount]
-
-    var body: some View {
-        List(accounts) { account in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(account.email)
-                    .font(.headline)
-                    .foregroundStyle(MacAppTheme.primaryText)
-                Text("Gmail account")
-                    .font(.caption)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-            }
-            .padding(.vertical, 4)
-        }
-        .navigationTitle("Accounts")
-        .scrollContentBackground(.hidden)
         .background(MacAppTheme.primaryBackground)
     }
 }

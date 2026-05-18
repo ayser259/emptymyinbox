@@ -45,6 +45,14 @@ public actor InterestProfileStore {
         didLoad = false
     }
 
+    /// Removes persisted interest profile (e.g. full sign-out).
+    public func clear() async {
+        let url = appSupportURL().appendingPathComponent(fileName)
+        try? FileManager.default.removeItem(at: url)
+        profile = .empty
+        didLoad = false
+    }
+
     private func ensureLoaded() async {
         guard !didLoad else { return }
         didLoad = true

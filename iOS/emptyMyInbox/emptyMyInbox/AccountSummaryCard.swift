@@ -13,7 +13,6 @@ struct AccountSummaryCard: View {
     let unreadCount: Int
     let starredCount: Int
     let totalEmailCount: Int
-    let senderCount: Int
     let unreadSenderCount: Int
     let lastRefreshTime: Date?
     let healthStatus: AccountHealthStatus?
@@ -22,7 +21,6 @@ struct AccountSummaryCard: View {
     
     @State private var isRefreshing = false
     @State private var isReconnecting = false
-    @State private var catchUpPressed = false
     
     // Gradient colors for card
     private let cardGradient = LinearGradient(
@@ -203,62 +201,37 @@ struct AccountSummaryCard: View {
                 }
             }
             
-            // Stats section with better visual hierarchy
-            VStack(spacing: 12) {
-                // Top row stats - Unread & Starred (primary)
-                HStack(spacing: 12) {
-                    NavigationLink(value: EmailFilter.accountUnread(accountEmail: account.email)) {
-                        PremiumStatBadge(
-                            icon: "envelope.badge",
-                            count: unreadCount,
-                            label: "Unread",
-                            isHighlighted: unreadCount > 0,
-                            highlightColor: AppTheme.accent
-                        )
+            // Short summary (counts only) — full lists open via “View more”
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(accountInboxSummaryLine)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(AppTheme.primaryText.opacity(0.95))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if unreadSenderCount > 0 {
+                        Text("\(unreadSenderCount) senders with unread")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(AppTheme.secondaryText.opacity(0.85))
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    NavigationLink(value: EmailFilter.accountStarred(accountEmail: account.email)) {
-                        PremiumStatBadge(
-                            icon: "star.fill",
-                            count: starredCount,
-                            label: "Starred",
-                            isHighlighted: starredCount > 0,
-                            highlightColor: .yellow
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
                 }
-                
-                // Bottom row stats - Total & Senders (secondary)
-                HStack(spacing: 12) {
-                    NavigationLink(value: EmailFilter.accountAll(accountEmail: account.email)) {
-                        PremiumStatBadge(
-                            icon: "envelope",
-                            count: totalEmailCount,
-                            label: "Total",
-                            isHighlighted: false,
-                            highlightColor: AppTheme.secondaryText
-                        )
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                NavigationLink(value: EmailFilter.accountAll(accountEmail: account.email)) {
+                    HStack(spacing: 4) {
+                        Text("View more")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    NavigationLink(value: EmailFilter.accountSenders(accountEmail: account.email)) {
-                        PremiumStatBadge(
-                            icon: "person.2.fill",
-                            count: senderCount,
-                            label: "Senders",
-                            isHighlighted: unreadSenderCount > 0,
-                            highlightColor: AppTheme.accent,
-                            secondaryText: unreadSenderCount > 0 ? "\(unreadSenderCount) unread" : nil
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppTheme.accent)
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            
+
             // Catch up button - subtle dark style that blends in
             if unreadCount > 0 {
                 NavigationLink(value: "catch_up_\(account.id)") {
@@ -328,7 +301,15 @@ struct AccountSummaryCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    
+
+    private var accountInboxSummaryLine: String {
+        [
+            "\(unreadCount) unread",
+            "\(starredCount) starred",
+            "\(totalEmailCount) total"
+        ].joined(separator: " · ")
+    }
+
     // MARK: - Health Properties
     
     private var healthIconName: String {
@@ -400,68 +381,3 @@ struct AccountSummaryCard: View {
         return dateFormatter.string(from: date)
     }
 }
-
-// MARK: - Premium Stat Badge
-
-struct PremiumStatBadge: View {
-    let icon: String
-    let count: Int
-    let label: String
-    let isHighlighted: Bool
-    let highlightColor: Color
-    var secondaryText: String? = nil
-    
-    private var displayColor: Color {
-        isHighlighted ? highlightColor : AppTheme.secondaryText.opacity(0.7)
-    }
-    
-    var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(displayColor)
-                
-                Text("\(count)")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(displayColor)
-            }
-            
-            if let secondary = secondaryText {
-                VStack(spacing: 2) {
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(AppTheme.secondaryText.opacity(0.6))
-                    Text(secondary)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(highlightColor.opacity(0.9))
-                }
-            } else {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppTheme.secondaryText.opacity(0.6))
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(
-                    isHighlighted
-                        ? highlightColor.opacity(0.08)
-                        : Color.white.opacity(0.03)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isHighlighted
-                                ? highlightColor.opacity(0.2)
-                                : Color.white.opacity(0.06),
-                            lineWidth: 1
-                        )
-                )
-        )
-        .contentShape(Rectangle())
-    }
-}
-

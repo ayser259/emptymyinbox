@@ -10,11 +10,6 @@ import UIKit
 import EmptyMyInboxShared
 
 struct DashboardView: View {
-    private enum BriefingTrigger {
-        case manual
-        case automatic
-    }
-
     @EnvironmentObject var authManager: AuthManager
     @Binding var isMenuPresented: Bool
     @State private var navigationPath = NavigationPath()
@@ -29,13 +24,13 @@ struct DashboardView: View {
     @StateObject private var progressTracker = RefreshProgressTracker()
     @State private var showProgressModal = false
     @State private var accountHealthStatuses: [String: AccountHealthStatus] = [:] // email -> status
-    @State private var showDailyBriefing = false
     @State private var dailyBriefingPayload: DailyBriefingPayload?
-    @State private var pendingAutoBriefing = false
-    @State private var showSummaryUpsell = false
     @State private var storiesCount = 0
-    @State private var isGeneratingBrief = false
-    private let persistedBriefingKey = "persistedDailyBriefingPayload"
+    @State private var recentStories: [InsightCard] = []
+    @State private var dashboardActionItems: [VaultActionItemRecord] = []
+    @State private var hasLLMKey = false
+    @State private var isBriefGenerating = false
+    @StateObject private var calendarModel = GoogleCalendarViewModel()
     
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -90,6 +85,16 @@ struct DashboardView: View {
                             navigationPath.append("llm_management")
                         }
                     )
+                case "daily_brief":
+                    DailyBriefingTabView(
+                        allEmails: allEmails,
+                        onItemTap: { item in
+                            navigationPath.append(item.emailId)
+                        },
+                        onOpenLLMSettings: {
+                            navigationPath.append("llm_management")
+                        }
+                    )
                 case "llm_management":
                     LLMManagementView()
                 default:
@@ -100,6 +105,9 @@ struct DashboardView: View {
         }
         .task {
             await loadInitialData()
+        }
+        .task {
+            await calendarModel.refreshIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cacheCleared)) { _ in
             Task { @MainActor in
@@ -119,11 +127,6 @@ struct DashboardView: View {
                 await refreshDashboard(shouldSync: true)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .appShouldShowDailyBriefing)) { _ in
-            Task { @MainActor in
-                pendingAutoBriefing = true
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
             // New account was added, refresh to show it immediately
             Task {
@@ -132,17 +135,13 @@ struct DashboardView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            Task {
-                let hasKey = await LLMSettingsStore.shared.hasAPIKey()
-                await MainActor.run {
-                    if hasKey {
-                        showSummaryUpsell = false
-                    }
-                }
-                if hasKey, pendingAutoBriefing {
-                    await presentDailyBriefingIfPending()
-                }
-            }
+            Task { await refreshBriefBadgeFromPersisted() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task { await refreshBriefBadgeFromPersisted() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .briefingPayloadDidPersist)) { _ in
+            Task { await refreshBriefBadgeFromPersisted() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .emailMetadataLoaded)) { notification in
             // CatchUp loaded new email data - update our counts
@@ -183,79 +182,125 @@ struct DashboardView: View {
                 }
             }
         }
-        .sheet(isPresented: $showProgressModal) {
-            RefreshProgressModal(progressTracker: progressTracker)
-        }
-        .sheet(isPresented: $showDailyBriefing) {
-            if let payload = dailyBriefingPayload {
-                DailyBriefingSheet(
-                    payload: payload,
-                    onItemTap: { item in
-                        showDailyBriefing = false
-                        navigationPath.append(item.emailId)
-                        saveLastBriefingCheckDate()
-                    },
-                    onDismiss: {
-                        showDailyBriefing = false
-                        saveLastBriefingCheckDate()
-                    }
-                )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
+            Task {
+                await calendarModel.refreshIfNeeded()
             }
         }
-        .sheet(isPresented: $showSummaryUpsell) {
-            LLMUpsellView(
-                title: "Unlock AI Summary",
-                subtitle: "Add your OpenAI API key to enable the Daily Executive Summary.",
-                actionTitle: "Add API Key",
-                onAction: {
-                    showSummaryUpsell = false
-                    navigationPath.append("llm_management")
-                }
-            )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showProgressModal) {
+            RefreshProgressModal(progressTracker: progressTracker)
         }
     }
 
     @ViewBuilder
     private var content: some View {
+        VStack(spacing: 0) {
+            topBarSection
+
+            VaultRefreshStatusLabel(font: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingSmall)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    feedColumnScroll
+                        .frame(maxWidth: .infinity)
+                    calendarSidebarScroll
+                        .frame(width: 280)
+                }
+                .padding(.horizontal, AppTheme.spacingMedium)
+
+                VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
+                    feedColumnScroll
+                    calendarSidebarScroll
+                }
+                .padding(.horizontal, AppTheme.spacingMedium)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Left column: greeting + widgets + quick actions + account-grouped inbox cards.
+    private var feedColumnScroll: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                topBarSection
-                
+            VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+                // Greeting
+                DashboardGreetingSection(name: firstName)
+                    .padding(.top, AppTheme.spacingSmall)
+
+                // Brief + Action Items side by side
+                HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
+                    DashboardDailyBriefCard(
+                        payload: dailyBriefingPayload,
+                        hasLLMKey: hasLLMKey,
+                        isGenerating: isBriefGenerating,
+                        onRefresh: { refreshBrief() },
+                        onOpenLLMSettings: {
+                            navigationPath.append("llm_management")
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    DashboardActionItemsCard(
+                        items: dashboardActionItems,
+                        isVaultReady: VaultManager.shared.isVaultReady
+                    )
+                    .frame(width: 160)
+                }
+
+                // Account Updates
+                DashboardAccountUpdatesCard(
+                    unreadCount: unreadCount,
+                    starredCount: starredEmails.count
+                )
+
+                // Stories Feed
+                DashboardStoriesFeedCard(stories: recentStories)
+
+                // Quick action buttons
                 actionButtonsSection
-                    .padding(.bottom, AppTheme.spacingMedium)
-                
+                    .padding(.top, AppTheme.spacingSmall)
+
+                // Inbox feed header + account cards
+                inboxFeedHeader
+                    .padding(.top, AppTheme.spacingSmall)
+                    .padding(.bottom, AppTheme.spacingSmall)
+
                 accountSummaryCards
                     .padding(.bottom, AppTheme.spacingLarge)
-                
+
                 Spacer()
-                    .frame(height: 100)
+                    .frame(height: 40)
             }
-            .padding(.horizontal, AppTheme.spacingMedium)
         }
         .refreshable {
             await refreshDashboard(shouldSync: true)
         }
     }
 
+    /// Right column: mini month + upcoming events.
+    private var calendarSidebarScroll: some View {
+        ScrollView {
+            DashboardCalendarSidebar(model: calendarModel)
+        }
+    }
+
+    private var inboxFeedHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Inbox feed")
+                .font(AppTheme.title3.weight(.semibold))
+                .primaryText()
+            Text("By account")
+                .font(AppTheme.caption)
+                .secondaryText()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var topBarSection: some View {
         MainAppTopBar(center: {
-            Group {
-                if let firstAccount = authManager.accounts.first {
-                    ScrollingText(
-                        text: greetingText(for: firstAccount),
-                        font: AppTheme.headline
-                    )
-                    .frame(maxWidth: .infinity)
-                } else {
-                    Text(greeting)
-                        .font(AppTheme.headline)
-                        .primaryText()
-                }
-            }
+            EmptyView()
         }, onMenuTap: {
             isMenuPresented = true
         })
@@ -286,18 +331,15 @@ struct DashboardView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
 
-                Button {
-                    Task { await presentDailyBriefing(trigger: .manual) }
-                } label: {
+                NavigationLink(value: "daily_brief") {
                     ActionButton(
                         title: "Brief",
                         count: dailyBriefingPayload?.items.count ?? 0,
                         icon: "sparkles",
-                        badgeText: isGeneratingBrief ? "..." : nil
+                        badgeText: nil
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(isGeneratingBrief)
                 
                 NavigationLink(value: "all_emails") {
                     ActionButton(
@@ -410,11 +452,6 @@ struct DashboardView: View {
 
     private var accountSummaryCards: some View {
         VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-            Text("Accounts")
-                .font(AppTheme.title3)
-                .primaryText()
-                .padding(.horizontal, AppTheme.spacingMedium)
-            
             if isLoading && accounts.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity)
@@ -434,7 +471,6 @@ struct DashboardView: View {
                             unreadCount: getUnreadCount(for: account),
                             starredCount: getStarredCount(for: account),
                             totalEmailCount: getTotalEmailCount(for: account),
-                            senderCount: getSenderCount(for: account),
                             unreadSenderCount: getUnreadSenderCount(for: account),
                             lastRefreshTime: getLastRefreshTime(for: account),
                             healthStatus: accountHealthStatuses[account.email],
@@ -462,12 +498,6 @@ struct DashboardView: View {
     
     private func getTotalEmailCount(for account: EmailAccount) -> Int {
         allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }.count
-    }
-    
-    private func getSenderCount(for account: EmailAccount) -> Int {
-        let accountEmails = allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() }
-        let uniqueSenders = Set(accountEmails.map { $0.sender })
-        return uniqueSenders.count
     }
     
     private func getUnreadSenderCount(for account: EmailAccount) -> Int {
@@ -499,6 +529,11 @@ struct DashboardView: View {
         default:
             return "Good night"
         }
+    }
+
+    private var firstName: String? {
+        guard let fullName = authManager.accounts.first?.name, !fullName.isEmpty else { return nil }
+        return fullName.components(separatedBy: " ").first
     }
     
     private func greetingText(for account: GmailAccount) -> String {
@@ -562,7 +597,10 @@ struct DashboardView: View {
     private func loadInitialData() async {
         await AccountInclusionStore.shared.refreshFromConnectedAccounts()
         await refreshStoriesCount()
-        await loadPersistedDailyBriefing()
+        await refreshBriefBadgeFromPersisted()
+        await refreshLLMKeyStatus()
+        await loadRecentStories()
+        await loadDashboardActionItems()
 
         // First, quickly show any cached data
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
@@ -622,6 +660,9 @@ struct DashboardView: View {
         }
         
         do {
+            if shouldSync {
+                await VaultManager.shared.performLifecycleSync(postNotification: false)
+            }
             if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync, progressCallback: progressCallback) {
                 // Get health statuses after refresh
                 let healthStatuses = await DashboardDataManager.shared.getAccountHealth()
@@ -641,7 +682,11 @@ struct DashboardView: View {
                 }
 
                 await refreshStoriesCount()
-                await presentDailyBriefingIfPending()
+                await refreshBriefBadgeFromPersisted()
+                await refreshLLMKeyStatus()
+                await loadRecentStories()
+                await loadDashboardActionItems()
+                await calendarModel.refreshIfNeeded()
             } else {
                 logWarning("refreshData returned nil", category: "Dashboard")
             }
@@ -669,83 +714,6 @@ struct DashboardView: View {
         self.lastRefreshTime = snapshot.timestamp
     }
 
-    private func presentDailyBriefingIfPending() async {
-        let currentlyGenerating = await MainActor.run { isGeneratingBrief }
-        if currentlyGenerating { return }
-        let shouldPresent = await MainActor.run { pendingAutoBriefing }
-        guard shouldPresent else { return }
-        await presentDailyBriefing(trigger: .automatic)
-    }
-
-    private func presentDailyBriefing(trigger: BriefingTrigger) async {
-        let startedAt = Date()
-        let triggerLabel: String
-        switch trigger {
-        case .manual:
-            triggerLabel = "manual"
-        case .automatic:
-            triggerLabel = "automatic"
-        }
-        Telemetry.event("daily_briefing.generate.started", metadata: ["trigger": triggerLabel])
-        await MainActor.run { isGeneratingBrief = true }
-
-        let hasKey = await LLMSettingsStore.shared.hasAPIKey()
-        guard hasKey else {
-            await MainActor.run {
-                showSummaryUpsell = true
-                isGeneratingBrief = false
-            }
-            Telemetry.event("daily_briefing.generate.blocked_no_key", metadata: ["trigger": triggerLabel])
-            return
-        }
-
-        let shouldReusePersisted: Bool = await MainActor.run {
-            if case .manual = trigger {
-                return !pendingAutoBriefing && dailyBriefingPayload != nil
-            }
-            return false
-        }
-        if shouldReusePersisted {
-            await MainActor.run {
-                showDailyBriefing = true
-                isGeneratingBrief = false
-            }
-            Telemetry.event("daily_briefing.generate.reused_cached", metadata: ["trigger": triggerLabel])
-            return
-        }
-
-        let sinceDate = lastBriefingCheckDate()
-        let payload = await DailyBriefingEngine.shared.buildPayload(from: allEmails, sinceDate: sinceDate)
-        await persistDailyBriefing(payload)
-        await MainActor.run {
-            dailyBriefingPayload = payload
-            showDailyBriefing = true
-            if case .automatic = trigger {
-                pendingAutoBriefing = false
-                markAutoBriefingShownToday()
-            }
-            isGeneratingBrief = false
-        }
-        Telemetry.event("daily_briefing.generate.presented", metadata: [
-            "trigger": triggerLabel,
-            "item_count": "\(payload.items.count)",
-            "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
-        ])
-    }
-
-    private func saveLastBriefingCheckDate() {
-        UserDefaults.standard.set(Date(), forKey: "lastDailyBriefingCheckDate")
-    }
-
-    private func lastBriefingCheckDate() -> Date? {
-        UserDefaults.standard.object(forKey: "lastDailyBriefingCheckDate") as? Date
-    }
-
-    private func markAutoBriefingShownToday() {
-        let today = Calendar.current.startOfDay(for: Date())
-        UserDefaults.standard.set(today, forKey: "lastBriefingShownDate")
-    }
-
     private func refreshStoriesCount() async {
         let count = await StoriesFeedStore.shared.stories().count
         await MainActor.run {
@@ -753,9 +721,19 @@ struct DashboardView: View {
         }
     }
 
-    private func loadPersistedDailyBriefing() async {
-        guard let data = UserDefaults.standard.data(forKey: persistedBriefingKey),
+    private func refreshBriefBadgeFromPersisted() async {
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        guard hasKey else {
+            await MainActor.run {
+                dailyBriefingPayload = nil
+            }
+            return
+        }
+        guard let data = UserDefaults.standard.data(forKey: DailyBriefingDefaults.persistedPayloadKey),
               let payload = try? JSONDecoder().decode(DailyBriefingPayload.self, from: data) else {
+            await MainActor.run {
+                dailyBriefingPayload = nil
+            }
             return
         }
         await MainActor.run {
@@ -763,12 +741,42 @@ struct DashboardView: View {
         }
     }
 
-    private func persistDailyBriefing(_ payload: DailyBriefingPayload) async {
-        if let data = try? JSONEncoder().encode(payload) {
-            UserDefaults.standard.set(data, forKey: persistedBriefingKey)
+    private func refreshLLMKeyStatus() async {
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        await MainActor.run { hasLLMKey = hasKey }
+    }
+
+    private func loadRecentStories() async {
+        let stories = await StoriesFeedStore.shared.stories()
+        await MainActor.run {
+            recentStories = Array(stories.prefix(3))
         }
     }
-    
+
+    private func loadDashboardActionItems() async {
+        guard VaultManager.shared.isVaultReady else { return }
+        let items = (try? await VaultManager.shared.listActionItems()) ?? []
+        await MainActor.run {
+            dashboardActionItems = ActionItemsFeatureModel.defaultSorted(items)
+        }
+    }
+
+    private func refreshBrief() {
+        Task {
+            guard hasLLMKey else { return }
+            await MainActor.run { isBriefGenerating = true }
+            let built = await DailyBriefingEngine.shared.buildPayload(from: allEmails, sinceDate: nil)
+            if let data = try? JSONEncoder().encode(built) {
+                UserDefaults.standard.set(data, forKey: DailyBriefingDefaults.persistedPayloadKey)
+            }
+            NotificationCenter.default.post(name: .briefingPayloadDidPersist, object: nil)
+            await MainActor.run {
+                dailyBriefingPayload = built
+                isBriefGenerating = false
+            }
+        }
+    }
+
     private func refreshAccount(accountEmail: String) async {
         if let snapshot = await DashboardDataManager.shared.refreshData(forAccountEmail: accountEmail, shouldSync: true) {
             await MainActor.run {

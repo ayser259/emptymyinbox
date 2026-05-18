@@ -7,6 +7,8 @@
 
 import Foundation
 
+extension EmailDetail: Identifiable {}
+
 public extension EmailDetail {
     public func updating(
         isRead: Bool? = nil,

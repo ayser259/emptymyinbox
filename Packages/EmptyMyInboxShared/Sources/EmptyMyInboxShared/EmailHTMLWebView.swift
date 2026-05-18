@@ -20,17 +20,25 @@ public struct EmailHTMLWebView: View {
     public let isDarkMode: Bool
     public var contentWidth: CGFloat?
     public var onLoadComplete: (() -> Void)?
+    /// macOS only: each time this counter increments the web view scrolls by `scrollStepAmount` points.
+    /// Positive = scroll down, negative = scroll up.
+    public var scrollSignal: Int = 0
+    public var scrollStepAmount: CGFloat = 0
 
     public init(
         htmlContent: String,
         isDarkMode: Bool,
         contentWidth: CGFloat? = nil,
-        onLoadComplete: (() -> Void)? = nil
+        onLoadComplete: (() -> Void)? = nil,
+        scrollSignal: Int = 0,
+        scrollStepAmount: CGFloat = 0
     ) {
         self.htmlContent = htmlContent
         self.isDarkMode = isDarkMode
         self.contentWidth = contentWidth
         self.onLoadComplete = onLoadComplete
+        self.scrollSignal = scrollSignal
+        self.scrollStepAmount = scrollStepAmount
     }
 
     public var body: some View {
@@ -44,6 +52,8 @@ public struct EmailHTMLWebView: View {
         EmailHTMLWebViewMac(
             htmlContent: htmlContent,
             isDarkMode: isDarkMode,
+            scrollSignal: scrollSignal,
+            scrollStepAmount: scrollStepAmount,
             onLoadComplete: onLoadComplete
         )
         #else
@@ -149,26 +159,32 @@ enum EmailHTMLRenderer {
     }
 
     private static func getCommonStyles(isDarkMode: Bool) -> String {
-        "* { max-width: 100% !important; box-sizing: border-box !important; overflow-wrap: break-word !important; word-wrap: break-word !important; }" +
-            "html, body { width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; overflow-y: auto !important; }" +
-            "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; " +
+        // Use box-sizing universally but avoid blanket max-width/overflow-x overrides that clip
+        // embedded images and break table-based email layouts.
+        "*, *::before, *::after { box-sizing: border-box; }" +
+            "html { overflow-x: hidden; }" +
+            "html, body { width: 100%; margin: 0 !important; padding: 0 !important; }" +
+            "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; " +
+            "font-size: 15px; line-height: 1.6; " +
             "color: \(isDarkMode ? "#ffffff" : "#000000"); background-color: \(isDarkMode ? "#252525" : "#ffffff"); " +
-            "-webkit-text-size-adjust: 100%; word-wrap: break-word; overflow-wrap: break-word; text-align: center; " +
-            "display: flex; justify-content: center; align-items: flex-start; }" +
-            "#email-container { width: 100% !important; max-width: 100% !important; margin: 0 auto; padding: 0; text-align: center; overflow-x: hidden !important; }" +
-            "img { max-width: 100% !important; width: auto !important; height: auto !important; display: block; margin: 0 auto; }" +
-            "table { max-width: 100% !important; width: 100% !important; table-layout: fixed !important; word-wrap: break-word; overflow-wrap: break-word; }" +
-            "td, th { max-width: 100% !important; word-wrap: break-word !important; overflow-wrap: break-word !important; }" +
-            "div, p, span, section, article, header, footer, main, aside, nav { max-width: 100% !important; overflow-x: hidden !important; word-wrap: break-word !important; overflow-wrap: break-word !important; }" +
-            "a { color: \(isDarkMode ? "#667eea" : "#0066cc"); word-break: break-all; max-width: 100% !important; }" +
+            "-webkit-text-size-adjust: 100%; word-wrap: break-word; overflow-wrap: break-word; overflow-x: hidden; }" +
+            "#email-container { width: 100%; margin: 0 auto; padding: 0; overflow-x: hidden; }" +
+            // Images: constrain to container width, preserve aspect ratio, never clip
+            "img { max-width: 100% !important; height: auto !important; display: inline-block; }" +
+            // Tables: fit container without forcing fixed-layout (fixed breaks column widths in marketing emails)
+            "table { max-width: 100% !important; border-collapse: collapse; word-wrap: break-word; overflow-wrap: break-word; }" +
+            "td, th { word-wrap: break-word; overflow-wrap: break-word; }" +
+            // Block-level elements: prevent horizontal scrollbar but don't clip inline/table children
+            "div, p, section, article, header, footer, main, aside, nav, blockquote { max-width: 100%; word-wrap: break-word; overflow-wrap: break-word; }" +
+            "a { color: \(isDarkMode ? "#667eea" : "#0066cc"); word-break: break-all; }" +
             "blockquote { border-left: 3px solid \(isDarkMode ? "#666666" : "#cccccc"); margin: 0; padding-left: 12px; " +
-            "color: \(isDarkMode ? "#999999" : "#666666"); word-wrap: break-word; max-width: 100% !important; overflow-x: hidden !important; }" +
-            "pre { background-color: \(isDarkMode ? "#1a1a1a" : "#f5f5f5"); padding: 8px; border-radius: 4px; overflow-x: auto; " +
-            "word-wrap: break-word; white-space: pre-wrap; max-width: 100% !important; }" +
-            "code { word-wrap: break-word; overflow-wrap: break-word; max-width: 100% !important; }" +
-            "iframe, embed, object { max-width: 100% !important; width: 100% !important; }" +
-            "[style*='width'] { max-width: 100% !important; }" +
-            "[style*='min-width'] { min-width: 0 !important; }"
+            "color: \(isDarkMode ? "#999999" : "#666666"); }" +
+            "pre { background-color: \(isDarkMode ? "#1a1a1a" : "#f5f5f5"); padding: 8px; border-radius: 4px; " +
+            "overflow-x: auto; white-space: pre-wrap; max-width: 100%; }" +
+            "code { word-wrap: break-word; overflow-wrap: break-word; }" +
+            "iframe, embed, object { max-width: 100% !important; }" +
+            // Prevent absurdly wide min-width declarations from forcing horizontal scroll
+            "* { min-width: 0 !important; }"
     }
 
     static func applyWebViewChrome(_ webView: WKWebView, isDarkMode: Bool) {
@@ -288,18 +304,28 @@ private struct EmailHTMLWebViewIOS: UIViewRepresentable {
         private static let widthInjectionScript = """
         (function() {
             var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            // Pin the viewport to the actual view width so emails with narrow mobile viewports
+            // (e.g. width=320) are not scaled up to fill the container.
             var meta = document.querySelector('meta[name="viewport"]');
             if (meta) {
                 meta.content = 'width=' + viewportWidth + ', initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
             }
-            var allElements = document.querySelectorAll('*');
-            for (var i = 0; i < allElements.length; i++) {
-                var el = allElements[i];
-                if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'META') { continue; }
-                el.style.maxWidth = '100%';
-                el.style.boxSizing = 'border-box';
-                el.style.overflowX = 'hidden';
+            // Scale images down to fit; keep aspect ratio intact.
+            var images = document.querySelectorAll('img');
+            for (var i = 0; i < images.length; i++) {
+                images[i].style.maxWidth = '100%';
+                images[i].style.height = 'auto';
             }
+            // Remove hard-coded pixel widths on tables that would cause horizontal overflow.
+            var tables = document.querySelectorAll('table');
+            for (var i = 0; i < tables.length; i++) {
+                var tw = tables[i].getAttribute('width');
+                if (tw && parseInt(tw, 10) > viewportWidth) {
+                    tables[i].removeAttribute('width');
+                    tables[i].style.maxWidth = '100%';
+                }
+            }
+            // Prevent horizontal scrollbar at root only — not on every element, which clips images.
             document.body.style.overflowX = 'hidden';
             document.documentElement.style.overflowX = 'hidden';
         })();
@@ -312,6 +338,8 @@ private struct EmailHTMLWebViewIOS: UIViewRepresentable {
 private struct EmailHTMLWebViewMac: NSViewRepresentable {
     let htmlContent: String
     let isDarkMode: Bool
+    var scrollSignal: Int = 0
+    var scrollStepAmount: CGFloat = 0
     var onLoadComplete: (() -> Void)?
 
     func makeNSView(context: Context) -> WKWebView {
@@ -323,6 +351,8 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
             webView.configuration.defaultWebpagePreferences = preferences
         }
         webView.navigationDelegate = context.coordinator
+        webView.magnification = 1.0
+        webView.allowsMagnification = false
         EmailHTMLRenderer.applyWebViewChrome(webView, isDarkMode: isDarkMode)
         if let scroll = webView.enclosingScrollView {
             scroll.hasHorizontalScroller = false
@@ -336,7 +366,18 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
         EmailHTMLRenderer.applyWebViewChrome(webView, isDarkMode: isDarkMode)
         if context.coordinator.lastLoadedContent != htmlContent {
             context.coordinator.lastLoadedContent = htmlContent
+            webView.magnification = 1.0
             EmailHTMLRenderer.loadHTMLContent(into: webView, isDarkMode: isDarkMode, htmlContent: htmlContent)
+        }
+        // Arrow-key scroll: fire when the signal counter increments
+        if scrollSignal != context.coordinator.lastScrollSignal {
+            context.coordinator.lastScrollSignal = scrollSignal
+            if scrollStepAmount != 0 {
+                webView.evaluateJavaScript(
+                    "window.scrollBy({top: \(scrollStepAmount), behavior: 'smooth'})",
+                    completionHandler: nil
+                )
+            }
         }
     }
 
@@ -349,8 +390,10 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var onLoadComplete: (() -> Void)?
         var lastLoadedContent: String = ""
+        var lastScrollSignal: Int = 0
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript(Self.viewportFixScript, completionHandler: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.onLoadComplete?()
             }
@@ -379,6 +422,38 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
                 logError("EmailHTMLWebView: \(error.localizedDescription)", category: "UI")
             }
         }
+
+        // Pin the viewport to the actual view width so emails that declare a narrow
+        // mobile viewport (e.g. width=320) are not scaled up to fill the card.
+        // Surgically targets images and oversized tables only — avoids blasting
+        // overflow:hidden onto every element, which clips embedded images.
+        private static let viewportFixScript = """
+        (function() {
+            var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            var meta = document.querySelector('meta[name="viewport"]');
+            if (meta) {
+                meta.content = 'width=' + viewportWidth + ', initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            }
+            // Scale images down to fit; keep aspect ratio intact.
+            var images = document.querySelectorAll('img');
+            for (var i = 0; i < images.length; i++) {
+                images[i].style.maxWidth = '100%';
+                images[i].style.height = 'auto';
+            }
+            // Remove hard-coded pixel widths on tables wider than the viewport.
+            var tables = document.querySelectorAll('table');
+            for (var i = 0; i < tables.length; i++) {
+                var tw = tables[i].getAttribute('width');
+                if (tw && parseInt(tw, 10) > viewportWidth) {
+                    tables[i].removeAttribute('width');
+                    tables[i].style.maxWidth = '100%';
+                }
+            }
+            // Prevent horizontal scrollbar at root only.
+            document.body.style.overflowX = 'hidden';
+            document.documentElement.style.overflowX = 'hidden';
+        })();
+        """
     }
 }
 #endif
