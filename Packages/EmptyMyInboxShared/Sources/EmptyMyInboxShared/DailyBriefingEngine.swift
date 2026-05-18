@@ -5,19 +5,36 @@ public actor DailyBriefingEngine {
 
     public func buildPayload(from emails: [EmailListItem], sinceDate: Date?) async -> DailyBriefingPayload {
         let startedAt = Date()
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        guard hasKey else {
+            Telemetry.event("daily_briefing.generate.completed", metadata: [
+                "candidate_count": "0",
+                "included_count": "0",
+                "item_count": "0",
+                "has_key": "false",
+                "classification_failure_count": "0",
+                "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
+            ])
+            return DailyBriefingPayload(
+                generatedAt: Date(),
+                sinceDate: sinceDate,
+                introText: "I've monitored your selected accounts. Here are the top things to know since you last checked.",
+                items: []
+            )
+        }
+
         let includedEmails = await includedAccounts(from: emails)
         let filtered = filterRelevantEmails(from: includedEmails, sinceDate: sinceDate)
         let topItems = Array(filtered.prefix(8))
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        let classificationResult = await classifyEmails(topItems, hasKey: hasKey)
+        let classificationResult = await classifyEmails(topItems)
         let briefingItems = classificationResult.items
 
         Telemetry.event("daily_briefing.generate.completed", metadata: [
             "candidate_count": "\(filtered.count)",
             "included_count": "\(topItems.count)",
             "item_count": "\(briefingItems.count)",
-            "has_key": "\(hasKey)",
-            "fallback_count": "\(classificationResult.fallbackCount)",
+            "has_key": "true",
+            "classification_failure_count": "\(classificationResult.failureCount)",
             "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
         ])
         return DailyBriefingPayload(
@@ -28,31 +45,14 @@ public actor DailyBriefingEngine {
         )
     }
 
-    private func classifyEmails(_ emails: [EmailListItem], hasKey: Bool) async -> (items: [DailyBriefingItem], fallbackCount: Int) {
+    private func classifyEmails(_ emails: [EmailListItem]) async -> (items: [DailyBriefingItem], failureCount: Int) {
         guard !emails.isEmpty else { return ([], 0) }
-        if !hasKey {
-            return (emails.map { item in
-                DailyBriefingItem(
-                    id: item.id,
-                    emailId: item.id,
-                    gmailId: item.gmail_id,
-                    threadId: nil,
-                    accountEmail: item.account_email,
-                    sender: item.sender,
-                    senderName: item.sender_name,
-                    subject: item.subject,
-                    snippet: item.snippet,
-                    receivedAt: item.received_at,
-                    type: classifyType(for: item)
-                )
-            }, 0)
-        }
 
         let maxConcurrent = 3
         var results = Array<DailyBriefingItem?>(repeating: nil, count: emails.count)
-        var fallbackCount = 0
+        var failureCount = 0
 
-        await withTaskGroup(of: (Int, DailyBriefingItem, Bool).self) { group in
+        await withTaskGroup(of: (Int, DailyBriefingItem?).self) { group in
             var nextIndex = 0
 
             func enqueueTask() {
@@ -62,7 +62,6 @@ public actor DailyBriefingEngine {
                 nextIndex += 1
                 group.addTask {
                     let type: BriefingItemType
-                    var usedFallback = false
                     do {
                         type = try await LLMProviderRouter.shared.classifyBriefingItem(
                             subject: email.subject,
@@ -70,8 +69,7 @@ public actor DailyBriefingEngine {
                             sender: email.sender
                         )
                     } catch {
-                        type = self.classifyType(for: email)
-                        usedFallback = true
+                        return (index, nil)
                     }
                     let item = DailyBriefingItem(
                         id: email.id,
@@ -86,7 +84,7 @@ public actor DailyBriefingEngine {
                         receivedAt: email.received_at,
                         type: type
                     )
-                    return (index, item, usedFallback)
+                    return (index, item)
                 }
             }
 
@@ -94,16 +92,17 @@ public actor DailyBriefingEngine {
                 enqueueTask()
             }
 
-            while let (index, item, usedFallback) = await group.next() {
-                results[index] = item
-                if usedFallback {
-                    fallbackCount += 1
+            while let (index, item) = await group.next() {
+                if let item {
+                    results[index] = item
+                } else {
+                    failureCount += 1
                 }
                 enqueueTask()
             }
         }
 
-        return (results.compactMap { $0 }, fallbackCount)
+        return (results.compactMap { $0 }, failureCount)
     }
 
     private func includedAccounts(from emails: [EmailListItem]) async -> [EmailListItem] {
@@ -143,23 +142,6 @@ public actor DailyBriefingEngine {
             return true
         }
         return false
-    }
-
-    nonisolated private func classifyType(for email: EmailListItem) -> BriefingItemType {
-        let subject = email.subject.lowercased()
-        let sender = email.sender.lowercased()
-        let snippet = email.snippet.lowercased()
-
-        if subject.contains("invite") || subject.contains("meeting") || sender.contains("calendar") {
-            return .calendarInvite
-        }
-        if subject.contains("urgent")
-            || subject.contains("action required")
-            || subject.contains("security alert")
-            || snippet.contains("immediately") {
-            return .urgentNotification
-        }
-        return .directCommunication
     }
 
     private func isoDate(from value: String) -> Date? {

@@ -94,6 +94,7 @@ public struct DailyBriefingTabView: View {
         }
 
         guard hasKey else {
+            UserDefaults.standard.removeObject(forKey: DailyBriefingDefaults.persistedPayloadKey)
             await MainActor.run {
                 isLoading = false
                 payload = nil

@@ -293,6 +293,11 @@ struct MacUnifiedDashboardView: View {
     }
 
     private func refreshBriefBadge() async {
+        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        guard hasKey else {
+            await MainActor.run { dailyBriefingPayload = nil }
+            return
+        }
         guard let data = UserDefaults.standard.data(forKey: DailyBriefingDefaults.persistedPayloadKey),
               let payload = try? JSONDecoder().decode(DailyBriefingPayload.self, from: data) else {
             await MainActor.run { dailyBriefingPayload = nil }
