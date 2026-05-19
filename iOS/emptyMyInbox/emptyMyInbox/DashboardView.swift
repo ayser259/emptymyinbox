@@ -58,6 +58,8 @@ struct DashboardView: View {
                 switch destination {
                 case "all_emails":
                     AllEmailsView()
+                case "all_unread":
+                    MailboxListView(scope: .allUnread)
                 case "starred":
                     StarredEmailsView()
                 case "catch_up":
@@ -325,6 +327,15 @@ struct DashboardView: View {
                         title: "All emails",
                         count: allEmails.count,
                         icon: "envelope"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                NavigationLink(value: "all_unread") {
+                    ActionButton(
+                        title: "All unread",
+                        count: emails.count,
+                        icon: "envelope.badge"
                     )
                 }
                 .buttonStyle(PlainButtonStyle())

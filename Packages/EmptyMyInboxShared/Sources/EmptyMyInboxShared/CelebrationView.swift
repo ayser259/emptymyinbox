@@ -22,6 +22,7 @@ public struct CatchUpSessionStats: Sendable {
     public var potentialUnsubscribeSenders: Set<String> = []
     /// Successful automated unsubscribes in this session.
     public var successfulUnsubscribes: Int = 0
+    public var repliesSent: Int = 0
 
     public init(
         reviewed: Int = 0,
@@ -31,7 +32,8 @@ public struct CatchUpSessionStats: Sendable {
         uniqueUnsubscribeDomains: Set<String> = [],
         reviewedSenders: Set<String> = [],
         potentialUnsubscribeSenders: Set<String> = [],
-        successfulUnsubscribes: Int = 0
+        successfulUnsubscribes: Int = 0,
+        repliesSent: Int = 0
     ) {
         self.reviewed = reviewed
         self.markedAsRead = markedAsRead
@@ -41,6 +43,7 @@ public struct CatchUpSessionStats: Sendable {
         self.reviewedSenders = reviewedSenders
         self.potentialUnsubscribeSenders = potentialUnsubscribeSenders
         self.successfulUnsubscribes = successfulUnsubscribes
+        self.repliesSent = repliesSent
     }
 }
 

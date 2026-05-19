@@ -30,6 +30,12 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Brief", shortcutDisplay: "⌥B"),
     ]
 
+    /// Mail — reading a message in a mailbox (inbox list + detail).
+    public static let mailMailboxDetail: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Reply", shortcutDisplay: "R"),
+        SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
+    ]
+
     /// Calendar tab — Calendar or Starred tools.
     public static let calendarModes: [SettingsShortcutReference] = [
         SettingsShortcutReference(title: "Events", shortcutDisplay: "E"),
@@ -43,8 +49,16 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Keep unread", shortcutDisplay: "K"),
         SettingsShortcutReference(title: "Star", shortcutDisplay: "S"),
         SettingsShortcutReference(title: "Mark as read", shortcutDisplay: "E"),
-        SettingsShortcutReference(title: "Reply", shortcutDisplay: "⌘R"),
+        SettingsShortcutReference(title: "Reply", shortcutDisplay: "R"),
+        SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
         SettingsShortcutReference(title: "Unsubscribe", shortcutDisplay: "⌘⇧U"),
+    ]
+
+    /// Mail — Reply composer (when composing a reply).
+    public static let mailReplyComposer: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Quick Reply", shortcutDisplay: "⌥Q"),
+        SettingsShortcutReference(title: "Save draft", shortcutDisplay: "⌘S"),
+        SettingsShortcutReference(title: "Send", shortcutDisplay: "⌘↩"),
     ]
 
     /// Action Items tab — sidebar hints.

@@ -21,7 +21,7 @@ struct EmailDetailView: View {
     @State private var unsubscribeToastIsSuccess = false
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
-    @State private var replyComposerEmail: EmailDetail?
+    @State private var replyPresentation: ReplyComposerPresentation?
     @ObservedObject private var debugSettings = DebugSettings.shared
     
     var body: some View {
@@ -155,38 +155,12 @@ struct EmailDetailView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         
-                        // Bottom action bar with scrollable buttons
-                        ScrollableEmailActionBar(
-                            email: email,
-                            isProcessing: isProcessing,
-                            showReply: true,
-                            onReply: {
-                                await handleReply()
-                            },
-                            onStar: {
-                                await handleStar()
-                            },
-                            onKeepUnread: {
-                                await handleKeepUnread()
-                            },
-                            onMarkAsRead: {
-                                await handleMarkAsRead()
-                            },
-                            onUnsubscribe: {
-                                await handleUnsubscribe()
-                            },
-                            hasUnsubscribe: hasUnsubscribeAvailable
+                        EmailReadingActionBar(
+                            email: self.email,
+                            isDisabled: isProcessing,
+                            hasUnsubscribe: $hasUnsubscribeAvailable,
+                            handlers: emailReadingHandlers
                         )
-                        .onChange(of: self.email?.id) { _, _ in
-                            // Check unsubscribe availability when email changes
-                            Task {
-                                await checkUnsubscribeAvailability()
-                            }
-                        }
-                        .task {
-                            // Check on initial load
-                            await checkUnsubscribeAvailability()
-                        }
                     }
                     
                     // Debug copy button overlay
@@ -233,8 +207,12 @@ struct EmailDetailView: View {
                 UnsubscribeWebView(url: url)
             }
         }
-        .sheet(item: $replyComposerEmail) { email in
-            EmailReplyComposerView(email: email)
+        .sheet(item: $replyPresentation) { presentation in
+            EmailReplyComposerView(
+                email: presentation.email,
+                mode: presentation.mode,
+                isCatchUpContext: presentation.isCatchUpContext
+            )
         }
         .task {
             await loadEmail()
@@ -311,10 +289,21 @@ struct EmailDetailView: View {
         }
     }
     
-    private func handleReply() async {
+    private var emailReadingHandlers: EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { Task { await handleReply(mode: .reply) } },
+            onReplyAll: { Task { await handleReply(mode: .replyAll) } },
+            onStar: { Task { await handleStar() } },
+            onMarkUnread: { Task { await handleKeepUnread() } },
+            onMarkAsRead: { Task { await handleMarkAsRead() } },
+            onUnsubscribe: { Task { await handleUnsubscribe() } }
+        )
+    }
+
+    private func handleReply(mode: ReplyMode) async {
         guard let email else { return }
         await MainActor.run {
-            replyComposerEmail = email
+            replyPresentation = ReplyComposerPresentation(email: email, mode: mode)
         }
     }
     
@@ -397,26 +386,6 @@ struct EmailDetailView: View {
         if let updatedEmail = self.email {
             await EmailCache.shared.saveEmailDetail(updatedEmail)
             await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        }
-    }
-    
-    private func checkUnsubscribeAvailability() async {
-        guard let email = email else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
-            return
-        }
-        
-        let unsubscribeService = UnsubscribeService.shared
-        if let _ = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            await MainActor.run {
-                hasUnsubscribeAvailable = true
-            }
-        } else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
         }
     }
     

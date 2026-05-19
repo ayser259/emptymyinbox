@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var lastCalendarRefreshAt: Date?
     @State private var lastActionItemsRefreshAt: Date?
     @State private var dashboardActionItems: [VaultActionItemRecord] = []
+    @StateObject private var sidebarShortcutsStore = MacSidebarShortcutsStore()
 
     private var sidebarRefreshState: MacSidebarRefreshState {
         MacSidebarRefreshState(
@@ -77,6 +78,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
+        .environmentObject(sidebarShortcutsStore)
         .sheet(isPresented: $showVaultSettings) {
             NavigationStack {
                 MacVaultSettingsView()
@@ -160,17 +162,8 @@ struct ContentView: View {
         .background(MacAppTheme.primaryBackground)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker(selection: $rootTab) {
-                    ForEach(MacRootTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
-                    }
-                } label: {
-                    Text("Primary navigation")
-                }
-                .labelsHidden()
-                .accessibilityLabel("Primary navigation")
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 460)
+                MacRootTabBar(selection: $rootTab)
+                    .frame(minWidth: 420, idealWidth: 520, maxWidth: 560)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -204,6 +197,9 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .macRefreshCurrentRootTab)) { _ in
             Task { await refreshCurrentTab() }
+        }
+        .onChange(of: rootTab) { _, _ in
+            sidebarShortcutsStore.clearAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task { await loadDashboardActionItems() }

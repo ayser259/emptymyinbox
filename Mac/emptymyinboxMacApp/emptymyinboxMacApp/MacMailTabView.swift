@@ -15,7 +15,6 @@ private enum MailTool: String, CaseIterable, Identifiable {
     case catchUp
     case stories
     case brief
-    case saved
 
     var id: String { rawValue }
 
@@ -25,7 +24,6 @@ private enum MailTool: String, CaseIterable, Identifiable {
         case .catchUp: return "Catch Up"
         case .stories: return "Stories"
         case .brief: return "Brief"
-        case .saved: return "Saved"
         }
     }
 
@@ -35,7 +33,6 @@ private enum MailTool: String, CaseIterable, Identifiable {
         case .catchUp: return "tray.full"
         case .stories: return "rectangle.stack.fill"
         case .brief: return "sparkles"
-        case .saved: return "star.fill"
         }
     }
 }
@@ -43,7 +40,17 @@ private enum MailTool: String, CaseIterable, Identifiable {
 private enum MailMailboxScope: Hashable {
     case all
     case allUnread
+    case saved
     case account(String)
+
+    var mailboxScope: MailboxScope {
+        switch self {
+        case .all: return .all
+        case .allUnread: return .allUnread
+        case .saved: return .saved
+        case .account(let email): return .account(email: email)
+        }
+    }
 }
 
 private enum MailSidebarSelection: Hashable {
@@ -55,6 +62,7 @@ private enum MailSidebarSelection: Hashable {
 
 struct MacMailTabView: View {
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
     @Binding var snapshot: DashboardDataSnapshot?
     @Binding var isRefreshing: Bool
     @Binding var refreshMessage: String?
@@ -69,7 +77,6 @@ struct MacMailTabView: View {
     @State private var navigationPath = NavigationPath()
     @State private var selectedEmailId: Int?
     @State private var showLLMSettings = false
-    @State private var catchUpContextualShortcuts: [MacSidebarContextualShortcut] = []
 
     var body: some View {
         // Two-column split only: a three-column NavigationSplitView on macOS often collapses the
@@ -102,12 +109,15 @@ struct MacMailTabView: View {
         }
         .tint(MacAppTheme.accent)
         .background(MacAppTheme.primaryBackground)
-        .onChange(of: selection) { _, new in
+        .onChange(of: selection) { _, _ in
             navigationPath = NavigationPath()
             selectedEmailId = nil
-            if case .tool(.catchUp) = new { } else {
-                catchUpContextualShortcuts = []
-            }
+            sidebarShortcutsStore.removeLayers(withPrefix: "mail.")
+            sidebarShortcutsStore.removeLayers(withPrefix: "catchup.")
+            applyMailToolsShortcutLayer()
+        }
+        .onAppear {
+            applyMailToolsShortcutLayer()
         }
         .onReceive(NotificationCenter.default.publisher(for: .macSelectMailTool)) { notification in
             guard let rawValue = notification.object as? String,
@@ -132,20 +142,17 @@ struct MacMailTabView: View {
         snapshot?.emails.count ?? 0
     }
 
-    private var mailFeatureShortcutSection: MacSidebarFeatureShortcutSection? {
-        let mailToolShortcuts = MacSidebarShortcutLibrary.mailTools
-        if case .tool(.catchUp) = selection {
-            return MacSidebarFeatureShortcutSection(
-                title: "Mail",
-                shortcuts: mailToolShortcuts + catchUpContextualShortcuts
-            )
-        }
-        return MacSidebarFeatureShortcutSection(title: "Mail", shortcuts: mailToolShortcuts)
+    private func applyMailToolsShortcutLayer() {
+        sidebarShortcutsStore.setLayer(
+            id: "mail.tools",
+            title: "Mail",
+            shortcuts: MacSidebarShortcutLibrary.mailTools,
+            priority: 10
+        )
     }
 
     private var sidebar: some View {
         MacSidebarShell(
-            featureShortcutSection: mailFeatureShortcutSection,
             onRefresh: onRefreshMailbox,
             onOpenSettings: onOpenSettings,
             refreshState: refreshState
@@ -173,6 +180,12 @@ struct MacMailTabView: View {
                     isSelected: selection == .mailbox(.allUnread),
                     badge: unreadCount,
                     action: { selection = .mailbox(.allUnread) }
+                )
+                MacSidebarListRowButton(
+                    title: "Saved",
+                    icon: .system("star.fill"),
+                    isSelected: selection == .mailbox(.saved),
+                    action: { selection = .mailbox(.saved) }
                 )
 
                 ForEach(authManager.accounts) { account in
@@ -217,7 +230,7 @@ struct MacMailTabView: View {
         case .mailbox:
             if let selectedEmailId {
                 MacCachedEmailDetailView(emailId: selectedEmailId)
-                    .id(selectedEmailId)
+                .id(selectedEmailId)
             } else {
                 ContentUnavailableView {
                     Label("No Message Selected", systemImage: "envelope.open")
@@ -253,7 +266,7 @@ struct MacMailTabView: View {
                 }
             )
         case .catchUp:
-            MacCatchUpFeedView(contextualShortcuts: $catchUpContextualShortcuts) {
+            MacCatchUpFeedView {
                 selection = .tool(.dashboard)
             }
         case .stories:
@@ -292,19 +305,9 @@ struct MacMailTabView: View {
                     }
                 }
             }
-        case .saved:
-            MacStarredEmailListView(snapshot: snapshot, path: $navigationPath)
         }
     }
 
-}
-
-// MARK: - Mailbox read filter
-
-private enum MailboxReadFilter: String, CaseIterable {
-    case all = "All"
-    case unread = "Unread"
-    case read = "Read"
 }
 
 // MARK: - Mailbox list (middle column)
@@ -316,43 +319,30 @@ private struct MacMailboxListColumn: View {
 
     @State private var readFilter: MailboxReadFilter = .all
 
-    // Emails matching the scope (account / all / allUnread)
-    private var scopedEmails: [EmailListItem] {
-        guard let snapshot else { return [] }
-        switch scope {
-        case .all:
-            return snapshot.allEmails
-        case .allUnread:
-            // Use snapshot.emails — the authoritative unread-only list built during refresh —
-            // so the list and the sidebar badge always agree with the Dashboard count.
-            return snapshot.emails
-        case .account(let email):
-            return snapshot.allEmails.filter {
-                $0.account_email.caseInsensitiveCompare(email) == .orderedSame
-            }
-        }
+    private var displayConfig: MailboxDisplayConfig {
+        MailboxDisplayConfig.forScope(scope.mailboxScope, readFilter: readFilter)
     }
 
-    // Apply the read/unread chip filter on top of the scope
     private var rows: [EmailListItem] {
-        switch readFilter {
-        case .all:    return scopedEmails
-        case .unread: return scopedEmails.filter { !$0.is_read }
-        case .read:   return scopedEmails.filter { $0.is_read }
-        }
+        guard let snapshot else { return [] }
+        return MailboxQuery.emails(in: snapshot, scope: scope.mailboxScope, readFilter: readFilter)
     }
 
     private var title: String {
-        switch scope {
-        case .all:              return "All Emails"
-        case .allUnread:        return "All Unread"
-        case .account(let e):   return e
-        }
+        displayConfig.navigationTitle
     }
 
-    // Hide chips for scopes that are already hard-filtered to one state
     private var showReadFilterChips: Bool {
-        scope != .allUnread
+        displayConfig.showsReadFilterChips
+    }
+
+    private var showsAccountOnRows: Bool {
+        switch scope {
+        case .all, .allUnread, .saved:
+            return true
+        case .account:
+            return false
+        }
     }
 
     var body: some View {
@@ -363,16 +353,21 @@ private struct MacMailboxListColumn: View {
             }
 
             if rows.isEmpty {
-                ContentUnavailableView {
-                    Label("No messages", systemImage: "envelope")
-                } description: {
-                    Text(emptyDescription)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                MailboxEmptyStateView(config: displayConfig)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $selectedEmailId) {
+                    if displayConfig.showsUnreadCountHeader {
+                        let unreadCount = rows.filter { !$0.is_read }.count
+                        if unreadCount > 0 {
+                            Section {
+                                MailboxUnreadCountHeader(count: unreadCount)
+                            }
+                        }
+                    }
+
                     ForEach(rows, id: \.id) { email in
-                        MacMailboxRow(email: email)
+                        MailboxEmailRow(email: email, showsAccountEmail: showsAccountOnRows)
                             .tag(Optional(email.id))
                     }
                 }
@@ -384,142 +379,9 @@ private struct MacMailboxListColumn: View {
         .onChange(of: scope) { _, _ in readFilter = .all }
     }
 
-    private var emptyDescription: String {
-        switch readFilter {
-        case .all:    return "Nothing in this mailbox yet."
-        case .unread: return "No unread messages here."
-        case .read:   return "No read messages here."
-        }
-    }
-
     private var readFilterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(MailboxReadFilter.allCases, id: \.self) { f in
-                    MailboxFilterChip(
-                        title: f.rawValue,
-                        isSelected: readFilter == f,
-                        action: { readFilter = f }
-                    )
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .background(MacAppTheme.primaryBackground)
-    }
-}
-
-// MARK: - Filter chip
-
-private struct MailboxFilterChip: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? .black : MacAppTheme.primaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(isSelected
-                              ? MacAppTheme.accent
-                              : (isHovered
-                                 ? MacAppTheme.secondaryText.opacity(0.15)
-                                 : MacAppTheme.secondaryBackground))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
-    }
-}
-
-private struct MacMailboxRow: View {
-    let email: EmailListItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(email.sender_name?.isEmpty == false ? (email.sender_name ?? email.sender) : email.sender)
-                    .font(.headline)
-                    .foregroundStyle(MacAppTheme.primaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(shortDate(from: email.received_at))
-                    .font(.caption)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-            }
-            Text(email.subject.isEmpty ? "(No subject)" : email.subject)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(MacAppTheme.primaryText)
-                .lineLimit(2)
-            if !email.snippet.isEmpty {
-                Text(email.snippet)
-                    .font(.caption)
-                    .foregroundStyle(MacAppTheme.secondaryText)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func shortDate(from iso: String) -> String {
-        let parsed = ISO8601DateFormatter().date(from: iso) ?? {
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
-            return f.date(from: iso)
-        }()
-        guard let parsed else { return "" }
-        return parsed.formatted(date: .abbreviated, time: .omitted)
-    }
-}
-
-// MARK: - Saved (starred) list in detail
-
-private struct MacStarredEmailListView: View {
-    let snapshot: DashboardDataSnapshot?
-    @Binding var path: NavigationPath
-
-    private var rows: [EmailListItem] {
-        snapshot?.allEmails.filter(\.is_starred) ?? []
-    }
-
-    var body: some View {
-        Group {
-            if rows.isEmpty {
-                ContentUnavailableView {
-                    Label("No saved messages", systemImage: "star")
-                } description: {
-                    Text("Star messages in Gmail to see them here.")
-                }
-            } else {
-                List {
-                    ForEach(rows, id: \.id) { email in
-                        Button {
-                            path.append(email.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(email.subject.isEmpty ? "(No subject)" : email.subject)
-                                    .foregroundStyle(MacAppTheme.primaryText)
-                                Text(email.sender)
-                                    .font(.caption)
-                                    .foregroundStyle(MacAppTheme.secondaryText)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .scrollContentBackground(.hidden)
-            }
-        }
-        .navigationTitle("Saved")
+        MailboxReadFilterBar(selection: $readFilter)
+            .background(MacAppTheme.primaryBackground)
     }
 }
 
@@ -527,31 +389,67 @@ private struct MacStarredEmailListView: View {
 
 private struct MacCachedEmailDetailView: View {
     let emailId: Int
+    @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
     @State private var detail: EmailDetail?
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var replyComposerEmail: EmailDetail?
+    @State private var isProcessing = false
+    @State private var hasUnsubscribeAvailable = false
+    @State private var showUnsubscribeWebView = false
+    @State private var unsubscribeManualURL: URL?
+    @State private var replyPresentation: ReplyComposerPresentation?
+    @StateObject private var keyboardMonitor = MacMailDetailKeyboardMonitor()
 
     var body: some View {
-        Group {
-            if isLoading {
-                ProgressView("Loading…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let detail {
-                emailDetailContent(detail)
-            } else {
-                ContentUnavailableView {
-                    Label("Could not load email", systemImage: "exclamationmark.triangle")
-                } description: {
-                    if let msg = errorMessage { Text(msg) }
+        MacReplyComposerSlideInContainer(replyPresentation: $replyPresentation) {
+            Group {
+                if isLoading {
+                    ProgressView("Loading…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let detail {
+                    emailDetailContent(detail)
+                } else {
+                    ContentUnavailableView {
+                        Label("Could not load email", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        if let msg = errorMessage { Text(msg) }
+                    }
                 }
             }
         }
         .navigationTitle("Email")
         .task { await loadEmail() }
-        .sheet(item: $replyComposerEmail) { email in
-            EmailReplyComposerView(email: email)
+        .onAppear {
+            keyboardMonitor.installIfNeeded()
+            syncKeyboardMonitor()
         }
+        .onDisappear {
+            keyboardMonitor.remove()
+            sidebarShortcutsStore.removeLayer(id: "mail.reading")
+            sidebarShortcutsStore.removeLayer(id: "mail.replyComposer")
+        }
+        .onChange(of: replyPresentation?.id) { _, _ in
+            syncKeyboardMonitor()
+            syncSidebarShortcuts()
+        }
+        .onChange(of: detail?.id) { _, _ in
+            syncKeyboardMonitor()
+            syncSidebarShortcuts()
+        }
+        .onChange(of: hasUnsubscribeAvailable) { _, _ in
+            syncKeyboardMonitor()
+            syncSidebarShortcuts()
+        }
+        .sheet(isPresented: $showUnsubscribeWebView) {
+            if let url = unsubscribeManualURL {
+                UnsubscribeWebView(url: url)
+            }
+        }
+    }
+
+    private var isReplyAllMeaningful: Bool {
+        guard let detail else { return false }
+        return ReplyRecipientResolver.isReplyAllMeaningful(email: detail)
     }
 
     // MARK: - Content layout
@@ -585,15 +483,164 @@ private struct MacCachedEmailDetailView: View {
 
                 Divider().opacity(0.35)
 
-                // Body
-                emailBody(detail, availableHeight: geo.size.height)
+                emailBody(detail, availableHeight: geo.size.height - 160)
+
+                EmailReadingActionBar(
+                    email: self.detail,
+                    isDisabled: isProcessing,
+                    hasUnsubscribe: $hasUnsubscribeAvailable,
+                    handlers: mailDetailReadingHandlers(for: detail)
+                )
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Reply") {
-                    replyComposerEmail = detail
-                }
+    }
+
+    private func mailDetailReadingHandlers(for detail: EmailDetail) -> EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { openReply(mode: .reply, for: detail) },
+            onReplyAll: { openReply(mode: .replyAll, for: detail) },
+            onStar: { Task { await handleStar() } },
+            onMarkUnread: { Task { await handleMarkUnread() } },
+            onMarkAsRead: { Task { await handleMarkAsRead() } },
+            onUnsubscribe: { Task { await handleUnsubscribe() } }
+        )
+    }
+
+    private func openReply(mode: ReplyMode, for detail: EmailDetail) {
+        replyPresentation = ReplyComposerPresentation(email: detail, mode: mode)
+        syncSidebarShortcuts()
+    }
+
+    private func syncKeyboardMonitor() {
+        keyboardMonitor.isReplyComposerOpen = replyPresentation != nil
+        keyboardMonitor.isEnabled = detail != nil && !isLoading && errorMessage == nil && !isProcessing
+        keyboardMonitor.hasUnsubscribe = hasUnsubscribeAvailable
+        if let detail {
+            keyboardMonitor.isReplyAllMeaningful = ReplyRecipientResolver.isReplyAllMeaningful(email: detail)
+            keyboardMonitor.onReply = { openReply(mode: .reply, for: detail) }
+            keyboardMonitor.onReplyAll = { openReply(mode: .replyAll, for: detail) }
+            keyboardMonitor.onKeepUnread = { Task { await handleMarkUnread() } }
+            keyboardMonitor.onStar = { Task { await handleStar() } }
+            keyboardMonitor.onMarkAsRead = { Task { await handleMarkAsRead() } }
+            keyboardMonitor.onUnsubscribe = { Task { await handleUnsubscribe() } }
+        }
+    }
+
+    private func syncSidebarShortcuts() {
+        if replyPresentation != nil {
+            sidebarShortcutsStore.removeLayer(id: "mail.reading")
+            sidebarShortcutsStore.setLayer(
+                id: "mail.replyComposer",
+                title: "Reply composer",
+                shortcuts: MacSidebarShortcutLibrary.mailReplyComposer,
+                priority: 30
+            )
+            return
+        }
+        sidebarShortcutsStore.removeLayer(id: "mail.replyComposer")
+
+        guard detail != nil else {
+            sidebarShortcutsStore.removeLayer(id: "mail.reading")
+            return
+        }
+        var items: [MacSidebarContextualShortcut] = [
+            MacSidebarContextualShortcut(title: "Keep unread", shortcutDisplay: "K"),
+            MacSidebarContextualShortcut(title: "Star", shortcutDisplay: "S"),
+            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "E"),
+            MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "R"),
+        ]
+        if isReplyAllMeaningful {
+            items.append(MacSidebarContextualShortcut(title: "Reply All", shortcutDisplay: "⇧R"))
+        }
+        if hasUnsubscribeAvailable {
+            items.append(MacSidebarContextualShortcut(title: "Unsubscribe", shortcutDisplay: "⌘⇧U"))
+        }
+        sidebarShortcutsStore.setLayer(
+            id: "mail.reading",
+            title: "Inbox",
+            shortcuts: items,
+            priority: 20
+        )
+    }
+
+    private func handleStar() async {
+        guard var email = detail, !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let newStarState = !email.is_starred
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email,
+            shouldStar: newStarState
+        )
+        email = email.updating(isStarred: newStarState)
+        await EmailCache.shared.saveEmailDetail(email)
+        await DashboardDataManager.shared.updateEmailStarred(emailId: email.id, isStarred: newStarState)
+        await MainActor.run { detail = email }
+    }
+
+    private func handleMarkUnread() async {
+        guard var email = detail, !isProcessing else { return }
+        if !email.is_read { return }
+
+        isProcessing = true
+        defer { isProcessing = false }
+
+        await EmailActionSynchronizer.shared.enqueueMarkUnread(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        email = email.updating(isRead: false)
+        await EmailCache.shared.saveEmailDetail(email)
+        await DashboardDataManager.shared.markEmailAsUnread(emailId: email.id, accountId: nil)
+        await MainActor.run { detail = email }
+    }
+
+    private func handleMarkAsRead() async {
+        guard var email = detail, !isProcessing else { return }
+        if email.is_read { return }
+
+        isProcessing = true
+        defer { isProcessing = false }
+
+        await EmailActionSynchronizer.shared.enqueueMarkRead(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        email = email.updating(isRead: true)
+        await EmailCache.shared.saveEmailDetail(email)
+        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        await MainActor.run { detail = email }
+    }
+
+    private func handleUnsubscribe() async {
+        guard let email = detail, !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+
+        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(
+            for: email,
+            accountEmail: email.account_email
+        ) else { return }
+
+        let result = await UnsubscribeService.shared.executeUnsubscribe(
+            method: method,
+            userEmail: email.account_email
+        )
+
+        if result.requiresManualAction, let url = result.manualActionURL {
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
+            }
+        } else if let url = result.manualActionURL {
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
             }
         }
     }

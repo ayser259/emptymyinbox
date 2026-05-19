@@ -93,16 +93,23 @@ public actor OpenAIService {
         sender: String,
         snippet: String,
         body: String,
-        userAsk: String
+        userAsk: String,
+        currentDraft: String = "",
+        recipientsTo: String = "",
+        recipientsCc: String = ""
     ) async throws -> String {
         let settings = await LLMSettingsStore.shared.currentSettings()
-        let inputJSON = encodePromptInput([
+        var input: [String: String] = [
             "sender": sender,
             "subject": subject,
             "snippet": snippet,
             "body": body,
             "quickReplyAsk": userAsk
-        ])
+        ]
+        if !currentDraft.isEmpty { input["currentDraft"] = currentDraft }
+        if !recipientsTo.isEmpty { input["recipientsTo"] = recipientsTo }
+        if !recipientsCc.isEmpty { input["recipientsCc"] = recipientsCc }
+        let inputJSON = encodePromptInput(input)
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedQuickReplyPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 

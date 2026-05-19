@@ -60,7 +60,7 @@ struct CatchUpView: View {
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
     @State private var currentLoadRetryCount = 0
-    @State private var replyComposerEmail: EmailDetail?
+    @State private var replyPresentation: ReplyComposerPresentation?
     
     // Session tracking
     @State private var sessionStartTime: Date?
@@ -112,8 +112,15 @@ struct CatchUpView: View {
                 UnsubscribeWebView(url: url)
             }
         }
-        .sheet(item: $replyComposerEmail) { email in
-            EmailReplyComposerView(email: email)
+        .sheet(item: $replyPresentation) { presentation in
+            EmailReplyComposerView(
+                email: presentation.email,
+                mode: presentation.mode,
+                isCatchUpContext: true,
+                onCatchUpOutcome: { outcome in
+                    Task { await handleCatchUpReplyOutcome(outcome, email: presentation.email) }
+                }
+            )
         }
         .task {
             await onAppear()
@@ -443,64 +450,66 @@ struct CatchUpView: View {
     
     // MARK: - Action Buttons
     
-    private var actionButtonsSection: some View {
-        ScrollableEmailActionBar(
-            email: emailLoader.currentEmail,
-            isProcessing: isButtonDisabled,
-            showReply: true,
-            onReply: {
-                await handleReply()
-            },
-            onStar: {
-                await handleStar()
-            },
-            onKeepUnread: {
-                await handleKeepUnread()
-            },
-            onMarkAsRead: {
-                await handleMarkAsRead()
-            },
-            onUnsubscribe: {
-                await handleUnsubscribe()
-            },
-            hasUnsubscribe: hasUnsubscribeAvailable
+    private var catchUpReadingHandlers: EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { Task { await handleReply(mode: .reply) } },
+            onReplyAll: { Task { await handleReply(mode: .replyAll) } },
+            onStar: { Task { await handleStar() } },
+            onMarkUnread: { Task { await handleKeepUnread() } },
+            onMarkAsRead: { Task { await handleMarkAsRead() } },
+            onUnsubscribe: { Task { await handleUnsubscribe() } }
         )
-        .onChange(of: emailLoader.currentEmail?.id) { _, newEmailId in
-            // Check unsubscribe availability when email changes
-            Task {
-                await checkUnsubscribeAvailability()
-            }
-        }
-        .task {
-            // Check on initial load
-            await checkUnsubscribeAvailability()
-        }
     }
-    
-    private func checkUnsubscribeAvailability() async {
-        guard let email = emailLoader.currentEmail else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
-            return
-        }
-        
-        let unsubscribeService = UnsubscribeService.shared
-        if let _ = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            await MainActor.run {
-                hasUnsubscribeAvailable = true
-            }
-        } else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
+
+    private var actionButtonsSection: some View {
+        EmailReadingCatchUpActionBar(
+            email: emailLoader.currentEmail,
+            remainingCount: emailLoader.remainingCount,
+            isDisabled: isButtonDisabled,
+            isAnimating: isAnimating,
+            hasUnsubscribe: $hasUnsubscribeAvailable,
+            handlers: catchUpReadingHandlers
+        )
+    }
+
+    private func handleReply(mode: ReplyMode) async {
+        guard let current = emailLoader.currentEmail else { return }
+        await MainActor.run {
+            replyPresentation = ReplyComposerPresentation(email: current, mode: mode, isCatchUpContext: true)
         }
     }
 
-    private func handleReply() async {
-        guard let current = emailLoader.currentEmail else { return }
-        await MainActor.run {
-            replyComposerEmail = current
+    private func handleCatchUpReplyOutcome(_ outcome: CatchUpReplyOutcome, email: EmailDetail) async {
+        sessionStats.repliesSent += 1
+        switch outcome {
+        case .markReadAndAdvance:
+            guard !isAnimating else { return }
+            isProcessing = true
+            isAnimating = true
+            await performDismissalAnimation(cardId: email.id, direction: .right)
+            emailLoader.removeCurrentEmail()
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: email.id,
+                gmailId: email.gmail_id,
+                accountEmail: email.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+            sessionStats.reviewed += 1
+            sessionStats.markedAsRead += 1
+            resetAnimationState()
+            isProcessing = false
+            isAnimating = false
+        case .keepUnreadAndAdvance:
+            guard !isAnimating else { return }
+            isAnimating = true
+            await performDismissalAnimation(cardId: email.id, direction: .left)
+            emailLoader.moveToNext()
+            sessionStats.reviewed += 1
+            sessionStats.keptUnread += 1
+            resetAnimationState()
+            isAnimating = false
+        case .stay:
+            break
         }
     }
     

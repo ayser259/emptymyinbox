@@ -8,6 +8,17 @@ public enum SharedAppTheme {
     public static let secondaryText = Color(red: 224 / 255, green: 224 / 255, blue: 224 / 255)
     public static let accent = Color(red: 246 / 255, green: 172 / 255, blue: 10 / 255)
 
+    // MARK: - Mailbox list rows (Gmail-style read / unread fills on dark backgrounds)
+
+    /// Unread rows: lighter, more filled — stands out against the inbox background.
+    public static let mailboxRowUnreadBackground = Color(red: 38 / 255, green: 38 / 255, blue: 40 / 255)
+    /// Read rows: darker, subtler — recedes so unread mail is easy to scan.
+    public static let mailboxRowReadBackground = Color(red: 14 / 255, green: 14 / 255, blue: 14 / 255).opacity(0.65)
+
+    public static func mailboxRowBackground(isRead: Bool) -> Color {
+        isRead ? mailboxRowReadBackground : mailboxRowUnreadBackground
+    }
+
     public static let spacingUnit: CGFloat = 8
     /// Tight spacing (4pt) — matches iOS `AppTheme.spacingSmall`.
     public static let spacingExtraSmall: CGFloat = 4

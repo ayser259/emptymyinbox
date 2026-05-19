@@ -216,10 +216,12 @@ private struct MacSidebarRefreshWidget: View {
 
 /// Primary-tab sidebar: scrollable sections plus optional **pinned** accessory (e.g. mini calendar), then Refresh widget + Settings.
 struct MacSidebarShell<Content: View>: View {
+    @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
+
     var minColumnWidth: CGFloat = 220
     var idealColumnWidth: CGFloat = 240
     var maxColumnWidth: CGFloat = 280
-    /// Optional feature-specific shortcuts (Catch Up, Calendar modes, Action Items syntax, …). Shown **above** global shortcuts.
+    /// Static feature shortcuts when not using the shared store (e.g. Calendar / Action Items tabs).
     var featureShortcutSection: MacSidebarFeatureShortcutSection? = nil
     /// App-wide shortcuts (navigation, refresh, next tab). Shown **below** feature shortcuts.
     var globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global
@@ -232,6 +234,15 @@ struct MacSidebarShell<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     @AppStorage("MacSidebarContextualShortcutsExpanded") private var shortcutsSectionExpanded = true
+
+    private var featureSectionsToShow: [MacSidebarFeatureShortcutSection] {
+        let dynamic = sidebarShortcutsStore.orderedFeatureSections
+        if !dynamic.isEmpty { return dynamic }
+        if let featureShortcutSection, !featureShortcutSection.shortcuts.isEmpty {
+            return [featureShortcutSection]
+        }
+        return []
+    }
 
     init(
         minColumnWidth: CGFloat = 220,
@@ -277,9 +288,9 @@ struct MacSidebarShell<Content: View>: View {
             Divider()
                 .opacity(0.35)
 
-            if !globalShortcuts.isEmpty || !(featureShortcutSection?.shortcuts.isEmpty ?? true) {
+            if !globalShortcuts.isEmpty || !featureSectionsToShow.isEmpty {
                 MacSidebarShortcutsPanel(
-                    featureSection: featureShortcutSection,
+                    featureSections: featureSectionsToShow,
                     globalShortcuts: globalShortcuts,
                     isExpanded: $shortcutsSectionExpanded
                 )
@@ -301,13 +312,12 @@ struct MacSidebarShell<Content: View>: View {
 }
 
 private struct MacSidebarShortcutsPanel: View {
-    let featureSection: MacSidebarFeatureShortcutSection?
+    let featureSections: [MacSidebarFeatureShortcutSection]
     let globalShortcuts: [MacSidebarContextualShortcut]
     @Binding var isExpanded: Bool
 
     private var showsFeatureBlock: Bool {
-        guard let featureSection else { return false }
-        return !featureSection.shortcuts.isEmpty
+        featureSections.contains { !$0.shortcuts.isEmpty }
     }
 
     var body: some View {
@@ -334,11 +344,13 @@ private struct MacSidebarShortcutsPanel: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                if let featureSection, !featureSection.shortcuts.isEmpty {
-                    subsectionTitle(featureSection.title)
-                        .padding(.top, 4)
-                    ForEach(featureSection.shortcuts) { item in
-                        shortcutRow(item)
+                ForEach(Array(featureSections.enumerated()), id: \.offset) { index, section in
+                    if !section.shortcuts.isEmpty {
+                        subsectionTitle(section.title)
+                            .padding(.top, index == 0 ? 4 : 10)
+                        ForEach(section.shortcuts) { item in
+                            shortcutRow(item)
+                        }
                     }
                 }
 

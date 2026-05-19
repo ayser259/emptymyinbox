@@ -165,7 +165,39 @@ struct FilteredEmailsView: View {
         emails.filter { !$0.is_read }.count
     }
     
+    @ViewBuilder
     var body: some View {
+        if let mailbox = mailboxListConfiguration {
+            MailboxListView(
+                scope: mailbox.scope,
+                initialReadFilter: mailbox.readFilter,
+                refreshStrategy: mailbox.refreshStrategy,
+                syncStarredOnAppear: mailbox.syncStarredOnAppear
+            )
+        } else {
+            legacyFilteredListBody
+        }
+    }
+
+    private var mailboxListConfiguration: (
+        scope: MailboxScope,
+        readFilter: MailboxReadFilter,
+        refreshStrategy: MailboxRefreshStrategy,
+        syncStarredOnAppear: Bool
+    )? {
+        switch filter {
+        case .accountAll(let accountEmail):
+            return (.account(email: accountEmail), .all, .dashboardSync, false)
+        case .accountUnread(let accountEmail):
+            return (.account(email: accountEmail), .unread, .dashboardSync, false)
+        case .accountStarred(let accountEmail):
+            return (.accountSaved(email: accountEmail), .all, .starredSync, true)
+        default:
+            return nil
+        }
+    }
+
+    private var legacyFilteredListBody: some View {
         ZStack {
             AppTheme.primaryBackground
                 .ignoresSafeArea()
@@ -268,7 +300,7 @@ struct FilteredEmailsView: View {
             await loadEmails()
         }
     }
-    
+
     private func loadEmails() async {
         isLoading = true
         defer { isLoading = false }

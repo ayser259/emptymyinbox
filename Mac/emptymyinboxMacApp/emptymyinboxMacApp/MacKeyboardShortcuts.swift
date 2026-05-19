@@ -28,6 +28,20 @@ enum MacSidebarShortcutLibrary {
         MacSidebarContextualShortcut(title: "Brief", shortcutDisplay: "⌥B"),
     ]
 
+    /// Shown in the sidebar while reading a message in a mailbox list.
+    static let mailMailboxDetail: [MacSidebarContextualShortcut] = [
+        MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "R"),
+        MacSidebarContextualShortcut(title: "Reply All", shortcutDisplay: "⇧R"),
+    ]
+
+    /// Shown while the reply composer slide-in panel is open.
+    static let mailReplyComposer: [MacSidebarContextualShortcut] = [
+        MacSidebarContextualShortcut(title: "Quick Reply", shortcutDisplay: "⌥Q"),
+        MacSidebarContextualShortcut(title: "Save draft", shortcutDisplay: "⌘S"),
+        MacSidebarContextualShortcut(title: "Send", shortcutDisplay: "⌘↩"),
+        MacSidebarContextualShortcut(title: "Close composer", shortcutDisplay: "Esc"),
+    ]
+
     /// Calendar detail modes (Calendar tab, Tools **Calendar** or **Starred**).
     static let calendarModes: [MacSidebarContextualShortcut] = [
         MacSidebarContextualShortcut(title: "Events", shortcutDisplay: "E"),

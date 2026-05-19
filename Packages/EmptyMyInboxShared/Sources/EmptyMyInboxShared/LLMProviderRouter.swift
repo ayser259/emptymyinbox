@@ -18,6 +18,14 @@ public actor LLMProviderRouter {
         }
     }
 
+    /// True if the selected provider has a key, or any provider has a key (Quick Reply can still run).
+    public func hasUsableAPIKeyForQuickReply() async -> Bool {
+        if await hasSelectedProviderAPIKey() { return true }
+        let hasOpenAI = await LLMSettingsStore.shared.hasAPIKey()
+        let hasClaude = await ClaudeAPIKeyStore.shared.hasAPIKey()
+        return hasOpenAI || hasClaude
+    }
+
     public func generateDailyBrief(candidates: DailyBriefCandidates) async throws -> DailyBriefLLMResponse {
         let provider = await selectedProvider()
         switch provider {
@@ -61,26 +69,86 @@ public actor LLMProviderRouter {
         sender: String,
         snippet: String,
         body: String,
-        userAsk: String
+        userAsk: String,
+        currentDraft: String = "",
+        recipientsTo: String = "",
+        recipientsCc: String = ""
     ) async throws -> String {
-        let provider = await selectedProvider()
-        switch provider {
+        let args = (
+            subject: subject,
+            sender: sender,
+            snippet: snippet,
+            body: body,
+            userAsk: userAsk,
+            currentDraft: currentDraft,
+            recipientsTo: recipientsTo,
+            recipientsCc: recipientsCc
+        )
+        let selected = await selectedProvider()
+        switch selected {
         case .openAI:
-            return try await OpenAIService.shared.quickReply(
-                subject: subject,
-                sender: sender,
-                snippet: snippet,
-                body: body,
-                userAsk: userAsk
-            )
+            if await LLMSettingsStore.shared.hasAPIKey() {
+                return try await openAIQuickReply(args)
+            }
+            if await ClaudeAPIKeyStore.shared.hasAPIKey() {
+                return try await claudeQuickReply(args)
+            }
         case .claude:
-            return try await ClaudeService.shared.quickReply(
-                subject: subject,
-                sender: sender,
-                snippet: snippet,
-                body: body,
-                userAsk: userAsk
-            )
+            if await ClaudeAPIKeyStore.shared.hasAPIKey() {
+                return try await claudeQuickReply(args)
+            }
+            if await LLMSettingsStore.shared.hasAPIKey() {
+                return try await openAIQuickReply(args)
+            }
+        }
+        throw LLMProviderRouterError.missingAPIKey(provider: selected)
+    }
+
+    private typealias QuickReplyArgs = (
+        subject: String,
+        sender: String,
+        snippet: String,
+        body: String,
+        userAsk: String,
+        currentDraft: String,
+        recipientsTo: String,
+        recipientsCc: String
+    )
+
+    private func openAIQuickReply(_ args: QuickReplyArgs) async throws -> String {
+        try await OpenAIService.shared.quickReply(
+            subject: args.subject,
+            sender: args.sender,
+            snippet: args.snippet,
+            body: args.body,
+            userAsk: args.userAsk,
+            currentDraft: args.currentDraft,
+            recipientsTo: args.recipientsTo,
+            recipientsCc: args.recipientsCc
+        )
+    }
+
+    private func claudeQuickReply(_ args: QuickReplyArgs) async throws -> String {
+        try await ClaudeService.shared.quickReply(
+            subject: args.subject,
+            sender: args.sender,
+            snippet: args.snippet,
+            body: args.body,
+            userAsk: args.userAsk,
+            currentDraft: args.currentDraft,
+            recipientsTo: args.recipientsTo,
+            recipientsCc: args.recipientsCc
+        )
+    }
+}
+
+public enum LLMProviderRouterError: LocalizedError, Sendable {
+    case missingAPIKey(provider: LLMProvider)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingAPIKey(let provider):
+            return "Add a \(provider.displayName) API key under Settings → Keys."
         }
     }
 }
