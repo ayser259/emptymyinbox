@@ -166,6 +166,9 @@ class MockGmailAPIService {
             if query.contains("is:starred"), !query.contains("in:inbox") {
                 return message.labelIds.contains("STARRED")
             }
+            if query.contains("in:sent") {
+                return message.labelIds.contains("SENT")
+            }
             if query.contains("in:inbox") {
                 return message.labelIds.contains("INBOX")
             }
@@ -267,6 +270,29 @@ class MockGmailAPIService {
 
         return metadata
     }
+
+    func syncSentEmailMetadata(
+        for account: GmailAccount,
+        maxResults: Int = 500,
+        progressCallback: ((Int, Int?) async -> Void)? = nil
+    ) async throws -> [EmailMetadata] {
+        let (refs, _) = try await listMessages(for: account, query: "in:sent", maxResults: maxResults)
+
+        var metadata: [EmailMetadata] = []
+        for ref in refs {
+            if let message = messages[ref.id] {
+                let emailId = StableID.emailId(gmailId: message.id)
+                let metadataItem = parseEmailMetadata(from: message, accountEmail: account.email, emailId: emailId)
+                metadata.append(metadataItem)
+            }
+        }
+
+        if let callback = progressCallback {
+            await callback(metadata.count, metadata.count)
+        }
+
+        return metadata
+    }
     
     func markAsRead(for account: GmailAccount, messageId: String) async throws {
         if shouldFailAPI {
@@ -337,9 +363,12 @@ class MockGmailAPIService {
     private func parseEmailMetadata(from gmailMessage: GmailMessage, accountEmail: String, emailId: Int) -> EmailMetadata {
         let headers = extractHeaders(from: gmailMessage.payload)
         let subject = headers["subject"] ?? ""
+        let isSent = gmailMessage.labelIds.contains("SENT")
         let from = headers["from"] ?? ""
-        let senderEmail = extractEmail(from: from)
-        let senderName = extractName(from: from)
+        let to = headers["to"] ?? ""
+        let partyHeader = isSent ? to : from
+        let senderEmail = extractEmail(from: partyHeader)
+        let senderName = extractName(from: partyHeader)
         
         let isRead = !gmailMessage.labelIds.contains("UNREAD")
         let isStarred = gmailMessage.labelIds.contains("STARRED")

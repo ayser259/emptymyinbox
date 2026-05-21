@@ -46,6 +46,7 @@ public extension EmailListItem {
         return EmailListItem(
             id: id,
             gmail_id: gmail_id,
+            thread_id: thread_id,
             subject: subject,
             sender: sender,
             sender_name: sender_name,
@@ -64,7 +65,7 @@ public extension EmailListItem {
         EmailMetadata(
             id: id,
             gmail_id: gmail_id,
-            thread_id: "", // EmailListItem doesn't have thread_id, use empty string
+            thread_id: thread_id,
             subject: subject,
             sender: sender,
             sender_name: sender_name,

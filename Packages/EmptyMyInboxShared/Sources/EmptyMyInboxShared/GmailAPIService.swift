@@ -1405,6 +1405,56 @@ public class GmailAPIService {
         
         return allMetadata
     }
+
+    /// Sync sent email metadata only — FAST, no body content downloaded.
+    public func syncSentEmailMetadata(for account: GmailAccount, maxResults: Int = 500, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
+        let (messageRefs, _) = try await listMessages(
+            for: account,
+            query: "in:sent",
+            maxResults: maxResults,
+            pageToken: nil,
+            fields: "messages(id,threadId),nextPageToken"
+        )
+
+        guard !messageRefs.isEmpty else {
+            return []
+        }
+
+        let totalCount = messageRefs.count
+        await progressCallback?(0, totalCount)
+
+        var allMetadata: [EmailMetadata] = []
+        let batchSize = 20
+
+        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageRefs.count)
+            return Array(messageRefs[start..<end])
+        }
+
+        var processedCount = 0
+
+        for batch in batches {
+            let batchIds = batch.map { $0.id }
+            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
+
+            for gmailMessage in messages {
+                guard gmailMessage.labelIds.contains("SENT") else {
+                    continue
+                }
+
+                let emailId = getEmailId(for: gmailMessage.id)
+                let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
+                allMetadata.append(metadata)
+            }
+
+            processedCount += batch.count
+            await progressCallback?(processedCount, totalCount)
+        }
+
+        allMetadata.sort { $0.received_at > $1.received_at }
+
+        return allMetadata
+    }
     
     /// Update the lastSync timestamp for an account
     private func updateAccountLastSync(email: String) {

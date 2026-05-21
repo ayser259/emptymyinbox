@@ -12,8 +12,10 @@ public enum MailboxScope: Hashable, Sendable {
     case all
     case allUnread
     case saved
+    case sent
     case account(email: String)
     case accountSaved(email: String)
+    case accountSent(email: String)
 }
 
 /// Optional read-state filter applied on top of a mailbox scope.
@@ -48,12 +50,18 @@ public enum MailboxQuery {
             return snapshot.emails
         case .saved:
             return snapshot.starredEmails
+        case .sent:
+            return snapshot.sentEmails
         case .account(let email):
             return snapshot.allEmails.filter {
                 $0.account_email.caseInsensitiveCompare(email) == .orderedSame
             }
         case .accountSaved(let email):
             return snapshot.starredEmails.filter {
+                $0.account_email.caseInsensitiveCompare(email) == .orderedSame
+            }
+        case .accountSent(let email):
+            return snapshot.sentEmails.filter {
                 $0.account_email.caseInsensitiveCompare(email) == .orderedSame
             }
         }
@@ -85,5 +93,19 @@ public enum EmailListItemSort {
             let right = EmailListItemDisplay.parseReceivedAt(rhs.received_at) ?? .distantPast
             return left > right
         }
+    }
+}
+
+// MARK: - Thread list queries
+
+public enum MailboxThreadQuery {
+    /// Thread summaries for a mailbox scope, newest thread first.
+    public static func threads(
+        in snapshot: DashboardDataSnapshot,
+        scope: MailboxScope,
+        readFilter: MailboxReadFilter = .all
+    ) -> [EmailThreadSummary] {
+        let emails = MailboxQuery.emails(in: snapshot, scope: scope, readFilter: readFilter)
+        return EmailThreadGrouping.summarizeThreads(from: emails)
     }
 }

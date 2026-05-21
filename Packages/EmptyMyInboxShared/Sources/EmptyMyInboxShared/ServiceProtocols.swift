@@ -30,6 +30,11 @@ public protocol GmailServiceProtocol: AnyObject {
         maxResults: Int,
         progressCallback: ((Int, Int?) async -> Void)?
     ) async throws -> [EmailMetadata]
+    func syncSentEmailMetadata(
+        for account: GmailAccount,
+        maxResults: Int,
+        progressCallback: ((Int, Int?) async -> Void)?
+    ) async throws -> [EmailMetadata]
 }
 
 #if canImport(UIKit)

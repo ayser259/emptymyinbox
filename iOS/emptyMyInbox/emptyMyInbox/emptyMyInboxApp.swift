@@ -138,7 +138,7 @@ struct emptyMyInboxApp: App {
     
     @ViewBuilder
     private var mainAppView: some View {
-        MainTabView()
+        AdaptiveRootView()
     }
 }
 

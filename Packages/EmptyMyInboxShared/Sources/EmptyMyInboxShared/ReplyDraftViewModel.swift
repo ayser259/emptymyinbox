@@ -255,7 +255,20 @@ public final class ReplyDraftViewModel {
                 )
                 lastSavedEnvelope = envelope
             }
-            _ = try await GmailAPIService.shared.sendDraft(account: account, draftId: draftId)
+            let sent = try await GmailAPIService.shared.sendDraft(account: account, draftId: draftId)
+            let record = SentMessageRecord(
+                gmailMessageId: sent.id,
+                threadId: sent.threadId,
+                draftId: draftId,
+                inReplyToGmailId: gmailMessage.id,
+                accountEmail: email.account_email,
+                replyMode: mode.rawValue
+            )
+            await SentMessageStore.shared.record(record)
+            if !sent.id.isEmpty {
+                await DashboardDataManager.shared.upsertSentEmail(from: sent, accountEmail: account.email)
+            }
+            NotificationCenter.default.post(name: .appSentMessageRecorded, object: record.id)
             isSending = false
             shouldDeleteDraftIfDismissed = false
             if intent.isCatchUpContext {

@@ -14,9 +14,12 @@ extension GmailAPIService {
     public func parseEmailMetadata(from gmailMessage: GmailMessage, accountEmail: String, emailId: Int) -> EmailMetadata {
         let headers = extractHeaders(from: gmailMessage.payload)
         let subject = headers["subject"] ?? ""
+        let isSent = gmailMessage.labelIds.contains("SENT")
         let from = headers["from"] ?? ""
-        let senderEmail = extractEmail(from: from)
-        let senderName = extractName(from: from)
+        let to = headers["to"] ?? ""
+        let partyHeader = isSent ? to : from
+        let senderEmail = extractEmail(from: partyHeader)
+        let senderName = extractName(from: partyHeader)
         
         let isRead = !gmailMessage.labelIds.contains("UNREAD")
         let isStarred = gmailMessage.labelIds.contains("STARRED")
@@ -47,9 +50,12 @@ extension GmailAPIService {
     public func parseEmailListItem(from gmailMessage: GmailMessage, accountEmail: String, emailId: Int) -> EmailListItem {
         let headers = extractHeaders(from: gmailMessage.payload)
         let subject = headers["subject"] ?? ""
+        let isSent = gmailMessage.labelIds.contains("SENT")
         let from = headers["from"] ?? ""
-        let senderEmail = extractEmail(from: from)
-        let senderName = extractName(from: from)
+        let to = headers["to"] ?? ""
+        let partyHeader = isSent ? to : from
+        let senderEmail = extractEmail(from: partyHeader)
+        let senderName = extractName(from: partyHeader)
         
         let isRead = !gmailMessage.labelIds.contains("UNREAD")
         let isStarred = gmailMessage.labelIds.contains("STARRED")
@@ -63,6 +69,7 @@ extension GmailAPIService {
         return EmailListItem(
             id: emailId,
             gmail_id: gmailMessage.id,
+            thread_id: gmailMessage.threadId,
             subject: subject,
             sender: senderEmail,
             sender_name: senderName.isEmpty ? nil : senderName,

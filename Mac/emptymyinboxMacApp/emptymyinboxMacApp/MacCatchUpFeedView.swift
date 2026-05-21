@@ -69,13 +69,13 @@ struct MacCatchUpFeedView: View {
 
     private var visibleCards: [CardInfo] {
         let start = loader.currentIndex
-        let end = min(start + maxVisibleCards, loader.emailMetadata.count)
+        let end = min(start + maxVisibleCards, loader.catchUpThreads.count)
         var displayIndex = 0
         var cards: [CardInfo] = []
         for i in start..<end {
-            let id = loader.emailMetadata[i].id
-            guard !loader.sessionSeenEmailIds.contains(id) else { continue }
-            cards.append(CardInfo(id: id, actualIndex: i, displayIndex: displayIndex))
+            let thread = loader.catchUpThreads[i]
+            guard !loader.sessionSeenThreadIds.contains(thread.id) else { continue }
+            cards.append(CardInfo(id: thread.id, actualIndex: i, displayIndex: displayIndex))
             displayIndex += 1
         }
         return cards
@@ -118,9 +118,9 @@ struct MacCatchUpFeedView: View {
                             deckStack(deckHeight: deckHeight)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .task(id: loader.currentIndex) {
-                                    await loader.loadEmail(at: loader.currentIndex)
-                                    if loader.currentIndex + 1 < loader.emailMetadata.count {
-                                        await loader.loadEmail(at: loader.currentIndex + 1)
+                                    await loader.loadThread(at: loader.currentIndex)
+                                    if loader.currentIndex + 1 < loader.catchUpThreads.count {
+                                        await loader.loadThread(at: loader.currentIndex + 1)
                                     }
                                 }
 
@@ -190,14 +190,13 @@ struct MacCatchUpFeedView: View {
     /// Groups emails by account, preserving accountOrderStore order.
     private var groupedCounts: [(account: String, total: Int, remaining: Int)] {
         let order = accountOrderStore.orderedAccounts
-        // Count all unseen emails per account
         var totalMap: [String: Int] = [:]
         var remainingMap: [String: Int] = [:]
-        for (idx, meta) in loader.emailMetadata.enumerated() {
-            guard !loader.sessionSeenEmailIds.contains(meta.id) else { continue }
-            totalMap[meta.account_email, default: 0] += 1
+        for (idx, thread) in loader.catchUpThreads.enumerated() {
+            guard !loader.sessionSeenThreadIds.contains(thread.id) else { continue }
+            totalMap[thread.key.accountEmail, default: 0] += thread.unreadCount
             if idx >= loader.currentIndex {
-                remainingMap[meta.account_email, default: 0] += 1
+                remainingMap[thread.key.accountEmail, default: 0] += 1
             }
         }
         let accounts = order.isEmpty ? Array(totalMap.keys.sorted()) : order
@@ -262,7 +261,7 @@ struct MacCatchUpFeedView: View {
 
     @ViewBuilder
     private func cardViewFor(_ cardInfo: CardInfo, cardHeight: CGFloat) -> some View {
-        let meta = loader.emailMetadata[cardInfo.actualIndex]
+        let thread = loader.catchUpThreads[cardInfo.actualIndex]
         let isDismissing = dismissingCardId == cardInfo.id
         let displayIndex = cardInfo.displayIndex
         let effectiveDisplayIndex = calcEffectiveDisplayIndex(displayIndex: displayIndex, isDismissing: isDismissing)
@@ -279,10 +278,11 @@ struct MacCatchUpFeedView: View {
             return 0
         }()
 
-        MacCatchUpDeckCard(
-            metadata: meta,
-            detail: loader.emailAt(index: cardInfo.actualIndex),
-            loadState: loader.loadStates[meta.id] ?? .pending,
+        MacCatchUpThreadDeckCard(
+            thread: thread,
+            conversation: loader.loadedConversations[thread.id],
+            conversationBinding: loader.bindingForConversation(threadStableId: thread.id),
+            loadState: loader.threadLoadStates[thread.id] ?? .pending,
             cardHeight: cardHeight,
             dragOffset: displayIndex == 0 && !isDismissing ? cardDragOffset : .zero,
             onRetry: {
@@ -300,7 +300,8 @@ struct MacCatchUpFeedView: View {
                 handleDragEnd(translation: translation, velocity: velocity)
             },
             scrollSignal: displayIndex == 0 ? scrollSignal : 0,
-            scrollStepAmount: displayIndex == 0 ? scrollStepAmount : 0
+            scrollStepAmount: displayIndex == 0 ? scrollStepAmount : 0,
+            onConversationChange: { loader.updateCurrentConversation($0) }
         )
         .offset(cardOffset)
         .scaleEffect(isDismissing ? 1.0 : scale)
@@ -559,14 +560,12 @@ struct MacCatchUpFeedView: View {
             guard !isAnimating else { return }
             isProcessing = true
             isAnimating = true
-            await performDismissalAnimation(cardId: email.id, direction: .right)
-            loader.removeCurrentEmail()
-            await EmailActionSynchronizer.shared.enqueueMarkRead(
-                emailId: email.id,
-                gmailId: email.gmail_id,
-                accountEmail: email.account_email
-            )
-            await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+            let threadCardId = loader.currentThread?.id ?? email.id
+            let clearsThread = (loader.currentConversation?.unreadCount ?? 1) <= 1
+            await markSelectedMessageRead(email)
+            if clearsThread {
+                await performDismissalAnimation(cardId: threadCardId, direction: .right)
+            }
             sessionStats.reviewed += 1
             sessionStats.markedAsRead += 1
             recordSenderForReviewedEmail(email)
@@ -576,7 +575,8 @@ struct MacCatchUpFeedView: View {
         case .keepUnreadAndAdvance:
             guard !isAnimating else { return }
             isAnimating = true
-            await performDismissalAnimation(cardId: email.id, direction: .left)
+            let threadCardId = loader.currentThread?.id ?? email.id
+            await performDismissalAnimation(cardId: threadCardId, direction: .left)
             loader.moveToNext()
             sessionStats.reviewed += 1
             sessionStats.keptUnread += 1
@@ -594,10 +594,11 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .up)
+        let threadCardId = loader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .up)
 
         let newStar = !email.is_starred
-        loader.removeCurrentEmail()
+        loader.removeCurrentThread()
         await EmailActionSynchronizer.shared.enqueueStar(
             emailId: email.id,
             gmailId: email.gmail_id,
@@ -621,7 +622,8 @@ struct MacCatchUpFeedView: View {
         recordFirstAction()
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .left)
+        let threadCardId = loader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .left)
 
         loader.moveToNext()
 
@@ -639,15 +641,12 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .right)
-
-        loader.removeCurrentEmail()
-        await EmailActionSynchronizer.shared.enqueueMarkRead(
-            emailId: email.id,
-            gmailId: email.gmail_id,
-            accountEmail: email.account_email
-        )
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        let threadCardId = loader.currentThread?.id ?? email.id
+        let clearsThread = (loader.currentConversation?.unreadCount ?? 1) <= 1
+        await markSelectedMessageRead(email)
+        if clearsThread {
+            await performDismissalAnimation(cardId: threadCardId, direction: .right)
+        }
 
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
@@ -656,6 +655,16 @@ struct MacCatchUpFeedView: View {
         resetAnimationState()
         isProcessing = false
         isAnimating = false
+    }
+    
+    private func markSelectedMessageRead(_ email: EmailDetail) async {
+        await EmailActionSynchronizer.shared.enqueueMarkRead(
+            emailId: email.id,
+            gmailId: email.gmail_id,
+            accountEmail: email.account_email
+        )
+        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        loader.markMessageReadInCurrentThread(emailId: email.id)
     }
 
     private func handleUnsubscribe() async {
@@ -671,8 +680,9 @@ struct MacCatchUpFeedView: View {
                 if result.requiresManualAction, let url = result.manualActionURL {
                     await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
                 } else {
-                    await performDismissalAnimation(cardId: email.id, direction: .right)
-                    loader.removeCurrentEmail()
+                    let threadCardId = loader.currentThread?.id ?? email.id
+                    await performDismissalAnimation(cardId: threadCardId, direction: .right)
+                    loader.removeCurrentThread()
                     sessionStats.reviewed += 1
                     sessionStats.successfulUnsubscribes += 1
                     recordSenderForReviewedEmail(email)
@@ -688,7 +698,90 @@ struct MacCatchUpFeedView: View {
     }
 }
 
-// MARK: - Deck card (content only — parent owns all transforms)
+// MARK: - Thread deck card
+
+private struct MacCatchUpThreadDeckCard: View {
+    let thread: CatchUpThreadItem
+    let conversation: EmailThreadConversation?
+    let conversationBinding: Binding<EmailThreadConversation>?
+    let loadState: EmailLoadState
+    let cardHeight: CGFloat
+    let dragOffset: CGSize
+    let onRetry: () -> Void
+    let onSkipFailed: () -> Void
+    let onDragChanged: (CGSize) -> Void
+    let onDragEnded: (CGSize, CGSize) -> Void
+    var scrollSignal: Int = 0
+    var scrollStepAmount: CGFloat = 0
+    let onConversationChange: (EmailThreadConversation) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            swipeHintBar
+
+            Group {
+                switch loadState {
+                case .loaded:
+                    if let binding = conversationBinding {
+                        EmailThreadReaderView(
+                            conversation: binding,
+                            viewportHeight: cardHeight - 48,
+                            scrollSignal: scrollSignal,
+                            scrollStepAmount: scrollStepAmount
+                        )
+                        .onChange(of: binding.wrappedValue.selectedMessageId) { _, _ in
+                            onConversationChange(binding.wrappedValue)
+                        }
+                    } else if let conversation {
+                        EmailThreadReaderView(
+                            conversation: .constant(conversation),
+                            viewportHeight: cardHeight - 48,
+                            scrollSignal: scrollSignal,
+                            scrollStepAmount: scrollStepAmount
+                        )
+                    }
+                case .loading, .pending:
+                    ProgressView("Loading conversation…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failed:
+                    VStack(spacing: 12) {
+                        Text("Could not load this conversation")
+                            .font(.subheadline)
+                            .foregroundStyle(MacAppTheme.secondaryText)
+                        HStack(spacing: 10) {
+                            Button("Retry", action: onRetry)
+                                .buttonStyle(.borderedProminent)
+                            Button("Skip", action: onSkipFailed)
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { v in onDragChanged(v.translation) }
+                    .onEnded { v in onDragEnded(v.translation, v.velocity) }
+            )
+        }
+        .frame(height: cardHeight, alignment: .top)
+        .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+    }
+
+    private var swipeHintBar: some View {
+        let tint: Color = {
+            if dragOffset.width > 18 { return .green }
+            if dragOffset.width < -18 { return .orange }
+            if dragOffset.height < -18 { return MacAppTheme.accent }
+            return .clear
+        }()
+        return tint
+            .frame(height: 4)
+            .animation(.easeInOut(duration: 0.1), value: dragOffset.width)
+    }
+}
+
+// MARK: - Legacy single-message deck card
 
 private struct MacCatchUpDeckCard: View {
     let metadata: EmailMetadata

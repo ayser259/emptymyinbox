@@ -60,6 +60,15 @@ public struct MailboxDisplayConfig: Sendable {
                 showsReadFilterChips: true,
                 showsUnreadCountHeader: false
             )
+        case .sent:
+            return MailboxDisplayConfig(
+                navigationTitle: "Sent",
+                emptyIconSystemName: "paperplane",
+                emptyTitle: "No sent messages",
+                emptySubtitle: "Messages you send from Gmail will appear here",
+                showsReadFilterChips: false,
+                showsUnreadCountHeader: false
+            )
         case .account(let email):
             return MailboxDisplayConfig(
                 navigationTitle: email,
@@ -75,6 +84,15 @@ public struct MailboxDisplayConfig: Sendable {
                 emptyIconSystemName: "star",
                 emptyTitle: "No saved messages",
                 emptySubtitle: "Star messages to save them for later",
+                showsReadFilterChips: false,
+                showsUnreadCountHeader: false
+            )
+        case .accountSent:
+            return MailboxDisplayConfig(
+                navigationTitle: "Sent",
+                emptyIconSystemName: "paperplane",
+                emptyTitle: "No sent messages",
+                emptySubtitle: "Messages you send will appear here",
                 showsReadFilterChips: false,
                 showsUnreadCountHeader: false
             )

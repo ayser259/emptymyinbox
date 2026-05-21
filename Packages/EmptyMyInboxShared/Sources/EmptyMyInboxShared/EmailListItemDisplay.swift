@@ -20,11 +20,21 @@ public enum EmailListItemDisplay {
         return formatter
     }()
 
+    public static func isSentMail(_ email: EmailListItem) -> Bool {
+        email.labels.contains("SENT")
+    }
+
     public static func senderDisplayName(for email: EmailListItem) -> String {
-        if let name = email.sender_name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
-            return name
+        let name: String
+        if let senderName = email.sender_name?.trimmingCharacters(in: .whitespacesAndNewlines), !senderName.isEmpty {
+            name = senderName
+        } else {
+            name = email.sender
         }
-        return email.sender
+        if isSentMail(email), !name.isEmpty {
+            return "To: \(name)"
+        }
+        return name
     }
 
     public static func subjectDisplay(for email: EmailListItem) -> String {

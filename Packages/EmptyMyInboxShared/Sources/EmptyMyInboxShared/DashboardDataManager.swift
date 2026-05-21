@@ -108,6 +108,7 @@ public actor DashboardDataManager {
         // Fetch data from all accounts
         var allInboxMetadata: [EmailMetadata] = []
         var allStarredMetadata: [EmailMetadata] = []
+        var allSentMetadata: [EmailMetadata] = []
         var allLabelsDict: [String: (name: String, unreadCount: Int)] = [:]
         
         // Convert GmailAccounts to EmailAccounts
@@ -230,6 +231,54 @@ public actor DashboardDataManager {
                 logError("Error fetching starred emails for \(gmailAccount.email): \(error)", category: "Starred")
                 await progressCallback?(.fetchingStarred, .failed(error.localizedDescription), "Failed: \(error.localizedDescription)", gmailAccount.email, nil, nil)
             }
+
+            // Stage 6: Fetching sent emails
+            await progressCallback?(.fetchingSent, .inProgress, "Account \(accountNum) of \(totalAccounts)", gmailAccount.email, 0, nil)
+            logDebug("Fetching sent for \(gmailAccount.email)", category: "Refresh")
+
+            do {
+                let sentMetadata: [EmailMetadata]
+
+                if shouldSync {
+                    sentMetadata = try await gmailService.syncSentEmailMetadata(
+                        for: gmailAccount,
+                        maxResults: 500,
+                        progressCallback: { current, total in
+                            await progressCallback?(.fetchingSent, .inProgress, "Fetching sent: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                        }
+                    )
+                    logDebug("syncSentEmailMetadata returned \(sentMetadata.count) sent for \(gmailAccount.email)", category: "Refresh")
+                } else {
+                    if let existing = existingSnapshot {
+                        sentMetadata = existing.sentEmails
+                            .filter { $0.account_email.lowercased() == gmailAccount.email.lowercased() }
+                            .map { item in
+                                EmailMetadata(
+                                    id: item.id,
+                                    gmail_id: item.gmail_id,
+                                    thread_id: item.thread_id,
+                                    subject: item.subject,
+                                    sender: item.sender,
+                                    sender_name: item.sender_name,
+                                    snippet: item.snippet,
+                                    is_read: item.is_read,
+                                    is_starred: item.is_starred,
+                                    labels: item.labels,
+                                    received_at: item.received_at,
+                                    account_email: item.account_email
+                                )
+                            }
+                    } else {
+                        sentMetadata = []
+                    }
+                }
+
+                allSentMetadata.append(contentsOf: sentMetadata)
+                await progressCallback?(.fetchingSent, .inProgress, "\(sentMetadata.count) sent from \(gmailAccount.email)", gmailAccount.email, sentMetadata.count, nil)
+            } catch {
+                logError("Error fetching sent emails for \(gmailAccount.email): \(error)", category: "Refresh")
+                await progressCallback?(.fetchingSent, .failed(error.localizedDescription), "Failed: \(error.localizedDescription)", gmailAccount.email, nil, nil)
+            }
             
             // Create EmailAccount - use current date as lastSync since we just synced
             let dateFormatter = ISO8601DateFormatter()
@@ -251,6 +300,7 @@ public actor DashboardDataManager {
         // Mark fetch stages as complete
         await progressCallback?(.fetchingUnread, .completed, "Fetched all inbox messages", nil, allInboxMetadata.count, nil)
         await progressCallback?(.fetchingStarred, .completed, "Fetched all starred emails", nil, allStarredMetadata.count, nil)
+        await progressCallback?(.fetchingSent, .completed, "Fetched all sent emails", nil, allSentMetadata.count, nil)
         
         // Stage 6: Processing data
         await progressCallback?(.processingData, .inProgress, "Processing \(allInboxMetadata.count) emails...", nil, nil, nil)
@@ -280,11 +330,13 @@ public actor DashboardDataManager {
         // Convert metadata to EmailListItem for storage
         let inboxEmails = allInboxMetadata.map { $0.toEmailListItem() }
         let starredEmails = allStarredMetadata.map { $0.toEmailListItem() }
+        let sentEmails = allSentMetadata.map { $0.toEmailListItem() }
         
         // Sort by received_at descending
         let sortedInbox = inboxEmails.sorted { $0.received_at > $1.received_at }
         let sortedUnreadOnly = sortedInbox.filter { !$0.is_read }
         let sortedStarred = starredEmails.sorted { $0.received_at > $1.received_at }
+        let sortedSent = sentEmails.sorted { $0.received_at > $1.received_at }
         
         await progressCallback?(.mergingEmails, .completed, "Merged \(sortedInbox.count) inbox messages", nil, sortedInbox.count, nil)
         
@@ -309,14 +361,16 @@ public actor DashboardDataManager {
             emails: sortedUnreadOnly,
             allEmails: sortedInbox,
             starredEmails: sortedStarred,
+            sentEmails: sortedSent,
             labels: labels
         )
         await dashboardCache.saveSnapshot(snapshot)
-        await InboxMetricsStore.shared.updateReceivedCounts(from: sortedInbox)
+        await InboxMetricsStore.shared.reconcileReceivedEmails(from: sortedInbox)
         Telemetry.event("dashboard.refresh.snapshot_saved", metadata: [
             "inbox_count": "\(sortedInbox.count)",
             "unread_count": "\(sortedUnreadOnly.count)",
-            "starred_count": "\(sortedStarred.count)"
+            "starred_count": "\(sortedStarred.count)",
+            "sent_count": "\(sortedSent.count)"
         ])
         
         await progressCallback?(.savingSnapshot, .completed, "Snapshot saved", nil, nil, nil)
@@ -324,13 +378,14 @@ public actor DashboardDataManager {
         // Stage 12: Complete
         await progressCallback?(.complete, .completed, "Refresh completed!", nil, nil, nil)
         
-        logSuccess("Refresh complete: \(sortedInbox.count) inbox messages (\(sortedUnreadOnly.count) unread), \(sortedStarred.count) starred", category: "Refresh")
+        logSuccess("Refresh complete: \(sortedInbox.count) inbox messages (\(sortedUnreadOnly.count) unread), \(sortedStarred.count) starred, \(sortedSent.count) sent", category: "Refresh")
         logDebug("Health statuses: \(accountHealthMap.mapValues { String(describing: $0.status) })", category: "Health")
         Telemetry.event("dashboard.refresh.complete", metadata: [
             "elapsed_ms": "\(Int(Date().timeIntervalSince(refreshStart) * 1000))",
             "inbox_count": "\(sortedInbox.count)",
             "unread_count": "\(sortedUnreadOnly.count)",
-            "starred_count": "\(sortedStarred.count)"
+            "starred_count": "\(sortedStarred.count)",
+            "sent_count": "\(sortedSent.count)"
         ])
         
         return snapshot
@@ -371,6 +426,15 @@ public actor DashboardDataManager {
             )
             await progressCallback?(.fetchingStarred, .completed, "Fetched starred", gmailAccount.email, starredMetadata.count, nil)
 
+            let sentMetadata = try await gmailService.syncSentEmailMetadata(
+                for: gmailAccount,
+                maxResults: 500,
+                progressCallback: { current, total in
+                    await progressCallback?(.fetchingSent, .inProgress, "Fetching sent: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                }
+            )
+            await progressCallback?(.fetchingSent, .completed, "Fetched sent", gmailAccount.email, sentMetadata.count, nil)
+
             var health = accountHealthMap[gmailAccount.email] ?? AccountHealth(email: gmailAccount.email)
             health.status = .healthy
             health.lastSuccessfulSync = Date()
@@ -380,6 +444,7 @@ public actor DashboardDataManager {
 
             let updatedInboxForAccount = inboxMetadata.map { $0.toEmailListItem() }
             let updatedStarredForAccount = starredMetadata.map { $0.toEmailListItem() }
+            let updatedSentForAccount = sentMetadata.map { $0.toEmailListItem() }
 
             let baseSnapshot = existingSnapshot ?? DashboardDataSnapshot(
                 timestamp: Date(),
@@ -387,6 +452,7 @@ public actor DashboardDataManager {
                 emails: [],
                 allEmails: [],
                 starredEmails: [],
+                sentEmails: [],
                 labels: []
             )
 
@@ -394,6 +460,8 @@ public actor DashboardDataManager {
                 .sorted { $0.received_at > $1.received_at }
             let mergedUnreadOnly = mergedInbox.filter { !$0.is_read }
             let mergedStarred = (baseSnapshot.starredEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedStarredForAccount)
+                .sorted { $0.received_at > $1.received_at }
+            let mergedSent = (baseSnapshot.sentEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedSentForAccount)
                 .sorted { $0.received_at > $1.received_at }
 
             let dateFormatter = ISO8601DateFormatter()
@@ -430,10 +498,11 @@ public actor DashboardDataManager {
                 emails: mergedUnreadOnly,
                 allEmails: mergedInbox,
                 starredEmails: mergedStarred,
+                sentEmails: mergedSent,
                 labels: labels
             )
             await dashboardCache.saveSnapshot(updatedSnapshot)
-            await InboxMetricsStore.shared.updateReceivedCounts(from: mergedInbox)
+            await InboxMetricsStore.shared.reconcileReceivedEmails(from: mergedInbox)
             Telemetry.event("dashboard.refresh.account.complete", metadata: [
                 "account_scope": "single_account",
                 "elapsed_ms": "\(Int(Date().timeIntervalSince(refreshStart) * 1000))",
@@ -609,8 +678,42 @@ public actor DashboardDataManager {
             emails: unread,
             allEmails: sortedAll,
             starredEmails: starred,
+            sentEmails: snapshot.sentEmails,
             labels: labels
         )
+    }
+
+    /// Insert or update a sent message in the dashboard snapshot after a successful app send.
+    public func upsertSentEmail(from gmailMessage: GmailMessage, accountEmail: String) async {
+        guard !gmailMessage.id.isEmpty else { return }
+        guard let snapshot = await dashboardCache.loadSnapshot() else { return }
+
+        let emailId = StableID.emailId(gmailId: gmailMessage.id)
+        let metadata = GmailAPIService.shared.parseEmailMetadata(
+            from: gmailMessage,
+            accountEmail: accountEmail,
+            emailId: emailId
+        )
+        let listItem = metadata.toEmailListItem()
+
+        var sentEmails = snapshot.sentEmails.filter { $0.gmail_id != listItem.gmail_id }
+        sentEmails.insert(listItem, at: 0)
+        sentEmails.sort { $0.received_at > $1.received_at }
+
+        let updated = DashboardDataSnapshot(
+            timestamp: Date(),
+            accounts: snapshot.accounts,
+            emails: snapshot.emails,
+            allEmails: snapshot.allEmails,
+            starredEmails: snapshot.starredEmails,
+            sentEmails: sentEmails,
+            labels: snapshot.labels
+        )
+        await dashboardCache.saveSnapshot(updated)
+
+        await MainActor.run {
+            NotificationCenter.default.post(name: .dashboardNeedsUpdate, object: nil)
+        }
     }
 
     private func labelsForUnreadEmails(_ unread: [EmailListItem]) -> [GmailLabel] {

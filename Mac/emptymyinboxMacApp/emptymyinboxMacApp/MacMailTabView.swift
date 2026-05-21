@@ -41,6 +41,7 @@ private enum MailMailboxScope: Hashable {
     case all
     case allUnread
     case saved
+    case sent
     case account(String)
 
     var mailboxScope: MailboxScope {
@@ -48,6 +49,7 @@ private enum MailMailboxScope: Hashable {
         case .all: return .all
         case .allUnread: return .allUnread
         case .saved: return .saved
+        case .sent: return .sent
         case .account(let email): return .account(email: email)
         }
     }
@@ -76,6 +78,7 @@ struct MacMailTabView: View {
     @State private var selection: MailSidebarSelection = .tool(.dashboard)
     @State private var navigationPath = NavigationPath()
     @State private var selectedEmailId: Int?
+    @State private var selectedThread: EmailThreadSummary?
     @State private var showLLMSettings = false
 
     var body: some View {
@@ -88,7 +91,12 @@ struct MacMailTabView: View {
             HStack(spacing: 0) {
                 if case .mailbox(let scope) = selection {
                     NavigationStack {
-                        MacMailboxListColumn(scope: scope, snapshot: snapshot, selectedEmailId: $selectedEmailId)
+                        MacMailboxListColumn(
+                            scope: scope,
+                            snapshot: snapshot,
+                            selectedThreadId: $selectedEmailId,
+                            selectedThread: $selectedThread
+                        )
                     }
                     .frame(minWidth: 280, idealWidth: 320, maxWidth: 480)
                     .background(MacAppTheme.secondaryBackground)
@@ -112,6 +120,7 @@ struct MacMailTabView: View {
         .onChange(of: selection) { _, _ in
             navigationPath = NavigationPath()
             selectedEmailId = nil
+            selectedThread = nil
             sidebarShortcutsStore.removeLayers(withPrefix: "mail.")
             sidebarShortcutsStore.removeLayers(withPrefix: "catchup.")
             applyMailToolsShortcutLayer()
@@ -187,6 +196,12 @@ struct MacMailTabView: View {
                     isSelected: selection == .mailbox(.saved),
                     action: { selection = .mailbox(.saved) }
                 )
+                MacSidebarListRowButton(
+                    title: "Sent",
+                    icon: .system("paperplane.fill"),
+                    isSelected: selection == .mailbox(.sent),
+                    action: { selection = .mailbox(.sent) }
+                )
 
                 ForEach(authManager.accounts) { account in
                     MacSidebarListRowButton(
@@ -228,7 +243,10 @@ struct MacMailTabView: View {
         case .tool(let tool):
             toolDetail(tool)
         case .mailbox:
-            if let selectedEmailId {
+            if let selectedThread, selectedThread.key.hasValidThreadId {
+                MacThreadConversationDetailView(summary: selectedThread)
+                    .id(selectedThread.id)
+            } else if let selectedEmailId {
                 MacCachedEmailDetailView(emailId: selectedEmailId)
                 .id(selectedEmailId)
             } else {
@@ -315,7 +333,8 @@ struct MacMailTabView: View {
 private struct MacMailboxListColumn: View {
     let scope: MailMailboxScope
     let snapshot: DashboardDataSnapshot?
-    @Binding var selectedEmailId: Int?
+    @Binding var selectedThreadId: Int?
+    @Binding var selectedThread: EmailThreadSummary?
 
     @State private var readFilter: MailboxReadFilter = .all
 
@@ -323,9 +342,9 @@ private struct MacMailboxListColumn: View {
         MailboxDisplayConfig.forScope(scope.mailboxScope, readFilter: readFilter)
     }
 
-    private var rows: [EmailListItem] {
+    private var threadRows: [EmailThreadSummary] {
         guard let snapshot else { return [] }
-        return MailboxQuery.emails(in: snapshot, scope: scope.mailboxScope, readFilter: readFilter)
+        return MailboxThreadQuery.threads(in: snapshot, scope: scope.mailboxScope, readFilter: readFilter)
     }
 
     private var title: String {
@@ -338,7 +357,7 @@ private struct MacMailboxListColumn: View {
 
     private var showsAccountOnRows: Bool {
         switch scope {
-        case .all, .allUnread, .saved:
+        case .all, .allUnread, .saved, .sent:
             return true
         case .account:
             return false
@@ -352,13 +371,13 @@ private struct MacMailboxListColumn: View {
                 Divider().opacity(0.3)
             }
 
-            if rows.isEmpty {
+            if threadRows.isEmpty {
                 MailboxEmptyStateView(config: displayConfig)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selectedEmailId) {
+                List(selection: $selectedThreadId) {
                     if displayConfig.showsUnreadCountHeader {
-                        let unreadCount = rows.filter { !$0.is_read }.count
+                        let unreadCount = threadRows.reduce(0) { $0 + $1.unreadCount }
                         if unreadCount > 0 {
                             Section {
                                 MailboxUnreadCountHeader(count: unreadCount)
@@ -366,22 +385,188 @@ private struct MacMailboxListColumn: View {
                         }
                     }
 
-                    ForEach(rows, id: \.id) { email in
-                        MailboxEmailRow(email: email, showsAccountEmail: showsAccountOnRows)
-                            .tag(Optional(email.id))
+                    ForEach(threadRows) { thread in
+                        MailboxThreadEmailRow(thread: thread, showsAccountEmail: showsAccountOnRows)
+                            .tag(Optional(thread.id))
                     }
                 }
                 .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle(title)
-        // Reset filter when the scope changes so we don't land on an empty "Read" view
         .onChange(of: scope) { _, _ in readFilter = .all }
+        .onChange(of: selectedThreadId) { _, newId in
+            guard let newId else {
+                selectedThread = nil
+                return
+            }
+            selectedThread = threadRows.first { $0.id == newId }
+        }
+        .onChange(of: readFilter) { _, _ in
+            selectedThreadId = nil
+            selectedThread = nil
+        }
     }
 
     private var readFilterBar: some View {
         MailboxReadFilterBar(selection: $readFilter)
             .background(MacAppTheme.primaryBackground)
+    }
+}
+
+// MARK: - Thread conversation detail
+
+private struct MacThreadConversationDetailView: View {
+    let summary: EmailThreadSummary
+    @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
+    @State private var conversation: EmailThreadConversation?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var isProcessing = false
+    @State private var hasUnsubscribeAvailable = false
+    @State private var showUnsubscribeWebView = false
+    @State private var unsubscribeManualURL: URL?
+    @State private var replyPresentation: ReplyComposerPresentation?
+    @StateObject private var keyboardMonitor = MacMailDetailKeyboardMonitor()
+
+    var body: some View {
+        MacReplyComposerSlideInContainer(replyPresentation: $replyPresentation) {
+            Group {
+                if isLoading {
+                    ProgressView("Loading conversation…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if conversation != nil {
+                    GeometryReader { geo in
+                        VStack(spacing: 0) {
+                            EmailThreadReaderView(
+                                conversation: conversationBinding,
+                                viewportHeight: geo.size.height - 140,
+                                showsActionTargetPicker: true
+                            )
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+
+                            if let target = conversation?.selectedMessage {
+                                EmailReadingActionBar(
+                                    email: target,
+                                    isDisabled: isProcessing,
+                                    hasUnsubscribe: $hasUnsubscribeAvailable,
+                                    handlers: handlers(for: target)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("Could not load thread", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        if let msg = errorMessage { Text(msg) }
+                    }
+                }
+            }
+        }
+        .navigationTitle(summary.latestMessage.subject.isEmpty ? "Thread" : summary.latestMessage.subject)
+        .task { await loadThread() }
+        .task(id: conversation?.selectedMessageId) {
+            await refreshUnsubscribeAvailability()
+        }
+        .sheet(isPresented: $showUnsubscribeWebView) {
+            if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
+        }
+    }
+
+    private var conversationBinding: Binding<EmailThreadConversation> {
+        Binding(
+            get: { conversation ?? EmailThreadConversation(key: summary.key, summary: summary) },
+            set: { conversation = $0 }
+        )
+    }
+
+    private func handlers(for detail: EmailDetail) -> EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { replyPresentation = ReplyComposerPresentation(email: detail, mode: .reply) },
+            onReplyAll: { replyPresentation = ReplyComposerPresentation(email: detail, mode: .replyAll) },
+            onStar: { Task { await handleStar(detail) } },
+            onMarkUnread: { Task { await handleMarkUnread(detail) } },
+            onMarkAsRead: { Task { await handleMarkAsRead(detail) } },
+            onUnsubscribe: { Task { await handleUnsubscribe(detail) } }
+        )
+    }
+
+    private func loadThread() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            conversation = try await ThreadConversationService.shared.loadConversation(
+                key: summary.key,
+                summary: summary
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshUnsubscribeAvailability() async {
+        hasUnsubscribeAvailable = await EmailReadingActionSupport.hasUnsubscribeOption(for: conversation?.selectedMessage)
+    }
+
+    private func handleStar(_ detail: EmailDetail) async {
+        guard !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        let newStar = !detail.is_starred
+        await EmailActionSynchronizer.shared.enqueueStar(
+            emailId: detail.id,
+            gmailId: detail.gmail_id,
+            accountEmail: detail.account_email,
+            shouldStar: newStar
+        )
+        let updated = detail.updating(isStarred: newStar)
+        await EmailCache.shared.saveEmailDetail(updated)
+        await DashboardDataManager.shared.updateEmailStarred(emailId: detail.id, isStarred: newStar)
+        conversation?.updateMessage(updated)
+    }
+
+    private func handleMarkAsRead(_ detail: EmailDetail) async {
+        guard !isProcessing, !detail.is_read else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        await EmailActionSynchronizer.shared.enqueueMarkRead(
+            emailId: detail.id,
+            gmailId: detail.gmail_id,
+            accountEmail: detail.account_email
+        )
+        let updated = detail.updating(isRead: true)
+        await EmailCache.shared.saveEmailDetail(updated)
+        await DashboardDataManager.shared.markEmailAsRead(emailId: detail.id)
+        conversation?.updateMessage(updated)
+    }
+
+    private func handleMarkUnread(_ detail: EmailDetail) async {
+        guard !isProcessing, detail.is_read else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        await EmailActionSynchronizer.shared.enqueueMarkUnread(
+            emailId: detail.id,
+            gmailId: detail.gmail_id,
+            accountEmail: detail.account_email
+        )
+        let updated = detail.updating(isRead: false)
+        await EmailCache.shared.saveEmailDetail(updated)
+        await DashboardDataManager.shared.markEmailAsUnread(emailId: detail.id, accountId: nil)
+        conversation?.updateMessage(updated)
+    }
+
+    private func handleUnsubscribe(_ detail: EmailDetail) async {
+        guard !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(for: detail, accountEmail: detail.account_email) else { return }
+        let result = await UnsubscribeService.shared.executeUnsubscribe(method: method, userEmail: detail.account_email)
+        if result.requiresManualAction, let url = result.manualActionURL {
+            unsubscribeManualURL = url
+            showUnsubscribeWebView = true
+        }
     }
 }
 
@@ -693,7 +878,7 @@ private struct MacCachedEmailDetailView: View {
 
         // 2. Look up gmail_id + account_email from the snapshot
         if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
-            let allItems = snapshot.allEmails + snapshot.starredEmails
+            let allItems = snapshot.allEmails + snapshot.starredEmails + snapshot.sentEmails
             if let found = allItems.first(where: { $0.id == emailId }) {
                 await fetchFromGmail(gmailId: found.gmail_id, accountEmail: found.account_email)
                 return

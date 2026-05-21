@@ -3,11 +3,45 @@
 //  EmptyMyInboxShared
 //
 //  Daily inbox metrics persisted under Application Support.
+//  Version 2 indexes received emails by Gmail message id; refresh reconciles observed inbox.
 //
 
 import Foundation
 
 // MARK: - Models
+
+/// One observed inbox message contributing to a day's received metrics (keyed by `gmailId`).
+public struct IndexedReceivedEmail: Codable, Sendable, Equatable, Hashable {
+    public let gmailId: String
+    public let localEmailId: Int
+    public let accountEmail: String
+    public let senderKey: String
+    public let receivedAt: String
+
+    public init(
+        gmailId: String,
+        localEmailId: Int,
+        accountEmail: String,
+        senderKey: String,
+        receivedAt: String
+    ) {
+        self.gmailId = gmailId
+        self.localEmailId = localEmailId
+        self.accountEmail = accountEmail
+        self.senderKey = senderKey
+        self.receivedAt = receivedAt
+    }
+
+    public init(from email: EmailListItem) {
+        self.init(
+            gmailId: email.gmail_id,
+            localEmailId: email.id,
+            accountEmail: email.account_email,
+            senderKey: email.sender.lowercased(),
+            receivedAt: email.received_at
+        )
+    }
+}
 
 public struct DailyInboxMetric: Codable, Identifiable, Sendable, Equatable {
     public var dayKey: String
@@ -20,6 +54,8 @@ public struct DailyInboxMetric: Codable, Identifiable, Sendable, Equatable {
     public var keptUnread: Int
     public var potentialUnsubscribeSenders: Int
     public var successfulUnsubscribes: Int
+    /// Indexed observed messages for this day (v2). Empty for legacy aggregate-only days until next refresh.
+    public var receivedEmails: [IndexedReceivedEmail]
 
     public var id: String { dayKey }
 
@@ -33,7 +69,8 @@ public struct DailyInboxMetric: Codable, Identifiable, Sendable, Equatable {
         markedAsRead: Int = 0,
         keptUnread: Int = 0,
         potentialUnsubscribeSenders: Int = 0,
-        successfulUnsubscribes: Int = 0
+        successfulUnsubscribes: Int = 0,
+        receivedEmails: [IndexedReceivedEmail] = []
     ) {
         self.dayKey = dayKey
         self.emailsReceived = emailsReceived
@@ -45,11 +82,42 @@ public struct DailyInboxMetric: Codable, Identifiable, Sendable, Equatable {
         self.keptUnread = keptUnread
         self.potentialUnsubscribeSenders = potentialUnsubscribeSenders
         self.successfulUnsubscribes = successfulUnsubscribes
+        self.receivedEmails = receivedEmails
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case dayKey, emailsReceived, uniqueSendersReceived
+        case reviewSessions, reviewSeconds, emailsReviewed
+        case markedAsRead, keptUnread
+        case potentialUnsubscribeSenders, successfulUnsubscribes
+        case receivedEmails
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        dayKey = try c.decode(String.self, forKey: .dayKey)
+        emailsReceived = try c.decode(Int.self, forKey: .emailsReceived)
+        uniqueSendersReceived = try c.decode(Int.self, forKey: .uniqueSendersReceived)
+        reviewSessions = try c.decode(Int.self, forKey: .reviewSessions)
+        reviewSeconds = try c.decode(Double.self, forKey: .reviewSeconds)
+        emailsReviewed = try c.decode(Int.self, forKey: .emailsReviewed)
+        markedAsRead = try c.decode(Int.self, forKey: .markedAsRead)
+        keptUnread = try c.decode(Int.self, forKey: .keptUnread)
+        potentialUnsubscribeSenders = try c.decode(Int.self, forKey: .potentialUnsubscribeSenders)
+        successfulUnsubscribes = try c.decode(Int.self, forKey: .successfulUnsubscribes)
+        receivedEmails = try c.decodeIfPresent([IndexedReceivedEmail].self, forKey: .receivedEmails) ?? []
     }
 }
 
-private struct InboxMetricsFile: Codable {
+private struct InboxMetricsFileV1: Codable {
     var version: Int = 1
+    var days: [DailyInboxMetric]
+}
+
+private struct InboxMetricsFile: Codable {
+    static let currentVersion = 2
+
+    var version: Int
     var days: [DailyInboxMetric]
 }
 
@@ -100,8 +168,12 @@ public enum InboxMetricsChartMetric: String, CaseIterable, Identifiable, Sendabl
 public actor InboxMetricsStore {
     public static let shared = InboxMetricsStore()
 
+    /// Days reconciled from each mailbox refresh (covers trailing + weekday charts).
+    public static let reconciliationWindowDays = 14
+
     private static let retentionDays = 90
-    private let fileName = "inbox_metrics.json"
+    private let fileName: String
+    private let persistenceDirectory: URL
     private var cached: [DailyInboxMetric] = []
     private var didLoad = false
 
@@ -126,6 +198,21 @@ public actor InboxMetricsStore {
         return f
     }()
 
+    public init(
+        fileName: String = "inbox_metrics.json",
+        persistenceDirectory: URL? = nil
+    ) {
+        self.fileName = fileName
+        if let persistenceDirectory {
+            self.persistenceDirectory = persistenceDirectory
+        } else {
+            let fm = FileManager.default
+            let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+            self.persistenceDirectory = base.appendingPathComponent("emptyMyInbox", isDirectory: true)
+        }
+    }
+
     // MARK: - Public API
 
     public func metric(forDayContaining date: Date, calendar: Calendar = .current) async -> DailyInboxMetric? {
@@ -138,7 +225,7 @@ public actor InboxMetricsStore {
         await ensureLoaded()
         let today = calendar.startOfDay(for: Date())
         var points: [InboxMetricsDayPoint] = []
-        for offset in (0..<14).reversed() {
+        for offset in (0..<Self.reconciliationWindowDays).reversed() {
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
             let key = dayKey(for: day, calendar: calendar)
             let metric = cached.first { $0.dayKey == key } ?? DailyInboxMetric(dayKey: key)
@@ -156,7 +243,7 @@ public actor InboxMetricsStore {
         var thisWeek = Array(repeating: 0.0, count: 7)
         var previousWeek = Array(repeating: 0.0, count: 7)
 
-        for offset in 0..<14 {
+        for offset in 0..<Self.reconciliationWindowDays {
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
             let key = dayKey(for: day, calendar: calendar)
             let record = cached.first { $0.dayKey == key }
@@ -180,34 +267,44 @@ public actor InboxMetricsStore {
         }
     }
 
-    /// Rebuild received-email counts for days present in the snapshot (last 14 days window).
-    public func updateReceivedCounts(from emails: [EmailListItem], calendar: Calendar = .current) async {
+    /// Idempotently reconcile observed inbox messages into the local index for the chart window.
+    public func reconcileReceivedEmails(from emails: [EmailListItem], calendar: Calendar = .current) async {
         await ensureLoaded()
         let today = calendar.startOfDay(for: Date())
-        guard let windowStart = calendar.date(byAdding: .day, value: -13, to: today) else { return }
+        guard let windowStart = calendar.date(
+            byAdding: .day,
+            value: -(Self.reconciliationWindowDays - 1),
+            to: today
+        ) else { return }
 
-        var counts: [String: Int] = [:]
-        var senders: [String: Set<String>] = [:]
+        var indexedByDay: [String: [IndexedReceivedEmail]] = [:]
 
         for email in emails {
+            guard !email.gmail_id.isEmpty else { continue }
             guard let received = parseReceivedAt(email.received_at) else { continue }
             let dayStart = calendar.startOfDay(for: received)
             guard dayStart >= windowStart, dayStart <= today else { continue }
             let key = dayKey(for: dayStart, calendar: calendar)
-            counts[key, default: 0] += 1
-            senders[key, default: []].insert(email.sender.lowercased())
+            indexedByDay[key, default: []].append(IndexedReceivedEmail(from: email))
         }
 
-        for (key, count) in counts {
-            var day = dayRecord(forKey: key)
-            day.emailsReceived = count
-            day.uniqueSendersReceived = senders[key]?.count ?? 0
-            upsert(day)
+        for offset in 0..<Self.reconciliationWindowDays {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
+            let key = dayKey(for: day, calendar: calendar)
+            let deduped = Self.dedupeReceivedEmails(indexedByDay[key] ?? [])
+            var dayRecord = dayRecord(forKey: key)
+            Self.applyReceivedIndex(&dayRecord, emails: deduped)
+            upsert(dayRecord)
         }
 
         pruneOldRecords(calendar: calendar)
         await persist()
         await postUpdate()
+    }
+
+    /// Backward-compatible entry point used by dashboard refresh.
+    public func updateReceivedCounts(from emails: [EmailListItem], calendar: Calendar = .current) async {
+        await reconcileReceivedEmails(from: emails, calendar: calendar)
     }
 
     public func recordCatchUpSession(
@@ -241,6 +338,30 @@ public actor InboxMetricsStore {
         pruneOldRecords(calendar: calendar)
         await persist()
         await postUpdate()
+    }
+
+    // MARK: - Pure helpers (testable)
+
+    public static func dedupeReceivedEmails(_ emails: [IndexedReceivedEmail]) -> [IndexedReceivedEmail] {
+        var byGmailId: [String: IndexedReceivedEmail] = [:]
+        for email in emails {
+            byGmailId[email.gmailId] = email
+        }
+        return byGmailId.values.sorted { $0.receivedAt > $1.receivedAt }
+    }
+
+    public static func aggregates(from receivedEmails: [IndexedReceivedEmail]) -> (received: Int, uniqueSenders: Int) {
+        let deduped = dedupeReceivedEmails(receivedEmails)
+        let senders = Set(deduped.map(\.senderKey))
+        return (deduped.count, senders.count)
+    }
+
+    public static func applyReceivedIndex(_ day: inout DailyInboxMetric, emails: [IndexedReceivedEmail]) {
+        let deduped = dedupeReceivedEmails(emails)
+        day.receivedEmails = deduped
+        let agg = aggregates(from: deduped)
+        day.emailsReceived = agg.received
+        day.uniqueSendersReceived = agg.uniqueSenders
     }
 
     // MARK: - Helpers
@@ -331,15 +452,30 @@ public actor InboxMetricsStore {
     }
 
     private func loadFromDisk() async -> [DailyInboxMetric] {
-        let fileURL = appSupportURL().appendingPathComponent(fileName)
+        let fileURL = metricsFileURL()
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        let file = (try? JSONDecoder().decode(InboxMetricsFile.self, from: data))
-        return file?.days ?? []
+
+        if let v2 = try? JSONDecoder().decode(InboxMetricsFile.self, from: data),
+           v2.version >= InboxMetricsFile.currentVersion {
+            return v2.days
+        }
+
+        if let v1 = try? JSONDecoder().decode(InboxMetricsFileV1.self, from: data) {
+            logInfo("InboxMetricsStore: migrated v1 aggregate metrics (\(v1.days.count) days)", category: "Metrics")
+            return v1.days
+        }
+
+        logWarning("InboxMetricsStore: failed to decode metrics file", category: "Metrics")
+        return []
     }
 
     private func persist() async {
-        let fileURL = appSupportURL().appendingPathComponent(fileName)
-        let file = InboxMetricsFile(days: cached)
+        let fileURL = metricsFileURL()
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: persistenceDirectory.path) {
+            try? fm.createDirectory(at: persistenceDirectory, withIntermediateDirectories: true)
+        }
+        let file = InboxMetricsFile(version: InboxMetricsFile.currentVersion, days: cached)
         do {
             let data = try JSONEncoder().encode(file)
             try data.write(to: fileURL, options: .atomic)
@@ -348,14 +484,23 @@ public actor InboxMetricsStore {
         }
     }
 
+    private func metricsFileURL() -> URL {
+        persistenceDirectory.appendingPathComponent(fileName)
+    }
+
     private func appSupportURL() -> URL {
-        let fm = FileManager.default
-        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("emptyMyInbox", isDirectory: true)
-        if !fm.fileExists(atPath: dir.path) {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        return dir
+        persistenceDirectory
     }
 }
+
+#if DEBUG
+extension InboxMetricsStore {
+    /// Clears in-memory state and deletes the metrics file (unit tests only).
+    public func resetForTesting() async {
+        didLoad = true
+        cached = []
+        let url = metricsFileURL()
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+#endif

@@ -32,6 +32,7 @@ public struct EmailAccount: Codable {
 public struct EmailListItem: Codable {
     public let id: Int
     public let gmail_id: String
+    public let thread_id: String
     public let subject: String
     public let sender: String
     public let sender_name: String?
@@ -48,6 +49,7 @@ public struct EmailListItem: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
         gmail_id = try container.decode(String.self, forKey: .gmail_id)
+        thread_id = try container.decodeIfPresent(String.self, forKey: .thread_id) ?? ""
         subject = try container.decode(String.self, forKey: .subject)
         sender = try container.decode(String.self, forKey: .sender)
         sender_name = try container.decodeIfPresent(String.self, forKey: .sender_name)
@@ -61,7 +63,7 @@ public struct EmailListItem: Codable {
     }
     
     public enum CodingKeys: String, CodingKey {
-        case id, gmail_id, subject, sender, sender_name, snippet
+        case id, gmail_id, thread_id, subject, sender, sender_name, snippet
         case is_read, is_starred, labels, received_at, account_email
         case marked_read_at
     }
@@ -70,6 +72,7 @@ public struct EmailListItem: Codable {
     public init(
         id: Int,
         gmail_id: String,
+        thread_id: String = "",
         subject: String,
         sender: String,
         sender_name: String?,
@@ -83,6 +86,7 @@ public struct EmailListItem: Codable {
     ) {
         self.id = id
         self.gmail_id = gmail_id
+        self.thread_id = thread_id
         self.subject = subject
         self.sender = sender
         self.sender_name = sender_name
@@ -389,6 +393,7 @@ public struct EmailMetadata: Codable, Identifiable {
         EmailListItem(
             id: id,
             gmail_id: gmail_id,
+            thread_id: thread_id,
             subject: subject,
             sender: sender,
             sender_name: sender_name,

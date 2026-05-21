@@ -219,6 +219,7 @@ struct AccountsView: View {
                 emails: [],
                 allEmails: [],
                 starredEmails: [],
+                sentEmails: [],
                 labels: []
             )
             
@@ -257,6 +258,7 @@ struct AccountsView: View {
             emails: currentSnapshot.emails,
             allEmails: currentSnapshot.allEmails,
             starredEmails: currentSnapshot.starredEmails,
+            sentEmails: currentSnapshot.sentEmails,
             labels: currentSnapshot.labels
         )
         

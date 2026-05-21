@@ -247,8 +247,16 @@ extension GmailAPIService {
             let snippet = String(data: data, encoding: .utf8) ?? ""
             throw GmailAPIError.apiError("Failed to send draft (\(http.statusCode)): \(snippet)")
         }
-        Telemetry.event("gmail.draft_send", metadata: ["draft_id": draftId])
-        return Self.decodeSentMessage(from: data)
+        let sent = Self.decodeSentMessage(from: data)
+        var telemetryMeta: [String: String] = ["draft_id": draftId]
+        if !sent.id.isEmpty {
+            telemetryMeta["message_id"] = Telemetry.hashForDiagnostics(sent.id)
+        }
+        if !sent.threadId.isEmpty {
+            telemetryMeta["thread_id"] = Telemetry.hashForDiagnostics(sent.threadId)
+        }
+        Telemetry.event("gmail.draft_send", metadata: telemetryMeta)
+        return sent
     }
 
     /// Best-effort decode after `drafts.send`. Never throws: send already succeeded when this runs.

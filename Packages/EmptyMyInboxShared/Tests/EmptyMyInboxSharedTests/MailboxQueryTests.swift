@@ -12,6 +12,7 @@ final class MailboxQueryTests: XCTestCase {
         EmailListItem(
             id: id,
             gmail_id: "g\(id)",
+            thread_id: "thread-\(id)",
             subject: "Subject \(id)",
             sender: "sender\(id)@example.com",
             sender_name: nil,
@@ -28,7 +29,8 @@ final class MailboxQueryTests: XCTestCase {
     private func makeSnapshot(
         emails: [EmailListItem] = [],
         allEmails: [EmailListItem] = [],
-        starredEmails: [EmailListItem] = []
+        starredEmails: [EmailListItem] = [],
+        sentEmails: [EmailListItem] = []
     ) -> DashboardDataSnapshot {
         DashboardDataSnapshot(
             timestamp: Date(),
@@ -36,6 +38,7 @@ final class MailboxQueryTests: XCTestCase {
             emails: emails,
             allEmails: allEmails,
             starredEmails: starredEmails,
+            sentEmails: sentEmails,
             labels: []
         )
     }
@@ -101,6 +104,67 @@ final class MailboxQueryTests: XCTestCase {
         let snapshot = makeSnapshot(starredEmails: [starredA, starredB])
 
         let result = MailboxQuery.emails(in: snapshot, scope: .accountSaved(email: "A@test.com"))
+        XCTAssertEqual(result.map(\.id), [1])
+    }
+
+    func testSentScopeUsesSentEmails() {
+        var sent = makeEmail(id: 1, account: "a@test.com", receivedAt: "2026-05-19T10:00:00.000Z")
+        sent = EmailListItem(
+            id: sent.id,
+            gmail_id: sent.gmail_id,
+            thread_id: sent.thread_id,
+            subject: sent.subject,
+            sender: sent.sender,
+            sender_name: sent.sender_name,
+            snippet: sent.snippet,
+            is_read: sent.is_read,
+            is_starred: sent.is_starred,
+            labels: ["SENT"],
+            received_at: sent.received_at,
+            account_email: sent.account_email,
+            marked_read_at: nil
+        )
+        let inboxOnly = makeEmail(id: 2, account: "a@test.com", receivedAt: "2026-05-19T11:00:00.000Z")
+        let snapshot = makeSnapshot(allEmails: [inboxOnly], sentEmails: [sent])
+
+        let result = MailboxQuery.emails(in: snapshot, scope: .sent)
+        XCTAssertEqual(result.map(\.id), [1])
+    }
+
+    func testAccountSentScopeFiltersCaseInsensitively() {
+        let sentA = EmailListItem(
+            id: 1,
+            gmail_id: "g1",
+            thread_id: "t1",
+            subject: "Hi",
+            sender: "recipient@example.com",
+            sender_name: nil,
+            snippet: "Snippet",
+            is_read: true,
+            is_starred: false,
+            labels: ["SENT"],
+            received_at: "2026-05-19T10:00:00.000Z",
+            account_email: "User@Test.com",
+            marked_read_at: nil
+        )
+        let sentB = EmailListItem(
+            id: 2,
+            gmail_id: "g2",
+            thread_id: "t2",
+            subject: "Hi",
+            sender: "other@example.com",
+            sender_name: nil,
+            snippet: "Snippet",
+            is_read: true,
+            is_starred: false,
+            labels: ["SENT"],
+            received_at: "2026-05-19T11:00:00.000Z",
+            account_email: "other@test.com",
+            marked_read_at: nil
+        )
+        let snapshot = makeSnapshot(sentEmails: [sentA, sentB])
+
+        let result = MailboxQuery.emails(in: snapshot, scope: .accountSent(email: "user@test.com"))
         XCTAssertEqual(result.map(\.id), [1])
     }
 }

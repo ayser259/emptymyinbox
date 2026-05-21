@@ -22,6 +22,7 @@ struct MailboxListView: View {
   var syncStarredOnAppear: Bool = false
 
   @State private var emails: [EmailListItem] = []
+  @State private var threads: [EmailThreadSummary] = []
   @State private var accounts: [EmailAccount] = []
   @State private var isLoading = false
   @State private var lastRefreshTime: Date?
@@ -36,7 +37,14 @@ struct MailboxListView: View {
   }
 
   private var unreadCount: Int {
-    emails.filter { !$0.is_read }.count
+    if allowsBulkSelection {
+      return emails.filter { !$0.is_read }.count
+    }
+    return threads.reduce(0) { $0 + $1.unreadCount }
+  }
+  
+  private var useThreadRows: Bool {
+    !allowsBulkSelection
   }
 
   init(
@@ -153,8 +161,14 @@ struct MailboxListView: View {
         }
 
         LazyVStack(spacing: 0) {
-          ForEach(emails, id: \.id) { email in
-            emailRow(for: email)
+          if useThreadRows {
+            ForEach(threads) { thread in
+              threadRow(for: thread)
+            }
+          } else {
+            ForEach(emails, id: \.id) { email in
+              emailRow(for: email)
+            }
           }
         }
         .padding(.vertical, AppTheme.spacingSmall)
@@ -204,9 +218,9 @@ struct MailboxListView: View {
 
   private var isMultiAccountScope: Bool {
     switch scope {
-    case .all, .allUnread, .saved:
+    case .all, .allUnread, .saved, .sent:
       return true
-    case .account, .accountSaved:
+    case .account, .accountSaved, .accountSent:
       return false
     }
   }
@@ -297,8 +311,30 @@ struct MailboxListView: View {
   private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
     accounts = snapshot.accounts
     emails = MailboxQuery.emails(in: snapshot, scope: scope, readFilter: readFilter)
+    threads = MailboxThreadQuery.threads(in: snapshot, scope: scope, readFilter: readFilter)
     lastRefreshTime = snapshot.timestamp
-    mostRecentEmailTime = emails.first.flatMap { EmailListItemDisplay.parseReceivedAt($0.received_at) }
+    let recentItem = threads.first?.latestMessage ?? emails.first
+    mostRecentEmailTime = recentItem.flatMap { EmailListItemDisplay.parseReceivedAt($0.received_at) }
+  }
+  
+  @ViewBuilder
+  private func threadRow(for thread: EmailThreadSummary) -> some View {
+    let row = MailboxThreadEmailRow(
+      thread: thread,
+      showsAccountEmail: showsAccountOnRows || isMultiAccountScope
+    )
+    
+    if thread.key.hasValidThreadId {
+      NavigationLink(destination: EmailThreadDetailScreen(summary: thread)) {
+        row
+      }
+      .buttonStyle(.plain)
+    } else {
+      NavigationLink(destination: EmailDetailView(emailId: thread.latestMessage.id)) {
+        row
+      }
+      .buttonStyle(.plain)
+    }
   }
 
   private func refreshStarredFromGmail() async {
@@ -328,6 +364,7 @@ struct MailboxListView: View {
         emails: snapshot.emails,
         allEmails: snapshot.allEmails,
         starredEmails: allStarred,
+        sentEmails: snapshot.sentEmails,
         labels: snapshot.labels
       )
       await DashboardCache.shared.saveSnapshot(updated)
@@ -420,6 +457,7 @@ struct MailboxListView: View {
       emails: snapshot.emails.filter { !emailIds.contains($0.id) },
       allEmails: snapshot.allEmails.filter { !emailIds.contains($0.id) },
       starredEmails: snapshot.starredEmails.filter { !emailIds.contains($0.id) },
+      sentEmails: snapshot.sentEmails.filter { !emailIds.contains($0.id) },
       labels: snapshot.labels
     )
     await DashboardCache.shared.saveSnapshot(updated)

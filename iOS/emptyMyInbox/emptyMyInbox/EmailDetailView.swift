@@ -249,6 +249,12 @@ struct EmailDetailView: View {
                 await fetchEmailDetail(gmailId: foundEmail.gmail_id, accountEmail: foundEmail.account_email)
                 return
             }
+
+            if let foundEmail = snapshot.sentEmails.first(where: { $0.id == emailId }) {
+                logInfo("EmailDetailView: Email \(emailId) found in sent, fetching from Gmail", category: "Email")
+                await fetchEmailDetail(gmailId: foundEmail.gmail_id, accountEmail: foundEmail.account_email)
+                return
+            }
         }
         
         await MainActor.run {

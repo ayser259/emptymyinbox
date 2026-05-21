@@ -17,6 +17,7 @@ struct DashboardView: View {
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
+    @State private var sentEmails: [EmailListItem] = []
     @State private var labels: [GmailLabel] = []
     @State private var isLoading = false
     @State private var isRefreshing = false
@@ -62,6 +63,8 @@ struct DashboardView: View {
                     MailboxListView(scope: .allUnread)
                 case "starred":
                     StarredEmailsView()
+                case "sent":
+                    SentEmailsView()
                 case "catch_up":
                     CatchUpView()
                         .environmentObject(authManager)
@@ -118,6 +121,7 @@ struct DashboardView: View {
                 self.emails = []
                 self.allEmails = []
                 self.starredEmails = []
+                self.sentEmails = []
                 self.labels = []
                 self.lastRefreshTime = nil
             }
@@ -354,6 +358,15 @@ struct DashboardView: View {
                         title: "Saved",
                         count: starredEmails.count,
                         icon: "star.fill"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                NavigationLink(value: "sent") {
+                    ActionButton(
+                        title: "Sent",
+                        count: sentEmails.count,
+                        icon: "paperplane.fill"
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -692,7 +705,7 @@ struct DashboardView: View {
     }
     
     private var hasCachedData: Bool {
-        !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty)
+        !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty && sentEmails.isEmpty)
     }
     
     private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
@@ -700,6 +713,7 @@ struct DashboardView: View {
         self.emails = snapshot.emails
         self.allEmails = snapshot.allEmails
         self.starredEmails = snapshot.starredEmails
+        self.sentEmails = snapshot.sentEmails
         self.labels = snapshot.labels
         self.lastRefreshTime = snapshot.timestamp
     }
