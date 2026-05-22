@@ -35,6 +35,15 @@ private enum MailTool: String, CaseIterable, Identifiable {
         case .brief: return "sparkles"
         }
     }
+
+    var shortcutDisplay: String? {
+        switch self {
+        case .dashboard: return nil
+        case .catchUp: return "⌥C"
+        case .stories: return "⌥S"
+        case .brief: return "⌥B"
+        }
+    }
 }
 
 private enum MailMailboxScope: Hashable {
@@ -172,6 +181,7 @@ struct MacMailTabView: View {
                         title: tool.title,
                         icon: .system(tool.systemImage),
                         isSelected: selection == .tool(tool),
+                        shortcutHint: tool.shortcutDisplay,
                         action: { selection = .tool(tool) }
                     )
                 }
@@ -729,9 +739,9 @@ private struct MacCachedEmailDetailView: View {
             return
         }
         var items: [MacSidebarContextualShortcut] = [
-            MacSidebarContextualShortcut(title: "Keep unread", shortcutDisplay: "K"),
+            MacSidebarContextualShortcut(title: "Review Later", shortcutDisplay: "F"),
             MacSidebarContextualShortcut(title: "Star", shortcutDisplay: "S"),
-            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "E"),
+            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "J"),
             MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "R"),
         ]
         if isReplyAllMeaningful {

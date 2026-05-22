@@ -399,12 +399,19 @@ struct MacSidebarListRowButton: View {
     let isSelected: Bool
     /// Optional count badge shown on the trailing edge (hidden when nil or 0).
     var badge: Int? = nil
+    /// Optional inline shortcut badge shown beside the row label.
+    var shortcutHint: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                MacSidebarRowLeadingContent(leadingInset: leadingInset, title: title, icon: icon)
+                inlineLeadingContent
+                if let shortcutHint {
+                    MacKeycapBadge(text: shortcutHint)
+                        .padding(.leading, 2)
+                }
+                Spacer(minLength: 4)
                 if let count = badge, count > 0 {
                     Text("\(count)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -436,6 +443,31 @@ struct MacSidebarListRowButton: View {
     private var fontWeightForSelection: Font.Weight {
         if isSelected && !accentWhenSelected { return .semibold }
         return .regular
+    }
+
+    @ViewBuilder
+    private var inlineLeadingContent: some View {
+        HStack(spacing: 8) {
+            if leadingInset > 0 {
+                Color.clear.frame(width: leadingInset)
+            }
+            switch icon {
+            case .system(let name):
+                Image(systemName: name)
+                    .frame(width: 17, alignment: .center)
+                Text(title)
+                    .lineLimit(1)
+            case .asset(let name):
+                Image(name)
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 17, height: 17)
+                Text(title)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 

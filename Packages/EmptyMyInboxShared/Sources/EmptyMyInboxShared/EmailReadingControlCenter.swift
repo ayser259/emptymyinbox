@@ -109,7 +109,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                 #endif
 
                 EmailReadingTriageButton(
-                    title: "Mark Read",
+                    title: triageShortcuts.markReadTitle,
                     systemImage: "envelope.open.fill",
                     shortcutDisplay: triageShortcuts.markReadShortcutDisplay,
                     shortcutKey: triageShortcuts.markReadShortcutKey,

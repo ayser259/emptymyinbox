@@ -331,9 +331,12 @@ public final class ReplyDraftViewModel {
 
         let ask = action.promptPhrase(customText: customAsk.isEmpty ? quickReplyAsk : customAsk)
         guard !ask.isEmpty else { return }
+        let pendingDraft = quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bodyDraft = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftToRevise = pendingDraft.isEmpty ? bodyDraft : pendingDraft
 
-        if action.isRewriteAction, bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            quickReplyError = "Write something in the body first, then use rewrite actions."
+        if action.isRewriteAction, draftToRevise.isEmpty {
+            quickReplyError = "Generate or write a draft first, then use rewrite actions."
             return
         }
 
@@ -347,7 +350,7 @@ public final class ReplyDraftViewModel {
                 snippet: email.snippet,
                 body: email.body_text,
                 userAsk: ask,
-                currentDraft: bodyText,
+                currentDraft: draftToRevise,
                 recipientsTo: toField,
                 recipientsCc: ccField
             )
@@ -356,7 +359,9 @@ public final class ReplyDraftViewModel {
                 quickReplyError = "AI returned an empty reply. Try adding more detail."
             } else {
                 quickReplyDraft = trimmed
-                saveHint = "Quick Reply generated — tap Insert to add it."
+                saveHint = pendingDraft.isEmpty
+                    ? "Quick Reply generated — tap Insert to add it."
+                    : "Quick Reply revised — tap Insert to add it."
             }
             isGeneratingQuickReply = false
         } catch {

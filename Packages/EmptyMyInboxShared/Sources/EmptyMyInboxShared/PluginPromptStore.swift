@@ -66,6 +66,7 @@ Input JSON:
 
     public static let defaultQuickReplyUserPromptTemplate = """
 Draft one email reply based on the user ask.
+If `currentDraft` is present, revise that draft according to the user ask instead of starting from scratch.
 Keep the reply conversational, casual, brief, and friendly.
 Return strict JSON with this exact shape:
 {

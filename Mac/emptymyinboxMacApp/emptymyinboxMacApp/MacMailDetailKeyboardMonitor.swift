@@ -65,7 +65,7 @@ final class MacMailDetailKeyboardMonitor: ObservableObject {
             return true
         }
 
-        if ch == "k" {
+        if ch == "f" {
             onKeepUnread()
             return true
         }
@@ -73,7 +73,7 @@ final class MacMailDetailKeyboardMonitor: ObservableObject {
             onStar()
             return true
         }
-        if ch == "e" {
+        if ch == "j" {
             onMarkAsRead()
             return true
         }

@@ -290,9 +290,35 @@ public struct ReplyComposerQuickReplyPanel: View {
                 }
             }
 
-            TextField("What do you want to say?", text: $model.quickReplyAsk, axis: .vertical)
+            if hasQuickReplyDraft {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("First draft")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SharedAppTheme.secondaryText)
+
+                    TextEditor(text: $model.quickReplyDraft)
+                        .font(.callout)
+                        .foregroundStyle(SharedAppTheme.primaryText)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(minHeight: 120, maxHeight: 220)
+                        .background(SharedAppTheme.secondaryBackground.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                        .disabled(model.isGeneratingQuickReply)
+                }
+            }
+
+            Text(hasQuickReplyDraft ? "Add feedback" : "What should the reply say?")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(SharedAppTheme.secondaryText)
+
+            TextField(quickReplyAskPlaceholder, text: $model.quickReplyAsk, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-                .lineLimit(2 ... 4)
+                .lineLimit(3 ... 6)
                 .disabled(model.isGeneratingQuickReply)
                 .focused(focusQuickAsk)
                 .onSubmit {
@@ -306,7 +332,7 @@ public struct ReplyComposerQuickReplyPanel: View {
                     if model.isGeneratingQuickReply {
                         ProgressView().scaleEffect(0.85)
                     } else {
-                        Text("Generate")
+                        Text(hasQuickReplyDraft ? "Revise" : "Generate")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -324,24 +350,18 @@ public struct ReplyComposerQuickReplyPanel: View {
             if let msg = model.quickReplyAvailabilityMessage, !model.isQuickReplyAvailable {
                 Text(msg).font(.caption).foregroundStyle(SharedAppTheme.secondaryText)
             }
-
-            if !model.quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ScrollView {
-                    Text(model.quickReplyDraft)
-                        .font(.callout)
-                        .foregroundStyle(SharedAppTheme.primaryText)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .frame(minHeight: 72, maxHeight: 120)
-                .background(SharedAppTheme.secondaryBackground.opacity(0.55))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(SharedAppTheme.secondaryBackground.opacity(0.35))
+    }
+
+    private var hasQuickReplyDraft: Bool {
+        !model.quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var quickReplyAskPlaceholder: String {
+        hasQuickReplyDraft ? "Add feedback for the AI..." : "Jot down what you want to say..."
     }
 }
 

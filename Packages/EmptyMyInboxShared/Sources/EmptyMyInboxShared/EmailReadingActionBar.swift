@@ -14,6 +14,7 @@ import SwiftUI
 public struct EmailReadingTriageShortcuts: Sendable {
     public let deferUnreadTitle: String
     public let deferUnreadShortcutDisplay: String
+    public let markReadTitle: String
     public let markReadShortcutDisplay: String
     /// When true, triage buttons skip `.keyboardShortcut` (Mac Catch Up uses `MacCatchUpKeyboardMonitor` instead).
     public let suppressButtonKeyboardShortcuts: Bool
@@ -21,11 +22,13 @@ public struct EmailReadingTriageShortcuts: Sendable {
     public init(
         deferUnreadTitle: String,
         deferUnreadShortcutDisplay: String,
+        markReadTitle: String = "Mark as Read",
         markReadShortcutDisplay: String,
         suppressButtonKeyboardShortcuts: Bool = false
     ) {
         self.deferUnreadTitle = deferUnreadTitle
         self.deferUnreadShortcutDisplay = deferUnreadShortcutDisplay
+        self.markReadTitle = markReadTitle
         self.markReadShortcutDisplay = markReadShortcutDisplay
         self.suppressButtonKeyboardShortcuts = suppressButtonKeyboardShortcuts
     }
@@ -39,11 +42,12 @@ public struct EmailReadingTriageShortcuts: Sendable {
         KeyEquivalent(markReadShortcutDisplay.lowercased().first ?? "j")
     }
 
-    /// Inbox / mail detail triage (K = leave unread, E = mark read).
+    /// Inbox / mail detail triage (matches Catch Up: F = review later, J = mark read).
     public static let mailbox = EmailReadingTriageShortcuts(
-        deferUnreadTitle: "Keep Unread",
-        deferUnreadShortcutDisplay: "K",
-        markReadShortcutDisplay: "E"
+        deferUnreadTitle: "Review Later",
+        deferUnreadShortcutDisplay: "F",
+        markReadTitle: "Mark as Read",
+        markReadShortcutDisplay: "J"
     )
 
     /// Catch Up triage (F = review later, J = mark read).
@@ -52,6 +56,7 @@ public struct EmailReadingTriageShortcuts: Sendable {
         EmailReadingTriageShortcuts(
             deferUnreadTitle: "Review Later",
             deferUnreadShortcutDisplay: "F",
+            markReadTitle: "Mark as Read",
             markReadShortcutDisplay: "J",
             suppressButtonKeyboardShortcuts: true
         )
@@ -59,6 +64,7 @@ public struct EmailReadingTriageShortcuts: Sendable {
         EmailReadingTriageShortcuts(
             deferUnreadTitle: "Review Later",
             deferUnreadShortcutDisplay: "F",
+            markReadTitle: "Mark as Read",
             markReadShortcutDisplay: "J"
         )
         #endif
