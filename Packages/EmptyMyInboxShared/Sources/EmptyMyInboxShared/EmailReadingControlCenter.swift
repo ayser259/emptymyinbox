@@ -14,6 +14,7 @@ struct EmailReadingControlCenter<Status: View>: View {
     let isDisabled: Bool
     let hasUnsubscribe: Bool
     let showReplyAll: Bool
+    let triageShortcuts: EmailReadingTriageShortcuts
     var onReply: () -> Void
     var onReplyAll: () -> Void
     var onStar: () -> Void
@@ -27,6 +28,7 @@ struct EmailReadingControlCenter<Status: View>: View {
         isDisabled: Bool,
         hasUnsubscribe: Bool,
         showReplyAll: Bool,
+        triageShortcuts: EmailReadingTriageShortcuts = .mailbox,
         onReply: @escaping () -> Void,
         onReplyAll: @escaping () -> Void,
         onStar: @escaping () -> Void,
@@ -39,6 +41,7 @@ struct EmailReadingControlCenter<Status: View>: View {
         self.isDisabled = isDisabled
         self.hasUnsubscribe = hasUnsubscribe
         self.showReplyAll = showReplyAll
+        self.triageShortcuts = triageShortcuts
         self.onReply = onReply
         self.onReplyAll = onReplyAll
         self.onStar = onStar
@@ -51,11 +54,15 @@ struct EmailReadingControlCenter<Status: View>: View {
     private var isRead: Bool { email?.is_read == true }
 
     private var unreadActionTitle: String {
-        isRead ? "Mark Unread" : "Keep Unread"
+        isRead ? "Mark Unread" : triageShortcuts.deferUnreadTitle
     }
 
     private var unreadActionIcon: String {
         isRead ? "envelope.badge" : "arrow.uturn.left.circle"
+    }
+
+    private var registersButtonKeyboardShortcuts: Bool {
+        !triageShortcuts.suppressButtonKeyboardShortcuts
     }
 
     var body: some View {
@@ -68,16 +75,21 @@ struct EmailReadingControlCenter<Status: View>: View {
                 EmailReadingTriageButton(
                     title: unreadActionTitle,
                     systemImage: unreadActionIcon,
-                    shortcutDisplay: "K",
-                    shortcutKey: "k",
+                    shortcutDisplay: triageShortcuts.deferUnreadShortcutDisplay,
+                    shortcutKey: triageShortcuts.deferUnreadShortcutKey,
                     shortcutModifiers: [],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                     style: .secondary,
                     isDisabled: isDisabled || (!isRead && email == nil)
                 ) {
                     onMarkUnread()
                 }
                 #if os(macOS)
-                .help(isRead ? "Mark as unread  [K]" : "Leave unread  [K]")
+                .help(
+                    isRead
+                        ? "Mark as unread  [\(triageShortcuts.deferUnreadShortcutDisplay)]"
+                        : "\(triageShortcuts.deferUnreadTitle)  [\(triageShortcuts.deferUnreadShortcutDisplay)]"
+                )
                 #endif
 
                 EmailReadingTriageButton(
@@ -86,6 +98,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                     shortcutDisplay: "S",
                     shortcutKey: "s",
                     shortcutModifiers: [],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                     style: email?.is_starred == true ? .starred : .secondary,
                     isDisabled: isDisabled
                 ) {
@@ -98,16 +111,17 @@ struct EmailReadingControlCenter<Status: View>: View {
                 EmailReadingTriageButton(
                     title: "Mark Read",
                     systemImage: "envelope.open.fill",
-                    shortcutDisplay: "E",
-                    shortcutKey: "e",
+                    shortcutDisplay: triageShortcuts.markReadShortcutDisplay,
+                    shortcutKey: triageShortcuts.markReadShortcutKey,
                     shortcutModifiers: [],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                     style: .prominent,
                     isDisabled: isDisabled || isRead
                 ) {
                     onMarkAsRead()
                 }
                 #if os(macOS)
-                .help("Mark as read  [E]")
+                .help("Mark as read  [\(triageShortcuts.markReadShortcutDisplay)]")
                 #endif
             }
             .padding(.horizontal, 16)
@@ -124,6 +138,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                         shortcutDisplay: "R",
                         shortcutKey: "r",
                         shortcutModifiers: [],
+                        registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                         isDisabled: isDisabled,
                         action: onReply
                     )
@@ -138,6 +153,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                             shortcutDisplay: "⇧R",
                             shortcutKey: "r",
                             shortcutModifiers: [.shift],
+                            registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                             isDisabled: isDisabled,
                             action: onReplyAll
                         )
@@ -155,6 +171,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                             shortcutDisplay: "⌘⇧U",
                             shortcutKey: "u",
                             shortcutModifiers: [.command, .shift],
+                            registersKeyboardShortcut: registersButtonKeyboardShortcuts,
                             tint: .red,
                             isDisabled: isDisabled,
                             action: onUnsubscribe
@@ -184,6 +201,7 @@ extension EmailReadingControlCenter where Status == EmptyView {
         isDisabled: Bool,
         hasUnsubscribe: Bool,
         showReplyAll: Bool,
+        triageShortcuts: EmailReadingTriageShortcuts = .mailbox,
         onReply: @escaping () -> Void,
         onReplyAll: @escaping () -> Void,
         onStar: @escaping () -> Void,
@@ -196,6 +214,7 @@ extension EmailReadingControlCenter where Status == EmptyView {
             isDisabled: isDisabled,
             hasUnsubscribe: hasUnsubscribe,
             showReplyAll: showReplyAll,
+            triageShortcuts: triageShortcuts,
             onReply: onReply,
             onReplyAll: onReplyAll,
             onStar: onStar,
@@ -217,6 +236,7 @@ struct EmailReadingTriageButton: View {
     let shortcutDisplay: String
     let shortcutKey: KeyEquivalent
     let shortcutModifiers: EventModifiers
+    var registersKeyboardShortcut: Bool = true
     let style: EmailReadingTriageButtonStyle
     let isDisabled: Bool
     let action: () -> Void
@@ -292,7 +312,11 @@ struct EmailReadingTriageButton: View {
         }
         .buttonStyle(.plain)
         #if os(macOS)
-        .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
+        .modifier(EmailReadingKeyboardShortcutModifier(
+            key: shortcutKey,
+            modifiers: shortcutModifiers,
+            isEnabled: registersKeyboardShortcut
+        ))
         .onHover { isHovered = $0 }
         .scaleEffect(isHovered && !isDisabled ? 1.015 : 1.0)
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -311,6 +335,7 @@ struct EmailReadingSecondaryButton: View {
     let shortcutDisplay: String
     let shortcutKey: KeyEquivalent
     let shortcutModifiers: EventModifiers
+    var registersKeyboardShortcut: Bool = true
     var tint: Color = SharedAppTheme.accent
     let isDisabled: Bool
     let action: () -> Void
@@ -352,7 +377,11 @@ struct EmailReadingSecondaryButton: View {
         }
         .buttonStyle(.plain)
         #if os(macOS)
-        .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
+        .modifier(EmailReadingKeyboardShortcutModifier(
+            key: shortcutKey,
+            modifiers: shortcutModifiers,
+            isEnabled: registersKeyboardShortcut
+        ))
         .onHover { isHovered = $0 }
         .scaleEffect(isHovered && !isDisabled ? 1.02 : 1.0)
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -369,3 +398,20 @@ struct EmailReadingSecondaryButton: View {
     private var borderOpacity: Double { 0.28 }
     #endif
 }
+
+#if os(macOS)
+/// Applies `.keyboardShortcut` only when enabled (Catch Up uses an AppKit key monitor instead).
+private struct EmailReadingKeyboardShortcutModifier: ViewModifier {
+    let key: KeyEquivalent
+    let modifiers: EventModifiers
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.keyboardShortcut(key, modifiers: modifiers)
+        } else {
+            content
+        }
+    }
+}
+#endif

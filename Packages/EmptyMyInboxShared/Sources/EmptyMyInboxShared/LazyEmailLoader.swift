@@ -457,16 +457,22 @@ public class LazyEmailLoader: ObservableObject {
     
     /// Mark one message read inside the current thread; remove thread if no unread remain.
     public func markMessageReadInCurrentThread(emailId: Int) {
+        markMessagesReadInCurrentThread(emailIds: [emailId])
+    }
+
+    /// Mark multiple messages read inside the current thread; remove thread if no unread remain.
+    public func markMessagesReadInCurrentThread(emailIds: [Int]) {
         guard var conversation = currentConversation else {
             removeCurrentThread()
             return
         }
-        if let detail = conversation.messages.first(where: { $0.id == emailId }) {
+        let ids = Set(emailIds)
+        for detail in conversation.messages where ids.contains(detail.id) {
             let updated = detail.updating(isRead: true)
             conversation.updateMessage(updated)
-            loadedEmails[emailId] = updated
-            emailMetadata.removeAll { $0.id == emailId }
+            loadedEmails[detail.id] = updated
         }
+        emailMetadata.removeAll { ids.contains($0.id) }
         let threadId = conversation.key.stableListId
         loadedConversations[threadId] = conversation
         if !conversation.hasUnread {
@@ -492,7 +498,7 @@ public class LazyEmailLoader: ObservableObject {
         triggerPrefetch()
     }
     
-    /// Move to next thread (for "Keep Unread" — thread stays in Gmail unread).
+    /// Move to next thread (for "Review Later" / keep unread — thread stays in Gmail unread).
     public func moveToNext() {
         if let thread = currentThread {
             sessionSeenThreadIds.insert(thread.id)

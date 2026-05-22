@@ -8,6 +8,63 @@
 
 import SwiftUI
 
+// MARK: - Triage shortcuts
+
+/// Key labels and shortcuts for the triage row (Catch Up uses distinct keys/copy on Mac).
+public struct EmailReadingTriageShortcuts: Sendable {
+    public let deferUnreadTitle: String
+    public let deferUnreadShortcutDisplay: String
+    public let markReadShortcutDisplay: String
+    /// When true, triage buttons skip `.keyboardShortcut` (Mac Catch Up uses `MacCatchUpKeyboardMonitor` instead).
+    public let suppressButtonKeyboardShortcuts: Bool
+
+    public init(
+        deferUnreadTitle: String,
+        deferUnreadShortcutDisplay: String,
+        markReadShortcutDisplay: String,
+        suppressButtonKeyboardShortcuts: Bool = false
+    ) {
+        self.deferUnreadTitle = deferUnreadTitle
+        self.deferUnreadShortcutDisplay = deferUnreadShortcutDisplay
+        self.markReadShortcutDisplay = markReadShortcutDisplay
+        self.suppressButtonKeyboardShortcuts = suppressButtonKeyboardShortcuts
+    }
+
+    /// Lowercase key for `.keyboardShortcut` (matches `shortcutDisplay`, e.g. "F" → "f").
+    public var deferUnreadShortcutKey: KeyEquivalent {
+        KeyEquivalent(deferUnreadShortcutDisplay.lowercased().first ?? "k")
+    }
+
+    public var markReadShortcutKey: KeyEquivalent {
+        KeyEquivalent(markReadShortcutDisplay.lowercased().first ?? "j")
+    }
+
+    /// Inbox / mail detail triage (K = leave unread, E = mark read).
+    public static let mailbox = EmailReadingTriageShortcuts(
+        deferUnreadTitle: "Keep Unread",
+        deferUnreadShortcutDisplay: "K",
+        markReadShortcutDisplay: "E"
+    )
+
+    /// Catch Up triage (F = review later, J = mark read).
+    public static let catchUp: EmailReadingTriageShortcuts = {
+        #if os(macOS)
+        EmailReadingTriageShortcuts(
+            deferUnreadTitle: "Review Later",
+            deferUnreadShortcutDisplay: "F",
+            markReadShortcutDisplay: "J",
+            suppressButtonKeyboardShortcuts: true
+        )
+        #else
+        EmailReadingTriageShortcuts(
+            deferUnreadTitle: "Review Later",
+            deferUnreadShortcutDisplay: "F",
+            markReadShortcutDisplay: "J"
+        )
+        #endif
+    }()
+}
+
 // MARK: - Action handlers
 
 /// Callbacks for the shared reading action bar. Catch Up and mail detail supply their own implementations.
@@ -93,6 +150,7 @@ public struct EmailReadingActionBar<Status: View>: View {
     public let isDisabled: Bool
     @Binding public var hasUnsubscribe: Bool
     public let handlers: EmailReadingActionHandlers
+    public let triageShortcuts: EmailReadingTriageShortcuts
     @ViewBuilder public var statusBar: () -> Status
 
     private var showReplyAll: Bool {
@@ -105,12 +163,14 @@ public struct EmailReadingActionBar<Status: View>: View {
         isDisabled: Bool,
         hasUnsubscribe: Binding<Bool>,
         handlers: EmailReadingActionHandlers,
+        triageShortcuts: EmailReadingTriageShortcuts = .mailbox,
         @ViewBuilder statusBar: @escaping () -> Status
     ) {
         self.email = email
         self.isDisabled = isDisabled
         _hasUnsubscribe = hasUnsubscribe
         self.handlers = handlers
+        self.triageShortcuts = triageShortcuts
         self.statusBar = statusBar
     }
 
@@ -120,6 +180,7 @@ public struct EmailReadingActionBar<Status: View>: View {
             isDisabled: isDisabled,
             hasUnsubscribe: hasUnsubscribe,
             showReplyAll: showReplyAll,
+            triageShortcuts: triageShortcuts,
             onReply: handlers.onReply,
             onReplyAll: handlers.onReplyAll,
             onStar: handlers.onStar,
@@ -182,7 +243,8 @@ public struct EmailReadingCatchUpActionBar: View {
             email: email,
             isDisabled: isDisabled,
             hasUnsubscribe: $hasUnsubscribe,
-            handlers: handlers
+            handlers: handlers,
+            triageShortcuts: .catchUp
         ) {
             EmailReadingCatchUpStatusBar(
                 remainingCount: remainingCount,

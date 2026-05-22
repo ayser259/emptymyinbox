@@ -455,9 +455,9 @@ struct MacCatchUpFeedView: View {
         sidebarShortcutsStore.removeLayer(id: "catchup.replyComposer")
 
         var items: [MacSidebarContextualShortcut] = [
-            MacSidebarContextualShortcut(title: "Keep unread", shortcutDisplay: "K"),
+            MacSidebarContextualShortcut(title: "Review Later", shortcutDisplay: "F"),
             MacSidebarContextualShortcut(title: "Star", shortcutDisplay: "S"),
-            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "E"),
+            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "J"),
             MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "R"),
         ]
         if isReplyAllMeaningful {
@@ -560,12 +560,7 @@ struct MacCatchUpFeedView: View {
             guard !isAnimating else { return }
             isProcessing = true
             isAnimating = true
-            let threadCardId = loader.currentThread?.id ?? email.id
-            let clearsThread = (loader.currentConversation?.unreadCount ?? 1) <= 1
-            await markSelectedMessageRead(email)
-            if clearsThread {
-                await performDismissalAnimation(cardId: threadCardId, direction: .right)
-            }
+            await markUnreadMessagesReadInCurrentThread(fallback: email, animateDismiss: true)
             sessionStats.reviewed += 1
             sessionStats.markedAsRead += 1
             recordSenderForReviewedEmail(email)
@@ -641,12 +636,7 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        let threadCardId = loader.currentThread?.id ?? email.id
-        let clearsThread = (loader.currentConversation?.unreadCount ?? 1) <= 1
-        await markSelectedMessageRead(email)
-        if clearsThread {
-            await performDismissalAnimation(cardId: threadCardId, direction: .right)
-        }
+        await markUnreadMessagesReadInCurrentThread(fallback: email, animateDismiss: true)
 
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
@@ -657,14 +647,26 @@ struct MacCatchUpFeedView: View {
         isAnimating = false
     }
     
-    private func markSelectedMessageRead(_ email: EmailDetail) async {
-        await EmailActionSynchronizer.shared.enqueueMarkRead(
-            emailId: email.id,
-            gmailId: email.gmail_id,
-            accountEmail: email.account_email
-        )
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        loader.markMessageReadInCurrentThread(emailId: email.id)
+    private func markUnreadMessagesReadInCurrentThread(fallback: EmailDetail, animateDismiss: Bool) async {
+        let unreadMessages = loader.currentConversation?.messages.filter { !$0.is_read } ?? [fallback]
+        let threadCardId = loader.currentThread?.id ?? fallback.id
+
+        if animateDismiss {
+            await performDismissalAnimation(cardId: threadCardId, direction: .right)
+        }
+
+        for message in unreadMessages {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: message.id,
+                gmailId: message.gmail_id,
+                accountEmail: message.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: message.id)
+            let updated = message.updating(isRead: true)
+            await EmailCache.shared.saveEmailDetail(updated)
+        }
+
+        loader.markMessagesReadInCurrentThread(emailIds: unreadMessages.map(\.id))
     }
 
     private func handleUnsubscribe() async {

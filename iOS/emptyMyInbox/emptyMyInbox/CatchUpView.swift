@@ -522,7 +522,7 @@ struct CatchUpView: View {
             guard !isAnimating else { return }
             isProcessing = true
             isAnimating = true
-            await markSelectedMessageRead(email, animateDismiss: true)
+            await markUnreadMessagesReadInCurrentThread(animateDismiss: true)
             sessionStats.reviewed += 1
             sessionStats.markedAsRead += 1
             resetAnimationState()
@@ -547,21 +547,27 @@ struct CatchUpView: View {
         isProcessing || !emailLoader.isCurrentLoaded || isAnimating
     }
     
-    private func markSelectedMessageRead(_ email: EmailDetail, animateDismiss: Bool) async {
-        let threadCardId = emailLoader.currentThread?.id ?? email.id
-        let clearsThread = (emailLoader.currentConversation?.unreadCount ?? 1) <= 1
-        
-        await EmailActionSynchronizer.shared.enqueueMarkRead(
-            emailId: email.id,
-            gmailId: email.gmail_id,
-            accountEmail: email.account_email
-        )
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
-        emailLoader.markMessageReadInCurrentThread(emailId: email.id)
-        
-        if animateDismiss && clearsThread {
+    private func markUnreadMessagesReadInCurrentThread(animateDismiss: Bool) async {
+        guard let fallback = emailLoader.currentEmail else { return }
+        let unreadMessages = emailLoader.currentConversation?.messages.filter { !$0.is_read } ?? [fallback]
+        let threadCardId = emailLoader.currentThread?.id ?? fallback.id
+
+        if animateDismiss {
             await performDismissalAnimation(cardId: threadCardId, direction: .right)
         }
+
+        for message in unreadMessages {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: message.id,
+                gmailId: message.gmail_id,
+                accountEmail: message.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: message.id)
+            let updated = message.updating(isRead: true)
+            await EmailCache.shared.saveEmailDetail(updated)
+        }
+
+        emailLoader.markMessagesReadInCurrentThread(emailIds: unreadMessages.map(\.id))
     }
 
     private var failedCurrentCardBanner: some View {
@@ -721,7 +727,7 @@ struct CatchUpView: View {
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
         
-        await markSelectedMessageRead(email, animateDismiss: true)
+        await markUnreadMessagesReadInCurrentThread(animateDismiss: true)
         
         // Reset animation state
         resetAnimationState()

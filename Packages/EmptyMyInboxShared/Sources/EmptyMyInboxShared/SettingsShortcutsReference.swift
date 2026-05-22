@@ -46,9 +46,9 @@ public enum SettingsShortcutsReference {
 
     /// Mail — Catch Up contextual shortcuts (when viewing Catch Up).
     public static let mailCatchUp: [SettingsShortcutReference] = [
-        SettingsShortcutReference(title: "Keep unread", shortcutDisplay: "K"),
+        SettingsShortcutReference(title: "Review Later", shortcutDisplay: "F"),
         SettingsShortcutReference(title: "Star", shortcutDisplay: "S"),
-        SettingsShortcutReference(title: "Mark as read", shortcutDisplay: "E"),
+        SettingsShortcutReference(title: "Mark as read", shortcutDisplay: "J"),
         SettingsShortcutReference(title: "Reply", shortcutDisplay: "R"),
         SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
         SettingsShortcutReference(title: "Unsubscribe", shortcutDisplay: "⌘⇧U"),

@@ -77,7 +77,7 @@ final class MacCatchUpKeyboardMonitor: ObservableObject {
                 return true
             }
 
-            if ch == "k", !isButtonsDisabled {
+            if ch == "f", !isButtonsDisabled {
                 onKeepUnread()
                 return true
             }
@@ -85,7 +85,7 @@ final class MacCatchUpKeyboardMonitor: ObservableObject {
                 onStar()
                 return true
             }
-            if ch == "e", !isButtonsDisabled {
+            if ch == "j", !isButtonsDisabled {
                 onMarkAsRead()
                 return true
             }

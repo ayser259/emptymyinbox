@@ -601,7 +601,7 @@ public struct ReplyCatchUpOutcomeSheet: View {
 
             VStack(spacing: 10) {
                 outcomeButton("Mark read & next", icon: "envelope.open.fill", outcome: .markReadAndAdvance)
-                outcomeButton("Keep unread & next", icon: "envelope.badge", outcome: .keepUnreadAndAdvance)
+                outcomeButton("Review later & next", icon: "envelope.badge", outcome: .keepUnreadAndAdvance)
                 outcomeButton("Stay on this email", icon: "arrow.uturn.backward", outcome: .stay)
             }
         }
