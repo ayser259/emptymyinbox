@@ -66,6 +66,8 @@ final class AdaptiveRootState: ObservableObject {
 
     @Published var selectedTab: Int = RootTab.mail.rawValue
     @Published var showMenu = false
+    /// True when `iPadWideRootView` chrome is active (hide per-tab duplicate top bars).
+    @Published var usesWideChrome = false
 
     @Published var mailSidebarSelection: MailSidebarSelection = .tool(.dashboard)
     @Published var selectedThreadId: Int?

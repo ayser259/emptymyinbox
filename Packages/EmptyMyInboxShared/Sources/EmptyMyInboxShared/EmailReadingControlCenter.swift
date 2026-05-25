@@ -129,7 +129,7 @@ struct EmailReadingControlCenter<Status: View>: View {
             .padding(.bottom, 4)
 
             HStack(spacing: 8) {
-                Color.clear.frame(maxWidth: .infinity)
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
 
                 HStack(spacing: 8) {
                     EmailReadingSecondaryButton(
@@ -183,7 +183,7 @@ struct EmailReadingControlCenter<Status: View>: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                Color.clear.frame(maxWidth: .infinity)
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
@@ -286,6 +286,7 @@ struct EmailReadingTriageButton: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                #if os(macOS)
                 Text(shortcutDisplay)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .padding(.horizontal, 5)
@@ -298,6 +299,7 @@ struct EmailReadingTriageButton: View {
                         RoundedRectangle(cornerRadius: 4)
                             .strokeBorder(fgColor.opacity(0.25), lineWidth: 0.5)
                     )
+                #endif
             }
             .foregroundStyle(fgColor)
             .frame(maxWidth: .infinity)
@@ -351,6 +353,7 @@ struct EmailReadingSecondaryButton: View {
                     .font(.system(size: 13, weight: .medium))
                 Text(label)
                     .font(.system(size: 13, weight: .semibold))
+                #if os(macOS)
                 Text(shortcutDisplay)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(tint == .red ? Color.red.opacity(0.8) : SharedAppTheme.secondaryText)
@@ -364,6 +367,7 @@ struct EmailReadingSecondaryButton: View {
                         RoundedRectangle(cornerRadius: 4)
                             .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
                     )
+                #endif
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 12)

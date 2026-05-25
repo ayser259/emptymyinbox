@@ -52,8 +52,20 @@ private struct iPadWideTopBar: View {
     @EnvironmentObject private var rootState: AdaptiveRootState
 
     var body: some View {
-        HStack(spacing: AppTheme.spacingMedium) {
-            LogoView(size: 36)
+        ZStack {
+            HStack(spacing: AppTheme.spacingMedium) {
+                LogoView(size: 36)
+                Spacer(minLength: 0)
+                Button {
+                    rootState.showMenu = true
+                } label: {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 20))
+                        .primaryText()
+                }
+                .iconButton()
+                .accessibilityLabel("Menu")
+            }
 
             Picker("Section", selection: $rootState.selectedTab) {
                 ForEach(AdaptiveRootState.RootTab.allCases, id: \.rawValue) { tab in
@@ -63,18 +75,6 @@ private struct iPadWideTopBar: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 520)
-
-            Spacer()
-
-            Button {
-                rootState.showMenu = true
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20))
-                    .primaryText()
-            }
-            .iconButton()
-            .accessibilityLabel("Menu")
         }
         .padding(.horizontal, AppTheme.spacingMedium)
         .padding(.vertical, AppTheme.spacingSmall)

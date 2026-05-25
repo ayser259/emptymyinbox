@@ -28,6 +28,12 @@ struct AdaptiveRootView: View {
                 }
             }
             .environmentObject(rootState)
+            .onChange(of: useWideLayout) { _, wide in
+                rootState.usesWideChrome = wide
+            }
+            .onAppear {
+                rootState.usesWideChrome = useWideLayout
+            }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .onReceive(NotificationCenter.default.publisher(for: .switchToActionItemsTab)) { _ in

@@ -75,6 +75,23 @@ public final class ReplyDraftViewModel {
             && draftId != nil && gmailMessage != nil
     }
 
+    public var canGenerateQuickReply: Bool {
+        isQuickReplyVisible && isQuickReplyAvailable && !isGeneratingQuickReply
+            && !quickReplyAsk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var canUpdateQuickReply: Bool {
+        isQuickReplyVisible && isQuickReplyAvailable && !isGeneratingQuickReply
+            && !quickReplyAsk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var canInsertQuickReply: Bool {
+        !quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isGeneratingQuickReply
+    }
+
     public var email: EmailDetail { intent.email }
 
     public init(intent: ReplyIntent, onCatchUpOutcome: ((CatchUpReplyOutcome) -> Void)? = nil) {

@@ -57,8 +57,18 @@ public enum SettingsShortcutsReference {
     /// Mail — Reply composer (when composing a reply).
     public static let mailReplyComposer: [SettingsShortcutReference] = [
         SettingsShortcutReference(title: "Quick Reply", shortcutDisplay: "⌥Q"),
+        SettingsShortcutReference(title: "Generate quick reply", shortcutDisplay: "⌥G"),
+        SettingsShortcutReference(title: "Update quick reply", shortcutDisplay: "⌥U"),
+        SettingsShortcutReference(title: "Insert quick reply", shortcutDisplay: "⌥I"),
         SettingsShortcutReference(title: "Save draft", shortcutDisplay: "⌘S"),
         SettingsShortcutReference(title: "Send", shortcutDisplay: "⌘↩"),
+    ]
+
+    /// Mail — after sending a reply from Catch Up.
+    public static let mailReplySentOutcome: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Mark read & next", shortcutDisplay: "J"),
+        SettingsShortcutReference(title: "Review later & next", shortcutDisplay: "F"),
+        SettingsShortcutReference(title: "Stay on this email", shortcutDisplay: "Esc"),
     ]
 
     /// Action Items tab — sidebar hints.

@@ -65,7 +65,8 @@ public struct EmailReadingTriageShortcuts: Sendable {
             deferUnreadTitle: "Review Later",
             deferUnreadShortcutDisplay: "F",
             markReadTitle: "Mark as Read",
-            markReadShortcutDisplay: "J"
+            markReadShortcutDisplay: "J",
+            suppressButtonKeyboardShortcuts: true
         )
         #endif
     }()

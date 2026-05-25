@@ -37,9 +37,19 @@ enum MacSidebarShortcutLibrary {
     /// Shown while the reply composer slide-in panel is open.
     static let mailReplyComposer: [MacSidebarContextualShortcut] = [
         MacSidebarContextualShortcut(title: "Quick Reply", shortcutDisplay: "⌥Q"),
+        MacSidebarContextualShortcut(title: "Generate quick reply", shortcutDisplay: "⌥G"),
+        MacSidebarContextualShortcut(title: "Update quick reply", shortcutDisplay: "⌥U"),
+        MacSidebarContextualShortcut(title: "Insert quick reply", shortcutDisplay: "⌥I"),
         MacSidebarContextualShortcut(title: "Save draft", shortcutDisplay: "⌘S"),
         MacSidebarContextualShortcut(title: "Send", shortcutDisplay: "⌘↩"),
         MacSidebarContextualShortcut(title: "Close composer", shortcutDisplay: "Esc"),
+    ]
+
+    /// Shown after sending a reply from Catch Up.
+    static let mailReplySentOutcome: [MacSidebarContextualShortcut] = [
+        MacSidebarContextualShortcut(title: "Mark read & next", shortcutDisplay: "J"),
+        MacSidebarContextualShortcut(title: "Review later & next", shortcutDisplay: "F"),
+        MacSidebarContextualShortcut(title: "Stay on this email", shortcutDisplay: "Esc"),
     ]
 
     /// Calendar detail modes (Calendar tab, Tools **Calendar** or **Starred**).

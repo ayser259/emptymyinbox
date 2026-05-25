@@ -9,6 +9,7 @@ public struct SettingsContainerView<Vault: View>: View {
     @State private var showClearCacheConfirm = false
     @State private var showSignOutConfirm = false
     @State private var showCacheClearedAlert = false
+    @State private var configuredAPIKeyCount = 0
 
     private let vaultSettings: () -> Vault
     private let onAddGmailAccount: () -> Void
@@ -85,6 +86,18 @@ public struct SettingsContainerView<Vault: View>: View {
         } message: {
             Text("Local cache was removed.")
         }
+        .task {
+            await refreshConfiguredAPIKeyCount()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
+            Task { await refreshConfiguredAPIKeyCount() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task { await refreshConfiguredAPIKeyCount() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .geminiAPIKeyChanged)) { _ in
+            Task { await refreshConfiguredAPIKeyCount() }
+        }
     }
 
     /// Sheet toolbars on `NavigationSplitView` are often invisible on macOS; this bar is always visible.
@@ -149,6 +162,18 @@ public struct SettingsContainerView<Vault: View>: View {
                     .foregroundStyle(SharedAppTheme.primaryText)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
+                if item == .keys, configuredAPIKeyCount > 0 {
+                    Text(keysSidebarBadge)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(accentColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(accentColor.opacity(0.18))
+                        )
+                        .accessibilityLabel("\(configuredAPIKeyCount) API keys saved")
+                }
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 10)
@@ -196,6 +221,20 @@ public struct SettingsContainerView<Vault: View>: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(SharedAppTheme.secondaryBackground.opacity(0.92))
+    }
+
+    private var keysSidebarBadge: String {
+        configuredAPIKeyCount == 1 ? "1 added" : "\(configuredAPIKeyCount) added"
+    }
+
+    private func refreshConfiguredAPIKeyCount() async {
+        var count = 0
+        if await LLMSettingsStore.shared.hasAPIKey() { count += 1 }
+        if await GeminiAPIKeyStore.shared.hasAPIKey() { count += 1 }
+        if await ClaudeAPIKeyStore.shared.hasAPIKey() { count += 1 }
+        await MainActor.run {
+            configuredAPIKeyCount = count
+        }
     }
 
     @ViewBuilder

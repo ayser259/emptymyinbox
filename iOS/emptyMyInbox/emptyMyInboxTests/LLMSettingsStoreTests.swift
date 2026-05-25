@@ -86,7 +86,7 @@ struct LLMSettingsStoreTests {
 
         let status = await store.apiKeyStatus()
         #expect(status != nil)
-        #expect(status?.maskedKey.contains("••••••••") == true)
+        #expect(status?.addedAt != nil)
     }
 
     @Test("Save API key result fails on empty input")

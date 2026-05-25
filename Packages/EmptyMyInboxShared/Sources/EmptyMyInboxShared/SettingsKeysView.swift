@@ -38,6 +38,15 @@ public struct SettingsKeysView: View {
         .task {
             await refreshAll()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
+            Task { await refreshAll() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
+            Task { await refreshAll() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .geminiAPIKeyChanged)) { _ in
+            Task { await refreshAll() }
+        }
     }
 
     /// Placeholders inside `SecureField` render in the row’s leading “label” lane and clip on narrow widths;
@@ -45,16 +54,14 @@ public struct SettingsKeysView: View {
     @ViewBuilder
     private var keysSections: some View {
         Section {
+            APIKeyPresenceIndicator(status: openAIStatus)
+
             apiKeyField(
-                label: "API key",
+                label: "Enter new key",
                 accessibilityLabel: "OpenAI API key",
                 hint: "Keys typically start with sk-.",
                 text: $openAIKey
             )
-
-            if let openAIStatus {
-                keyStatusLines(openAIStatus)
-            }
 
             HStack {
                 Button("Save") {
@@ -65,25 +72,23 @@ public struct SettingsKeysView: View {
                 Button("Clear", role: .destructive) {
                     Task { await clearOpenAI() }
                 }
-                .disabled(openAIMutation)
+                .disabled(openAIMutation || openAIStatus == nil)
             }
         } header: {
             Text("OpenAI")
         } footer: {
-            Text("Used by the app’s OpenAI integration (LLM Management, Brief, Stories, and related features).")
+            Text("Used by the app’s OpenAI integration (LLM Management, Brief, Stories, and related features). The key value is never shown after it is saved.")
         }
 
         Section {
+            APIKeyPresenceIndicator(status: geminiStatus)
+
             apiKeyField(
-                label: "API key",
+                label: "Enter new key",
                 accessibilityLabel: "Google Gemini API key",
                 hint: nil,
                 text: $geminiKey
             )
-
-            if let geminiStatus {
-                keyStatusLines(geminiStatus)
-            }
 
             HStack {
                 Button("Save") {
@@ -94,25 +99,23 @@ public struct SettingsKeysView: View {
                 Button("Clear", role: .destructive) {
                     Task { await clearGemini() }
                 }
-                .disabled(geminiMutation)
+                .disabled(geminiMutation || geminiStatus == nil)
             }
         } header: {
             Text("Google Gemini")
         } footer: {
-            Text("Optional. Store a key for future Gemini-powered features.")
+            Text("Optional. Not used for Brief or Stories yet — choose OpenAI or Claude under LLM Management for those features.")
         }
 
         Section {
+            APIKeyPresenceIndicator(status: claudeStatus)
+
             apiKeyField(
-                label: "API key",
+                label: "Enter new key",
                 accessibilityLabel: "Anthropic Claude API key",
                 hint: nil,
                 text: $claudeKey
             )
-
-            if let claudeStatus {
-                keyStatusLines(claudeStatus)
-            }
 
             HStack {
                 Button("Save") {
@@ -123,7 +126,7 @@ public struct SettingsKeysView: View {
                 Button("Clear", role: .destructive) {
                     Task { await clearClaude() }
                 }
-                .disabled(claudeMutation)
+                .disabled(claudeMutation || claudeStatus == nil)
             }
         } header: {
             Text("Anthropic Claude")
@@ -158,25 +161,6 @@ public struct SettingsKeysView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private func keyStatusLines(_ status: LLMAPIKeyStatus) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Stored Key: \(status.maskedKey)")
-                .font(SharedAppTheme.caption)
-                .foregroundStyle(SharedAppTheme.secondaryText)
-            Text("Added: \(formattedDate(status.addedAt))")
-                .font(SharedAppTheme.caption)
-                .foregroundStyle(SharedAppTheme.secondaryText)
-        }
-    }
-
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
     private func refreshAll() async {
         let o = await LLMSettingsStore.shared.apiKeyStatus()
         let g = await GeminiAPIKeyStore.shared.apiKeyStatus()
@@ -191,7 +175,10 @@ public struct SettingsKeysView: View {
     private func saveOpenAI() async {
         await MainActor.run { openAIMutation = true }
         let trimmed = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        _ = await LLMSettingsStore.shared.saveAPIKeyResult(trimmed)
+        let result = await LLMSettingsStore.shared.saveAPIKeyResult(trimmed)
+        if result.success {
+            await alignSelectedProvider(.openAI)
+        }
         await refreshAll()
         await MainActor.run {
             openAIKey = ""
@@ -227,12 +214,22 @@ public struct SettingsKeysView: View {
     private func saveClaude() async {
         await MainActor.run { claudeMutation = true }
         let trimmed = claudeKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        _ = await ClaudeAPIKeyStore.shared.saveAPIKeyResult(trimmed)
+        let result = await ClaudeAPIKeyStore.shared.saveAPIKeyResult(trimmed)
+        if result.success {
+            await alignSelectedProvider(.claude)
+        }
         await refreshAll()
         await MainActor.run {
             claudeKey = ""
             claudeMutation = false
         }
+    }
+
+    private func alignSelectedProvider(_ provider: LLMProvider) async {
+        var settings = await LLMSettingsStore.shared.currentSettings()
+        guard settings.provider != provider else { return }
+        settings.provider = provider
+        await LLMSettingsStore.shared.updateSettings(settings)
     }
 
     private func clearClaude() async {

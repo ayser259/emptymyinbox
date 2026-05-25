@@ -11,6 +11,7 @@ import EmptyMyInboxShared
 
 struct DashboardView: View {
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var rootState: AdaptiveRootState
     @Binding var isMenuPresented: Bool
     @State private var navigationPath = NavigationPath()
     @State private var accounts: [EmailAccount] = []
@@ -141,10 +142,16 @@ struct DashboardView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            Task { await refreshBriefBadgeFromPersisted() }
+            Task {
+                await refreshLLMKeyStatus()
+                await refreshBriefBadgeFromPersisted()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
-            Task { await refreshBriefBadgeFromPersisted() }
+            Task {
+                await refreshLLMKeyStatus()
+                await refreshBriefBadgeFromPersisted()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .briefingPayloadDidPersist)) { _ in
             Task { await refreshBriefBadgeFromPersisted() }
@@ -283,12 +290,15 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
     private var topBarSection: some View {
-        MainAppTopBar(center: {
-            EmptyView()
-        }, onMenuTap: {
-            isMenuPresented = true
-        })
+        if !rootState.usesWideChrome {
+            MainAppTopBar(center: {
+                EmptyView()
+            }, onMenuTap: {
+                isMenuPresented = true
+            })
+        }
     }
 
     private var actionButtonsSection: some View {
@@ -817,4 +827,5 @@ struct DashboardView: View {
 #Preview {
     DashboardView(isMenuPresented: .constant(false))
         .environmentObject(AuthManager())
+        .environmentObject(AdaptiveRootState())
 }

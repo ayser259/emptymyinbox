@@ -28,6 +28,11 @@ struct EmailReplyComposerMacView: View {
         }
         .onDisappear { keyboardMonitor.remove() }
         .onChange(of: model.isQuickReplyAvailable) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.isQuickReplyVisible) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.quickReplyAsk) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.quickReplyDraft) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.isGeneratingQuickReply) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.showCatchUpOutcomePrompt) { _, _ in syncKeyboardMonitor() }
         .onChange(of: model.isBootstrapping) { _, _ in syncKeyboardMonitor() }
         .onChange(of: model.isSending) { _, _ in syncKeyboardMonitor() }
         .onChange(of: model.canSend) { _, _ in syncKeyboardMonitor() }
@@ -88,12 +93,35 @@ struct EmailReplyComposerMacView: View {
     private func syncKeyboardMonitor() {
         keyboardMonitor.canSend = model.canSend
         keyboardMonitor.canSaveDraft = model.canSaveDraft
+        keyboardMonitor.isQuickReplyVisible = model.isQuickReplyVisible
+        keyboardMonitor.showCatchUpOutcomePrompt = model.showCatchUpOutcomePrompt
+        keyboardMonitor.canGenerateQuickReply = model.canGenerateQuickReply
+        keyboardMonitor.canUpdateQuickReply = model.canUpdateQuickReply
+        keyboardMonitor.canInsertQuickReply = model.canInsertQuickReply
         keyboardMonitor.onToggleQuickReply = { model.toggleQuickReplyVisibility() }
         keyboardMonitor.onSend = {
             Task { _ = await model.sendReply() }
         }
         keyboardMonitor.onSaveDraft = {
             Task { _ = await model.saveDraftManually() }
+        }
+        keyboardMonitor.onGenerateQuickReply = {
+            Task { await model.generateQuickReply(action: .custom) }
+        }
+        keyboardMonitor.onUpdateQuickReply = {
+            Task { await model.generateQuickReply(action: .custom) }
+        }
+        keyboardMonitor.onInsertQuickReply = {
+            model.insertQuickReply()
+        }
+        keyboardMonitor.onOutcomeMarkRead = {
+            model.handleCatchUpOutcome(.markReadAndAdvance)
+        }
+        keyboardMonitor.onOutcomeReviewLater = {
+            model.handleCatchUpOutcome(.keepUnreadAndAdvance)
+        }
+        keyboardMonitor.onOutcomeStay = {
+            model.handleCatchUpOutcome(.stay)
         }
     }
 }

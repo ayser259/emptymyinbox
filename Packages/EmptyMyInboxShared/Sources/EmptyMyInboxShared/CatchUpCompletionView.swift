@@ -1,21 +1,34 @@
 //
-//  MacCatchUpCompletionView.swift
-//  emptymyinboxMacApp
+//  CatchUpCompletionView.swift
+//  EmptyMyInboxShared
 //
-//  Desktop completion screen for Catch Up (replaces shared CelebrationView on Mac).
+//  Catch Up session completion summary (shared iOS + macOS).
 //
 
 import SwiftUI
-import EmptyMyInboxShared
 
-struct MacCatchUpCompletionView: View {
-    let sessionStats: CatchUpSessionStats
-    let sessionStartTime: Date?
-    let todaySendersReceived: Int
-    let todayUnsubscribesTotal: Int
-    let onDone: () -> Void
+public struct CatchUpCompletionView: View {
+    public let sessionStats: CatchUpSessionStats
+    public let sessionStartTime: Date?
+    public let todaySendersReceived: Int
+    public let todayUnsubscribesTotal: Int
+    public let onDone: () -> Void
 
     @FocusState private var doneFocused: Bool
+
+    public init(
+        sessionStats: CatchUpSessionStats,
+        sessionStartTime: Date?,
+        todaySendersReceived: Int,
+        todayUnsubscribesTotal: Int,
+        onDone: @escaping () -> Void
+    ) {
+        self.sessionStats = sessionStats
+        self.sessionStartTime = sessionStartTime
+        self.todaySendersReceived = todaySendersReceived
+        self.todayUnsubscribesTotal = todayUnsubscribesTotal
+        self.onDone = onDone
+    }
 
     private var formattedDuration: String? {
         guard let start = sessionStartTime else { return nil }
@@ -26,21 +39,21 @@ struct MacCatchUpCompletionView: View {
         return "\(rem)s"
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 32)
-
-            VStack(spacing: 28) {
-                header
-                summaryCard
+            ScrollView {
+                VStack(spacing: 28) {
+                    header
+                    summaryCard
+                }
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 32)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
             }
-            .frame(maxWidth: 560)
 
-            Spacer(minLength: 32)
-
-            doneButton
-                .frame(maxWidth: 360)
-                .padding(.bottom, 40)
+            dashboardFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(completionBackground)
@@ -49,13 +62,27 @@ struct MacCatchUpCompletionView: View {
         }
     }
 
+    private var dashboardFooter: some View {
+        VStack(spacing: 0) {
+            Divider().opacity(0.2)
+
+            returnToDashboardButton
+                .frame(maxWidth: 360)
+                .padding(.top, 20)
+                .padding(.bottom, 28)
+                .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity)
+        .background(SharedAppTheme.primaryBackground.opacity(0.92))
+    }
+
     private var completionBackground: some View {
         ZStack {
-            MacAppTheme.primaryBackground
+            SharedAppTheme.primaryBackground
             RadialGradient(
                 colors: [
-                    MacAppTheme.accent.opacity(0.12),
-                    MacAppTheme.accent.opacity(0.04),
+                    SharedAppTheme.accent.opacity(0.12),
+                    SharedAppTheme.accent.opacity(0.04),
                     Color.clear
                 ],
                 center: .center,
@@ -70,16 +97,16 @@ struct MacCatchUpCompletionView: View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 44))
-                .foregroundStyle(MacAppTheme.accent)
+                .foregroundStyle(SharedAppTheme.accent)
                 .symbolRenderingMode(.hierarchical)
 
             Text("Catch up complete")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
-                .foregroundStyle(MacAppTheme.primaryText)
+                .foregroundStyle(SharedAppTheme.primaryText)
 
             Text("Your inbox is ready for what's next.")
                 .font(.body)
-                .foregroundStyle(MacAppTheme.secondaryText)
+                .foregroundStyle(SharedAppTheme.secondaryText)
         }
         .multilineTextAlignment(.center)
     }
@@ -106,6 +133,16 @@ struct MacCatchUpCompletionView: View {
                 detail: "\(sessionStats.keptUnread) to review later"
             )
 
+            if sessionStats.repliesSent > 0 {
+                Divider().opacity(0.2)
+
+                summaryRow(
+                    icon: "paperplane.fill",
+                    title: "Replies sent",
+                    detail: "\(sessionStats.repliesSent) email\(sessionStats.repliesSent == 1 ? "" : "s")"
+                )
+            }
+
             if todaySendersReceived > 0 || !sessionStats.reviewedSenders.isEmpty {
                 Divider().opacity(0.2)
 
@@ -129,7 +166,7 @@ struct MacCatchUpCompletionView: View {
         .padding(24)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(MacAppTheme.secondaryBackground)
+                .fill(SharedAppTheme.secondaryBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
@@ -179,31 +216,45 @@ struct MacCatchUpCompletionView: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(MacAppTheme.accent)
+                .foregroundStyle(SharedAppTheme.accent)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(MacAppTheme.primaryText)
+                    .foregroundStyle(SharedAppTheme.primaryText)
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(MacAppTheme.secondaryText)
+                    .foregroundStyle(SharedAppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
     }
 
-    private var doneButton: some View {
+    private var returnToDashboardButton: some View {
         Button(action: onDone) {
-            Text("Done")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+            HStack(spacing: 10) {
+                Text("Return to Dashboard")
+                    .font(.headline)
+
+                #if os(macOS)
+                Text("↵")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.black.opacity(0.55))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                #endif
+            }
+            .foregroundStyle(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(SharedAppTheme.accent)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.borderedProminent)
-        .tint(MacAppTheme.accent)
+        .buttonStyle(.plain)
         .keyboardShortcut(.defaultAction)
         .keyboardShortcut(.return, modifiers: [])
         .focused($doneFocused)

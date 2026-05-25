@@ -261,6 +261,80 @@ public struct ReplyComposerBodyEditor: View {
 
 // MARK: - Quick Reply panel
 
+/// Auto-growing multiline input for quick-reply prompts and feedback.
+private struct QuickReplyFeedbackField: View {
+    @Binding var text: String
+    var placeholder: String
+    var isDisabled: Bool
+    var focus: FocusState<Bool>.Binding
+
+    private let minHeight: CGFloat = 80
+    private let maxHeight: CGFloat = 200
+    private let lineHeight: CGFloat = 20
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(placeholder)
+                    .font(.callout)
+                    .foregroundStyle(SharedAppTheme.secondaryText.opacity(0.65))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                    .allowsHitTesting(false)
+            }
+
+            TextEditor(text: $text)
+                .font(.callout)
+                .foregroundStyle(SharedAppTheme.primaryText)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+                .focused(focus)
+                .disabled(isDisabled)
+        }
+        .frame(height: contentHeight)
+        .background(SharedAppTheme.secondaryBackground.opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var contentHeight: CGFloat {
+        let lineCount = max(1, text.components(separatedBy: "\n").count)
+        let wrappedLines = max(1, Int(ceil(Double(text.count) / 48.0)))
+        let estimated = CGFloat(max(lineCount, wrappedLines)) * lineHeight + 28
+        return min(max(estimated, minHeight), maxHeight)
+    }
+}
+
+#if os(macOS)
+private struct ReplyComposerKeycapBadge: View {
+    let shortcutDisplay: String
+    var prominent: Bool = false
+
+    var body: some View {
+        Text(shortcutDisplay)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(prominent ? Color.black.opacity(0.65) : SharedAppTheme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(prominent ? Color.black.opacity(0.08) : SharedAppTheme.primaryBackground.opacity(0.35))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(
+                        (prominent ? Color.black.opacity(0.65) : SharedAppTheme.secondaryText).opacity(0.28),
+                        lineWidth: 0.5
+                    )
+            )
+    }
+}
+#endif
+
 public struct ReplyComposerQuickReplyPanel: View {
     @Bindable var model: ReplyDraftViewModel
     var focusQuickAsk: FocusState<Bool>.Binding
@@ -316,23 +390,58 @@ public struct ReplyComposerQuickReplyPanel: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(SharedAppTheme.secondaryText)
 
-            TextField(quickReplyAskPlaceholder, text: $model.quickReplyAsk, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3 ... 6)
-                .disabled(model.isGeneratingQuickReply)
-                .focused(focusQuickAsk)
-                .onSubmit {
-                    Task { await model.generateQuickReply(action: .custom) }
-                }
+            QuickReplyFeedbackField(
+                text: $model.quickReplyAsk,
+                placeholder: quickReplyAskPlaceholder,
+                isDisabled: model.isGeneratingQuickReply,
+                focus: focusQuickAsk
+            )
 
             HStack(spacing: 8) {
+                #if os(macOS)
+                if hasQuickReplyDraft {
+                    ReplyComposerMacActionButton(
+                        title: "Update",
+                        shortcutDisplay: "⌥U",
+                        shortcutKey: KeyEquivalent("u"),
+                        shortcutModifiers: .option,
+                        style: .prominent,
+                        isDisabled: !model.canUpdateQuickReply,
+                        isLoading: model.isGeneratingQuickReply
+                    ) {
+                        Task { await model.generateQuickReply(action: .custom) }
+                    }
+                } else {
+                    ReplyComposerMacActionButton(
+                        title: "Generate",
+                        shortcutDisplay: "⌥G",
+                        shortcutKey: KeyEquivalent("g"),
+                        shortcutModifiers: .option,
+                        style: .prominent,
+                        isDisabled: !model.canGenerateQuickReply,
+                        isLoading: model.isGeneratingQuickReply
+                    ) {
+                        Task { await model.generateQuickReply(action: .custom) }
+                    }
+                }
+
+                ReplyComposerMacActionButton(
+                    title: "Insert",
+                    shortcutDisplay: "⌥I",
+                    shortcutKey: KeyEquivalent("i"),
+                    shortcutModifiers: .option,
+                    isDisabled: !model.canInsertQuickReply
+                ) {
+                    model.insertQuickReply()
+                }
+                #else
                 Button {
                     Task { await model.generateQuickReply(action: .custom) }
                 } label: {
                     if model.isGeneratingQuickReply {
                         ProgressView().scaleEffect(0.85)
                     } else {
-                        Text(hasQuickReplyDraft ? "Revise" : "Generate")
+                        Text(hasQuickReplyDraft ? "Update" : "Generate")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -341,7 +450,8 @@ public struct ReplyComposerQuickReplyPanel: View {
 
                 Button("Insert") { model.insertQuickReply() }
                     .buttonStyle(.bordered)
-                    .disabled(model.quickReplyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isGeneratingQuickReply)
+                    .disabled(!model.canInsertQuickReply)
+                #endif
             }
 
             if let err = model.quickReplyError {
@@ -420,19 +530,7 @@ private struct ReplyComposerMacActionButton: View {
     }
 
     private var shortcutBadge: some View {
-        Text(shortcutDisplay)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(badgeForeground)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(badgeBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(badgeForeground.opacity(0.28), lineWidth: 0.5)
-            )
+        ReplyComposerKeycapBadge(shortcutDisplay: shortcutDisplay, prominent: style == .prominent)
     }
 
     private var minButtonWidth: CGFloat {
@@ -447,6 +545,9 @@ private struct ReplyComposerMacActionButton: View {
     private var helpText: String {
         switch shortcutDisplay {
         case "⌥Q": return "Toggle AI Quick Reply"
+        case "⌥G": return "Generate quick reply from your notes"
+        case "⌥U": return "Update the first draft with your feedback"
+        case "⌥I": return "Insert the first draft into your reply"
         case "⌘S": return "Save draft in Gmail and close"
         case "⌘↩": return "Send reply"
         default: return title
@@ -476,14 +577,6 @@ private struct ReplyComposerMacActionButton: View {
         case .prominent: return .clear
         case .secondary: return SharedAppTheme.secondaryText.opacity(isHovered ? 0.22 : 0.12)
         }
-    }
-
-    private var badgeForeground: Color {
-        style == .prominent ? Color.black.opacity(0.65) : SharedAppTheme.secondaryText
-    }
-
-    private var badgeBackground: Color {
-        style == .prominent ? Color.black.opacity(0.08) : SharedAppTheme.primaryBackground.opacity(0.35)
     }
 }
 
@@ -620,26 +713,65 @@ public struct ReplyCatchUpOutcomeSheet: View {
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 10) {
-                outcomeButton("Mark read & next", icon: "envelope.open.fill", outcome: .markReadAndAdvance)
-                outcomeButton("Review later & next", icon: "envelope.badge", outcome: .keepUnreadAndAdvance)
-                outcomeButton("Stay on this email", icon: "arrow.uturn.backward", outcome: .stay)
+                outcomeButton(
+                    "Mark read & next",
+                    icon: "envelope.open.fill",
+                    shortcutDisplay: "J",
+                    shortcutKey: KeyEquivalent("j"),
+                    outcome: .markReadAndAdvance
+                )
+                outcomeButton(
+                    "Review later & next",
+                    icon: "envelope.badge",
+                    shortcutDisplay: "F",
+                    shortcutKey: KeyEquivalent("f"),
+                    outcome: .keepUnreadAndAdvance
+                )
+                outcomeButton(
+                    "Stay on this email",
+                    icon: "arrow.uturn.backward",
+                    shortcutDisplay: "Esc",
+                    shortcutKey: .escape,
+                    outcome: .stay
+                )
             }
         }
         .padding(24)
         .frame(maxWidth: 400)
     }
 
-    private func outcomeButton(_ title: String, icon: String, outcome: CatchUpReplyOutcome) -> some View {
+    private func outcomeButton(
+        _ title: String,
+        icon: String,
+        shortcutDisplay: String,
+        shortcutKey: KeyEquivalent,
+        outcome: CatchUpReplyOutcome
+    ) -> some View {
         Button {
             onSelect(outcome)
         } label: {
-            Label(title, systemImage: icon)
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+            HStack(spacing: 10) {
+                Label(title, systemImage: icon)
+                    .font(.body.weight(.semibold))
+                Spacer(minLength: 8)
+                #if os(macOS)
+                ReplyComposerKeycapBadge(
+                    shortcutDisplay: shortcutDisplay,
+                    prominent: outcome == .markReadAndAdvance
+                )
+                #else
+                Text(shortcutDisplay)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(SharedAppTheme.secondaryText)
+                #endif
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
         .buttonStyle(.borderedProminent)
         .tint(outcome == .markReadAndAdvance ? SharedAppTheme.accent : SharedAppTheme.secondaryBackground)
+        .keyboardShortcut(shortcutKey, modifiers: [])
     }
 }
 

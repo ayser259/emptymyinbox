@@ -90,7 +90,7 @@ struct MacCatchUpFeedView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !loader.hasMoreEmails {
                 if sessionStats.reviewed > 0 {
-                    MacCatchUpCompletionView(
+                    CatchUpCompletionView(
                         sessionStats: sessionStats,
                         sessionStartTime: sessionStartTime,
                         todaySendersReceived: todaySendersReceived,
@@ -512,10 +512,28 @@ struct MacCatchUpFeedView: View {
             } description: {
                 Text("No unread emails in this view.")
             }
-            Button("Back to Dashboard", action: onDone)
-                .buttonStyle(.borderedProminent)
-                .tint(MacAppTheme.accent)
-                .keyboardShortcut(.defaultAction)
+
+            Button(action: onDone) {
+                HStack(spacing: 10) {
+                    Text("Return to Dashboard")
+                        .font(.headline)
+                    Text("↵")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.black.opacity(0.55))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                .foregroundStyle(.black)
+                .frame(maxWidth: 360)
+                .padding(.vertical, 12)
+                .background(MacAppTheme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.return, modifiers: [])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
