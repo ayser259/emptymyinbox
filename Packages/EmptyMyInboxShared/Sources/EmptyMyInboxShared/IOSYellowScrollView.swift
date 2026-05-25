@@ -12,8 +12,16 @@ import UIKit
 
 public struct IOSYellowScrollView<Content: View>: UIViewRepresentable {
     let content: Content
+    let scrollSignal: Int
+    let scrollStepAmount: CGFloat
 
-    public init(@ViewBuilder content: () -> Content) {
+    public init(
+        scrollSignal: Int = 0,
+        scrollStepAmount: CGFloat = 0,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.scrollSignal = scrollSignal
+        self.scrollStepAmount = scrollStepAmount
         self.content = content()
     }
 
@@ -48,6 +56,14 @@ public struct IOSYellowScrollView<Content: View>: UIViewRepresentable {
 
     public func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.hostingController?.rootView = content
+        if scrollSignal != context.coordinator.lastScrollSignal {
+            context.coordinator.lastScrollSignal = scrollSignal
+            if scrollStepAmount != 0 {
+                let maxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+                let nextOffsetY = min(max(scrollView.contentOffset.y + scrollStepAmount, 0), maxOffsetY)
+                scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: nextOffsetY), animated: true)
+            }
+        }
         customizeScrollbar(scrollView)
     }
 
@@ -73,6 +89,7 @@ public struct IOSYellowScrollView<Content: View>: UIViewRepresentable {
 
     public final class Coordinator: NSObject, UIScrollViewDelegate {
         var hostingController: UIHostingController<Content>?
+        var lastScrollSignal: Int = 0
     }
 }
 

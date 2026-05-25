@@ -139,7 +139,7 @@ enum EmailHTMLRenderer {
         return createWrappedHTML(extractBodyContent(from: html) ?? html, isDarkMode: isDarkMode)
     }
 
-    private static func extractBodyContent(from html: String) -> String? {
+    static func extractBodyContent(from html: String) -> String? {
         if let bodyStartRange = html.range(of: "<body", options: .caseInsensitive) {
             var searchStart = bodyStartRange.upperBound
             while searchStart < html.endIndex {
@@ -158,7 +158,7 @@ enum EmailHTMLRenderer {
         return nil
     }
 
-    private static func getCommonStyles(isDarkMode: Bool) -> String {
+    static func getCommonStyles(isDarkMode: Bool) -> String {
         // Use box-sizing universally but avoid blanket max-width/overflow-x overrides that clip
         // embedded images and break table-based email layouts.
         "*, *::before, *::after { box-sizing: border-box; }" +
@@ -206,6 +206,33 @@ enum EmailHTMLRenderer {
         }
         #endif
     }
+
+    static let widthInjectionScript = """
+        (function() {
+            var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            var meta = document.querySelector('meta[name="viewport"]');
+            if (meta) {
+                meta.content = 'width=' + viewportWidth + ', initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            }
+            var images = document.querySelectorAll('img');
+            for (var i = 0; i < images.length; i++) {
+                images[i].style.maxWidth = '100%';
+                images[i].style.height = 'auto';
+            }
+            var tables = document.querySelectorAll('table');
+            for (var i = 0; i < tables.length; i++) {
+                var tw = tables[i].getAttribute('width');
+                if (tw && parseInt(tw, 10) > viewportWidth) {
+                    tables[i].removeAttribute('width');
+                    tables[i].style.maxWidth = '100%';
+                }
+            }
+            document.body.style.overflowX = 'hidden';
+            document.documentElement.style.overflowX = 'hidden';
+        })();
+        """
+
+    static let viewportFixScript = widthInjectionScript
 
     static func openExternalURL(_ url: URL) {
         #if os(iOS)
@@ -273,8 +300,7 @@ private struct EmailHTMLWebViewIOS: UIViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.onLoadComplete?()
             }
-            let script = Self.widthInjectionScript
-            webView.evaluateJavaScript(script, completionHandler: nil)
+            webView.evaluateJavaScript(EmailHTMLRenderer.widthInjectionScript) { _, _ in }
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -301,35 +327,6 @@ private struct EmailHTMLWebViewIOS: UIViewRepresentable {
             }
         }
 
-        private static let widthInjectionScript = """
-        (function() {
-            var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-            // Pin the viewport to the actual view width so emails with narrow mobile viewports
-            // (e.g. width=320) are not scaled up to fill the container.
-            var meta = document.querySelector('meta[name="viewport"]');
-            if (meta) {
-                meta.content = 'width=' + viewportWidth + ', initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-            }
-            // Scale images down to fit; keep aspect ratio intact.
-            var images = document.querySelectorAll('img');
-            for (var i = 0; i < images.length; i++) {
-                images[i].style.maxWidth = '100%';
-                images[i].style.height = 'auto';
-            }
-            // Remove hard-coded pixel widths on tables that would cause horizontal overflow.
-            var tables = document.querySelectorAll('table');
-            for (var i = 0; i < tables.length; i++) {
-                var tw = tables[i].getAttribute('width');
-                if (tw && parseInt(tw, 10) > viewportWidth) {
-                    tables[i].removeAttribute('width');
-                    tables[i].style.maxWidth = '100%';
-                }
-            }
-            // Prevent horizontal scrollbar at root only — not on every element, which clips images.
-            document.body.style.overflowX = 'hidden';
-            document.documentElement.style.overflowX = 'hidden';
-        })();
-        """
     }
 }
 #endif
@@ -356,6 +353,7 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
         EmailHTMLRenderer.applyWebViewChrome(webView, isDarkMode: isDarkMode)
         if let scroll = webView.enclosingScrollView {
             scroll.hasHorizontalScroller = false
+            scroll.hasVerticalScroller = true
         }
         EmailHTMLRenderer.loadHTMLContent(into: webView, isDarkMode: isDarkMode, htmlContent: htmlContent)
         return webView
@@ -364,12 +362,14 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onLoadComplete = onLoadComplete
         EmailHTMLRenderer.applyWebViewChrome(webView, isDarkMode: isDarkMode)
+        if let scroll = webView.enclosingScrollView {
+            scroll.hasVerticalScroller = true
+        }
         if context.coordinator.lastLoadedContent != htmlContent {
             context.coordinator.lastLoadedContent = htmlContent
             webView.magnification = 1.0
             EmailHTMLRenderer.loadHTMLContent(into: webView, isDarkMode: isDarkMode, htmlContent: htmlContent)
         }
-        // Arrow-key scroll: fire when the signal counter increments
         if scrollSignal != context.coordinator.lastScrollSignal {
             context.coordinator.lastScrollSignal = scrollSignal
             if scrollStepAmount != 0 {
@@ -393,7 +393,7 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
         var lastScrollSignal: Int = 0
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript(Self.viewportFixScript, completionHandler: nil)
+            webView.evaluateJavaScript(EmailHTMLRenderer.viewportFixScript) { _, _ in }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.onLoadComplete?()
             }
@@ -423,37 +423,6 @@ private struct EmailHTMLWebViewMac: NSViewRepresentable {
             }
         }
 
-        // Pin the viewport to the actual view width so emails that declare a narrow
-        // mobile viewport (e.g. width=320) are not scaled up to fill the card.
-        // Surgically targets images and oversized tables only — avoids blasting
-        // overflow:hidden onto every element, which clips embedded images.
-        private static let viewportFixScript = """
-        (function() {
-            var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-            var meta = document.querySelector('meta[name="viewport"]');
-            if (meta) {
-                meta.content = 'width=' + viewportWidth + ', initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-            }
-            // Scale images down to fit; keep aspect ratio intact.
-            var images = document.querySelectorAll('img');
-            for (var i = 0; i < images.length; i++) {
-                images[i].style.maxWidth = '100%';
-                images[i].style.height = 'auto';
-            }
-            // Remove hard-coded pixel widths on tables wider than the viewport.
-            var tables = document.querySelectorAll('table');
-            for (var i = 0; i < tables.length; i++) {
-                var tw = tables[i].getAttribute('width');
-                if (tw && parseInt(tw, 10) > viewportWidth) {
-                    tables[i].removeAttribute('width');
-                    tables[i].style.maxWidth = '100%';
-                }
-            }
-            // Prevent horizontal scrollbar at root only.
-            document.body.style.overflowX = 'hidden';
-            document.documentElement.style.overflowX = 'hidden';
-        })();
-        """
     }
 }
 #endif

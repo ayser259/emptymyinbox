@@ -8,6 +8,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 // Notification for when email metadata is loaded
 public extension Notification.Name {
@@ -37,13 +38,22 @@ public class LazyEmailLoader: ObservableObject {
     /// Metadata for all emails (loaded upfront - lightweight)
     @Published public private(set) var emailMetadata: [EmailMetadata] = []
     
-    /// Full email details (loaded progressively)
-    @Published public private(set) var loadedEmails: [Int: EmailDetail] = [:] // keyed by email id
+    /// Catch Up deck: one item per unread thread.
+    @Published public private(set) var catchUpThreads: [CatchUpThreadItem] = []
     
-    /// Loading state per email
-    @Published public private(set) var loadStates: [Int: EmailLoadState] = [:] // keyed by email id
+    /// Loaded full-thread conversations keyed by thread stable id.
+    @Published public private(set) var loadedConversations: [Int: EmailThreadConversation] = [:]
     
-    /// Current index in the email deck
+    /// Loading state per thread (stable list id).
+    @Published public private(set) var threadLoadStates: [Int: EmailLoadState] = [:]
+    
+    /// Full email details (legacy per-message cache, still used during migration)
+    @Published public private(set) var loadedEmails: [Int: EmailDetail] = [:]
+    
+    /// Loading state per email (legacy)
+    @Published public private(set) var loadStates: [Int: EmailLoadState] = [:]
+    
+    /// Current index in the thread deck
     @Published public var currentIndex: Int = 0
     
     /// Whether initial metadata is loading
@@ -58,6 +68,7 @@ public class LazyEmailLoader: ObservableObject {
     /// IDs of emails the user has already processed (kept unread or removed) this session.
     /// Used as a safety net to prevent a background metadata sort from re-surfacing them.
     @Published public private(set) var sessionSeenEmailIds: Set<Int> = []
+    @Published public private(set) var sessionSeenThreadIds: Set<Int> = []
     
     /// Desired account order for grouped sorting (account emails in priority order).
     /// Set this before calling `loadMetadata()` or any time before the background sort completes.
@@ -81,39 +92,46 @@ public class LazyEmailLoader: ObservableObject {
     
     // MARK: - Computed Properties
     
-    /// Total number of emails in the deck
+    /// Total number of threads in the deck
     public var totalEmailCount: Int {
-        emailMetadata.count
+        catchUpThreads.count
     }
     
-    /// Number of emails left to review
+    /// Number of threads left to review
     public var remainingCount: Int {
-        emailMetadata.count - currentIndex
+        max(0, catchUpThreads.count - currentIndex)
     }
     
-    /// Current email (if loaded)
+    public var currentThread: CatchUpThreadItem? {
+        guard currentIndex < catchUpThreads.count else { return nil }
+        return catchUpThreads[currentIndex]
+    }
+    
+    /// Current thread conversation (if loaded)
+    public var currentConversation: EmailThreadConversation? {
+        guard let thread = currentThread else { return nil }
+        return loadedConversations[thread.id]
+    }
+    
+    /// Selected action-target message in the current thread.
     public var currentEmail: EmailDetail? {
-        guard currentIndex < emailMetadata.count else { return nil }
-        let metadata = emailMetadata[currentIndex]
-        return loadedEmails[metadata.id]
+        currentConversation?.selectedMessage
     }
     
-    /// Whether current email is loaded
+    /// Whether current thread conversation is loaded
     public var isCurrentLoaded: Bool {
-        guard currentIndex < emailMetadata.count else { return false }
-        let metadata = emailMetadata[currentIndex]
-        return loadedEmails[metadata.id] != nil
+        guard let thread = currentThread else { return false }
+        return loadedConversations[thread.id] != nil
     }
 
     public var currentLoadState: EmailLoadState {
-        guard currentIndex < emailMetadata.count else { return .failed }
-        let metadata = emailMetadata[currentIndex]
-        return loadStates[metadata.id] ?? .pending
+        guard let thread = currentThread else { return .failed }
+        return threadLoadStates[thread.id] ?? .pending
     }
     
-    /// Whether there are more emails to show
+    /// Whether there are more threads to show
     public var hasMoreEmails: Bool {
-        currentIndex < emailMetadata.count
+        currentIndex < catchUpThreads.count
     }
     
     /// Get email at a specific index (if loaded)
@@ -243,6 +261,7 @@ public class LazyEmailLoader: ObservableObject {
                         
                         self.loadedEmails[firstEmail.id] = firstEmail
                         self.loadStates[firstEmail.id] = .loaded
+                        self.rebuildCatchUpThreads()
                         firstEmailLoaded = true
                         
                         logSuccess("LazyEmailLoader: First email loaded and ready!", category: "Email")
@@ -262,11 +281,15 @@ public class LazyEmailLoader: ObservableObject {
         // Wait for first email to load (fast path - just 1 API call)
         await firstEmailTask.value
         
-        // Mark as ready once first email is available
+        // Mark as ready once first thread can load
         if firstEmailLoaded {
+            rebuildCatchUpThreads()
+            if !catchUpThreads.isEmpty {
+                await loadThread(at: 0)
+            }
             isLoadingMetadata = false
             isReadyToShow = true
-            logInfo("LazyEmailLoader: Ready to show! (first email loaded)", category: "Email")
+            logInfo("LazyEmailLoader: Ready to show! (first thread loading)", category: "Email")
         }
         
         // Wait for metadata to finish loading
@@ -347,7 +370,20 @@ public class LazyEmailLoader: ObservableObject {
         // Save to cache and notify dashboard
         await saveToCacheAndNotify(emailMetadata)
         
-        logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails", category: "Email")
+        rebuildCatchUpThreads()
+        logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails, \(catchUpThreads.count) threads", category: "Email")
+    }
+    
+    private func rebuildCatchUpThreads() {
+        var threads = EmailThreadGrouping.catchUpThreads(from: emailMetadata, accountOrder: accountOrder)
+        if !sessionSeenThreadIds.isEmpty {
+            threads = threads.filter { !sessionSeenThreadIds.contains($0.id) }
+        }
+        catchUpThreads = threads
+        if currentIndex >= catchUpThreads.count {
+            currentIndex = max(0, catchUpThreads.count - 1)
+        }
+        advancePastSeenThreads()
     }
     
     /// Sort emails: by accountOrder position first, then by received_at descending within each account.
@@ -395,24 +431,57 @@ public class LazyEmailLoader: ObservableObject {
         }
     }
     
-    /// Remove current email from the deck (after star/mark as read)
+    /// Remove current thread from the deck (after all unread handled or explicit skip).
     public func removeCurrentEmail() {
-        guard currentIndex < emailMetadata.count else { return }
-        
-        let metadata = emailMetadata[currentIndex]
-        sessionSeenEmailIds.insert(metadata.id)
-        emailMetadata.remove(at: currentIndex)
-        loadedEmails.removeValue(forKey: metadata.id)
-        loadStates.removeValue(forKey: metadata.id)
+        removeCurrentThread()
+    }
+    
+    public func removeCurrentThread() {
+        guard let thread = currentThread else { return }
+        sessionSeenThreadIds.insert(thread.id)
+        for meta in thread.unreadMetadata {
+            sessionSeenEmailIds.insert(meta.id)
+            emailMetadata.removeAll { $0.id == meta.id }
+        }
+        catchUpThreads.remove(at: currentIndex)
+        loadedConversations.removeValue(forKey: thread.id)
+        threadLoadStates.removeValue(forKey: thread.id)
         removedCount += 1
 
-        if !emailMetadata.isEmpty, currentIndex >= emailMetadata.count {
-            currentIndex = max(0, emailMetadata.count - 1)
+        if !catchUpThreads.isEmpty, currentIndex >= catchUpThreads.count {
+            currentIndex = max(0, catchUpThreads.count - 1)
         }
-
-        // Skip any emails that were already processed (safety net for race with background sort)
-        advancePastSeen()
+        advancePastSeenThreads()
         triggerPrefetch()
+    }
+    
+    /// Mark one message read inside the current thread; remove thread if no unread remain.
+    public func markMessageReadInCurrentThread(emailId: Int) {
+        markMessagesReadInCurrentThread(emailIds: [emailId])
+    }
+
+    /// Mark multiple messages read inside the current thread; remove thread if no unread remain.
+    public func markMessagesReadInCurrentThread(emailIds: [Int]) {
+        guard var conversation = currentConversation else {
+            removeCurrentThread()
+            return
+        }
+        let ids = Set(emailIds)
+        for detail in conversation.messages where ids.contains(detail.id) {
+            let updated = detail.updating(isRead: true)
+            conversation.updateMessage(updated)
+            loadedEmails[detail.id] = updated
+        }
+        emailMetadata.removeAll { ids.contains($0.id) }
+        let threadId = conversation.key.stableListId
+        loadedConversations[threadId] = conversation
+        if !conversation.hasUnread {
+            removeCurrentThread()
+        } else {
+            conversation.selectMessage(id: EmailThreadConversation.defaultActionTargetId(in: conversation.messages))
+            loadedConversations[threadId] = conversation
+            rebuildCatchUpThreads()
+        }
     }
 
     /// Move to the previous email in the deck (desktop feed navigation).
@@ -424,41 +493,46 @@ public class LazyEmailLoader: ObservableObject {
 
     /// Focus a specific row (desktop feed tap); keeps prefetch aligned with the focused card.
     public func selectIndex(_ index: Int) {
-        guard index >= 0, index < emailMetadata.count else { return }
+        guard index >= 0, index < catchUpThreads.count else { return }
         currentIndex = index
         triggerPrefetch()
     }
     
-    /// Move to next email (for "Keep Unread" action - email stays in Gmail)
+    /// Move to next thread (for "Review Later" / keep unread — thread stays in Gmail unread).
     public func moveToNext() {
-        if currentIndex < emailMetadata.count {
-            sessionSeenEmailIds.insert(emailMetadata[currentIndex].id)
+        if let thread = currentThread {
+            sessionSeenThreadIds.insert(thread.id)
         }
         currentIndex += 1
-        // Skip past any emails that were already seen (safety net for background sort races)
-        advancePastSeen()
+        advancePastSeenThreads()
         triggerPrefetch()
     }
 
-    /// Advance currentIndex past any emails already in sessionSeenEmailIds.
-    /// Called after moveToNext / removeCurrentEmail and after background metadata arrives.
-    private func advancePastSeen() {
-        while currentIndex < emailMetadata.count,
-              sessionSeenEmailIds.contains(emailMetadata[currentIndex].id) {
+    private func advancePastSeenThreads() {
+        while currentIndex < catchUpThreads.count,
+              sessionSeenThreadIds.contains(catchUpThreads[currentIndex].id) {
             currentIndex += 1
         }
+    }
+    
+    private func advancePastSeen() {
+        advancePastSeenThreads()
     }
     
     /// Reset the loader for a fresh start
     public func reset() {
         prefetchTask?.cancel()
         emailMetadata = []
+        catchUpThreads = []
+        loadedConversations = [:]
+        threadLoadStates = [:]
         loadedEmails = [:]
         loadStates = [:]
         currentIndex = 0
         isReadyToShow = false
         removedCount = 0
         sessionSeenEmailIds = []
+        sessionSeenThreadIds = []
     }
     
     // MARK: - Progressive Loading
@@ -516,64 +590,79 @@ public class LazyEmailLoader: ObservableObject {
     
     /// Prefetch emails ahead of current position
     private func prefetchUpcoming() async {
-        // Determine what needs to be loaded
         let startIndex = currentIndex
-        let endIndex = min(currentIndex + prefetchAhead, emailMetadata.count)
-        
+        let endIndex = min(currentIndex + prefetchAhead, catchUpThreads.count)
         guard startIndex < endIndex else { return }
         
-        var toLoad: [EmailMetadata] = []
-        
         for i in startIndex..<endIndex {
-            let metadata = emailMetadata[i]
-            let state = loadStates[metadata.id] ?? .pending
-            
-            if state == .pending {
-                toLoad.append(metadata)
+            let thread = catchUpThreads[i]
+            let state = threadLoadStates[thread.id] ?? .pending
+            if state == .pending || state == .failed {
+                await loadThread(at: i)
             }
-        }
-        
-        guard !toLoad.isEmpty else { return }
-        
-        // Determine batch size based on position
-        let batchSize: Int
-        if currentIndex < initialBatchSize + secondBatchSize {
-            batchSize = standardBatchSize
-        } else {
-            batchSize = largeBatchSize
-        }
-        
-        // Load in batches
-        let batches = stride(from: 0, to: toLoad.count, by: batchSize).map { start in
-            let end = min(start + batchSize, toLoad.count)
-            return Array(toLoad[start..<end])
-        }
-        
-        for batch in batches {
-            // Check if task was cancelled
-            if Task.isCancelled { return }
-            
-            await loadBatch(batch)
         }
     }
     
     // MARK: - Manual Loading
     
-    /// Manually request loading of a specific email
-    public func loadEmail(at index: Int) async {
-        guard index < emailMetadata.count else { return }
-        
-        let metadata = emailMetadata[index]
-        let state = loadStates[metadata.id] ?? .pending
-        
-        // Don't reload if already loaded or loading
+    /// Load full conversation for a thread deck index.
+    public func loadThread(at index: Int) async {
+        guard index < catchUpThreads.count else { return }
+        let item = catchUpThreads[index]
+        let state = threadLoadStates[item.id] ?? .pending
         guard state == .pending || state == .failed else { return }
         
-        await loadBatch([metadata])
+        threadLoadStates[item.id] = .loading
+        do {
+            let conversation = try await ThreadConversationService.shared.loadConversation(
+                key: item.key,
+                summary: item.summary
+            )
+            loadedConversations[item.id] = conversation
+            threadLoadStates[item.id] = .loaded
+            for message in conversation.messages {
+                loadedEmails[message.id] = message
+                loadStates[message.id] = .loaded
+            }
+        } catch {
+            logError("LazyEmailLoader: failed to load thread \(item.key.threadId): \(error)", category: "Email")
+            threadLoadStates[item.id] = .failed
+        }
+    }
+    
+    public func loadEmail(at index: Int) async {
+        await loadThread(at: index)
+    }
+    
+    public func updateCurrentConversation(_ conversation: EmailThreadConversation) {
+        loadedConversations[conversation.key.stableListId] = conversation
+        for message in conversation.messages {
+            loadedEmails[message.id] = message
+        }
+    }
+    
+    public func bindingForConversation(threadStableId: Int) -> Binding<EmailThreadConversation>? {
+        guard let conversation = loadedConversations[threadStableId] else { return nil }
+        return Binding(
+            get: { self.loadedConversations[threadStableId] ?? conversation },
+            set: { newValue in
+                self.loadedConversations[threadStableId] = newValue
+                for message in newValue.messages {
+                    self.loadedEmails[message.id] = message
+                }
+            }
+        )
+    }
+    
+    public func conversation(at index: Int) -> EmailThreadConversation? {
+        guard index < catchUpThreads.count else { return nil }
+        return loadedConversations[catchUpThreads[index].id]
     }
 
     public func retryCurrentEmail() async {
-        await loadEmail(at: currentIndex)
+        guard let thread = currentThread else { return }
+        threadLoadStates[thread.id] = .pending
+        await loadThread(at: currentIndex)
     }
 
     public func skipCurrentFailedEmail() {

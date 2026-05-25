@@ -273,15 +273,21 @@ public actor InsightEngine {
 
     private func isNewsletter(_ email: EmailListItem) -> Bool {
         let labels = Set(email.labels.map { $0.uppercased() })
-        if labels.contains("CATEGORY_PROMOTIONS") || labels.contains("CATEGORY_FORUMS") {
+        if labels.contains("CATEGORY_PROMOTIONS")
+            || labels.contains("CATEGORY_FORUMS")
+            || labels.contains("CATEGORY_SOCIAL")
+            || labels.contains("CATEGORY_UPDATES") {
             return true
         }
 
         let sender = email.sender.lowercased()
         let subject = email.subject.lowercased()
         return sender.contains("newsletter")
+            || sender.contains("noreply")
+            || sender.contains("no-reply")
             || subject.contains("newsletter")
             || subject.contains("digest")
+            || subject.contains("weekly roundup")
             || sender.contains("substack")
     }
 

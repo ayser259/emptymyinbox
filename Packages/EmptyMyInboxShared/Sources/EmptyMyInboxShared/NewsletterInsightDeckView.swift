@@ -62,7 +62,7 @@ public struct NewsletterInsightDeckView: View {
                     Text("No stories right now")
                         .font(SharedAppTheme.title3)
                         .foregroundStyle(SharedAppTheme.primaryText)
-                    Text("No new newsletter stories since your last visit.")
+                    Text("New stories appear as newsletters are processed. Pull to refresh if you expect more.")
                         .font(SharedAppTheme.body)
                         .foregroundStyle(SharedAppTheme.secondaryText)
                     if let aiStatusMessage {
@@ -130,6 +130,9 @@ public struct NewsletterInsightDeckView: View {
         .task {
             scheduleRefreshContent(forceRefresh: false)
         }
+        .onChange(of: emailsInputRevision) { _, _ in
+            scheduleRefreshContent(forceRefresh: false)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
             scheduleRefreshContent(forceRefresh: false)
         }
@@ -141,6 +144,12 @@ public struct NewsletterInsightDeckView: View {
         } message: {
             Text("Add a Vault in Settings to sync your Stories to Google Drive or a folder.")
         }
+    }
+
+    /// Changes when the inbox list gains new mail so Mac/iOS can re-run story generation after a mailbox refresh.
+    private var emailsInputRevision: String {
+        guard let newest = emails.first else { return "empty" }
+        return "\(emails.count)|\(newest.id)|\(newest.received_at)"
     }
 
     private func insightCard(_ card: InsightCard) -> some View {
@@ -295,9 +304,7 @@ public struct NewsletterInsightDeckView: View {
             )
             guard !Task.isCancelled, isLatestRefresh(generation) else { return }
 
-            let lastGen = await StoriesFeedStore.shared.lastGeneratedAt()
-            let ranToday = lastGen.map { Calendar.current.isDateInToday($0) } ?? false
-            let shouldRunLLM = !candidates.isEmpty && (forceRefresh || !ranToday)
+            let shouldRunLLM = !candidates.isEmpty
 
             if shouldRunLLM {
                 await MainActor.run {
@@ -312,15 +319,7 @@ public struct NewsletterInsightDeckView: View {
                     await StoriesFeedStore.shared.appendStories(batch.cards)
                     loadedStories = await StoriesFeedStore.shared.stories()
                 }
-                let anyNonFailure = batch.outcomes.contains { outcome in
-                    switch outcome.result {
-                    case .failed:
-                        return false
-                    case .success, .empty:
-                        return true
-                    }
-                }
-                if anyNonFailure {
+                if !batch.cards.isEmpty {
                     await StoriesFeedStore.shared.setLastGeneratedAt(Date())
                     await maybeOfferVaultNudgeAfterGeneration()
                 }

@@ -95,32 +95,12 @@ struct emptyMyInboxApp: App {
     }
     
     private func checkAndRefreshIfNeeded() {
-        // Only refresh once per day (first time app is opened that day)
-        let userDefaults = UserDefaults.standard
-        let lastAutoRefreshKey = "lastAutoRefreshDate"
-        // Get today's date (just the date, not time)
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        // Get last refresh date
-        if let lastRefreshDate = userDefaults.object(forKey: lastAutoRefreshKey) as? Date {
-            let lastRefreshDay = calendar.startOfDay(for: lastRefreshDate)
-            
-            // Only refresh if it's a new day
-            if calendar.isDate(today, inSameDayAs: lastRefreshDay) {
-                // Already refreshed today, skip
-                return
-            }
-        }
-        
-        // It's a new day (or first time), refresh and save the date
-        userDefaults.set(today, forKey: lastAutoRefreshKey)
-        
-        // Post notification to refresh (only if authenticated)
-        if case .authenticated = authManager.sessionState {
+        guard case .authenticated = authManager.sessionState else { return }
+        Task {
+            let snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
+            guard DashboardRefreshPolicy.shouldAutoSync(snapshot: snapshot, now: Date()) else { return }
             NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
             NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
-
         }
     }
     
@@ -138,7 +118,7 @@ struct emptyMyInboxApp: App {
     
     @ViewBuilder
     private var mainAppView: some View {
-        MainTabView()
+        AdaptiveRootView()
     }
 }
 

@@ -14,6 +14,7 @@ public enum RefreshStage: String, Identifiable, CaseIterable {
     case syncingAccounts = "Syncing accounts"
     case fetchingUnread = "Fetching unread emails"
     case fetchingStarred = "Fetching starred emails"
+    case fetchingSent = "Fetching sent emails"
     case processingData = "Processing data"
     case mergingEmails = "Merging with existing emails"
     case filteringOld = "Filtering old emails"
@@ -36,6 +37,8 @@ public enum RefreshStage: String, Identifiable, CaseIterable {
             return "Fetching unread emails from Gmail"
         case .fetchingStarred:
             return "Fetching starred emails from Gmail"
+        case .fetchingSent:
+            return "Fetching sent emails from Gmail"
         case .processingData:
             return "Processing fetched data"
         case .mergingEmails:

@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var lastCalendarRefreshAt: Date?
     @State private var lastActionItemsRefreshAt: Date?
     @State private var dashboardActionItems: [VaultActionItemRecord] = []
+    @StateObject private var sidebarShortcutsStore = MacSidebarShortcutsStore()
 
     private var sidebarRefreshState: MacSidebarRefreshState {
         MacSidebarRefreshState(
@@ -77,6 +78,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
+        .environmentObject(sidebarShortcutsStore)
         .sheet(isPresented: $showVaultSettings) {
             NavigationStack {
                 MacVaultSettingsView()
@@ -160,17 +162,8 @@ struct ContentView: View {
         .background(MacAppTheme.primaryBackground)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker(selection: $rootTab) {
-                    ForEach(MacRootTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
-                    }
-                } label: {
-                    Text("Primary navigation")
-                }
-                .labelsHidden()
-                .accessibilityLabel("Primary navigation")
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 460)
+                MacRootTabBar(selection: $rootTab)
+                    .frame(minWidth: 420, idealWidth: 520, maxWidth: 560)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -204,6 +197,9 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .macRefreshCurrentRootTab)) { _ in
             Task { await refreshCurrentTab() }
+        }
+        .onChange(of: rootTab) { _, _ in
+            sidebarShortcutsStore.clearAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .vaultDidSync)) { _ in
             Task { await loadDashboardActionItems() }
@@ -273,8 +269,7 @@ struct ContentView: View {
             lastMailRefreshAt = ts
         }
         persistSidebarRefreshTimestamps()
-        // No cached data at all — trigger a full fetch so the user sees their emails immediately.
-        if loaded == nil, !isRefreshing {
+        if DashboardRefreshPolicy.shouldAutoSync(snapshot: loaded, now: Date()), !isRefreshing {
             await refreshMailbox()
         }
     }
@@ -330,21 +325,19 @@ struct ContentView: View {
         }
     }
 
-    /// Matches iOS `checkAndRefreshIfNeeded` day gate: first foreground of a new calendar day pulls Gmail and posts companion (Calendar + Action Items).
+    /// Matches iOS foreground behavior: refresh mail when the cached snapshot is stale; companion tabs refresh via `refreshMailbox` notification.
     private func checkMacForegroundCompanionIfNeeded() {
         guard case .authenticated = authManager.sessionState else { return }
-        let userDefaults = UserDefaults.standard
-        let lastAutoRefreshKey = "lastAutoRefreshDate"
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        if let lastRefreshDate = userDefaults.object(forKey: lastAutoRefreshKey) as? Date {
-            let lastRefreshDay = calendar.startOfDay(for: lastRefreshDate)
-            if calendar.isDate(today, inSameDayAs: lastRefreshDay) {
-                return
+        Task {
+            let cached: DashboardDataSnapshot?
+            if let snapshot {
+                cached = snapshot
+            } else {
+                cached = await DashboardDataManager.shared.loadCachedSnapshot()
             }
+            guard DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) else { return }
+            await refreshMailbox()
         }
-        userDefaults.set(today, forKey: lastAutoRefreshKey)
-        Task { await refreshMailbox() }
     }
 }
 

@@ -17,7 +17,8 @@ import EmptyMyInboxShared
 
 struct MacCatchUpFeedView: View {
 
-    @Binding var contextualShortcuts: [MacSidebarContextualShortcut]
+    @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
+    var onDone: () -> Void = {}
 
     @StateObject private var loader = LazyEmailLoader()
     @StateObject private var accountOrderStore = CatchUpAccountOrderStore()
@@ -26,11 +27,14 @@ struct MacCatchUpFeedView: View {
     @State private var showUnsubscribeWebView = false
     @State private var unsubscribeManualURL: URL?
     @State private var showReorderSheet = false
-    @State private var replyComposerEmail: EmailDetail?
+    @State private var replyPresentation: ReplyComposerPresentation?
 
-    // MARK: - Session stats (for celebration view)
+    // MARK: - Session stats (for completion view)
     @State private var sessionStats = CatchUpSessionStats()
     @State private var sessionStartTime: Date? = nil
+    @State private var didPersistSessionMetrics = false
+    @State private var todaySendersReceived = 0
+    @State private var todayUnsubscribesTotal = 0
 
     // MARK: - Unified dismiss animation state (iOS-parity)
     @State private var dismissingCardId: Int? = nil
@@ -46,7 +50,7 @@ struct MacCatchUpFeedView: View {
     // MARK: - Arrow-key scroll (front card only)
     @State private var scrollSignal: Int = 0
     @State private var scrollStepAmount: CGFloat = 0
-    @State private var keyMonitor: Any? = nil
+    @StateObject private var keyboardMonitor = MacCatchUpKeyboardMonitor()
 
     // MARK: - Stack constants
     private let maxVisibleCards = 4
@@ -65,13 +69,13 @@ struct MacCatchUpFeedView: View {
 
     private var visibleCards: [CardInfo] {
         let start = loader.currentIndex
-        let end = min(start + maxVisibleCards, loader.emailMetadata.count)
+        let end = min(start + maxVisibleCards, loader.catchUpThreads.count)
         var displayIndex = 0
         var cards: [CardInfo] = []
         for i in start..<end {
-            let id = loader.emailMetadata[i].id
-            guard !loader.sessionSeenEmailIds.contains(id) else { continue }
-            cards.append(CardInfo(id: id, actualIndex: i, displayIndex: displayIndex))
+            let thread = loader.catchUpThreads[i]
+            guard !loader.sessionSeenThreadIds.contains(thread.id) else { continue }
+            cards.append(CardInfo(id: thread.id, actualIndex: i, displayIndex: displayIndex))
             displayIndex += 1
         }
         return cards
@@ -86,40 +90,47 @@ struct MacCatchUpFeedView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !loader.hasMoreEmails {
                 if sessionStats.reviewed > 0 {
-                    CelebrationView(
-                        emailsCleared: sessionStats.reviewed,
+                    CatchUpCompletionView(
+                        sessionStats: sessionStats,
                         sessionStartTime: sessionStartTime,
-                        accountEmail: loader.emailMetadata.first?.account_email,
-                        sessionStats: sessionStats
+                        todaySendersReceived: todaySendersReceived,
+                        todayUnsubscribesTotal: todayUnsubscribesTotal,
+                        onDone: onDone
                     )
+                    .task { await loadCompletionContext() }
+                    .onAppear { Task { await persistSessionMetricsIfNeeded() } }
                 } else {
-                    ContentUnavailableView {
-                        Label("All caught up", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("No unread emails in this view.")
-                    }
+                    catchUpEmptyState
                 }
             } else {
-                GeometryReader { geo in
-                    let bottomBarHeight: CGFloat = 168
-                    let deckHeight = max(320, geo.size.height - bottomBarHeight - accountGroupBarHeight)
-                    VStack(spacing: 0) {
-                        accountGroupBar
-                        deckStack(deckHeight: deckHeight)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .task(id: loader.currentIndex) {
-                                await loader.loadEmail(at: loader.currentIndex)
-                                if loader.currentIndex + 1 < loader.emailMetadata.count {
-                                    await loader.loadEmail(at: loader.currentIndex + 1)
+                MacReplyComposerSlideInContainer(
+                    replyPresentation: $replyPresentation,
+                    onCatchUpOutcome: { outcome in
+                        guard let email = replyPresentation?.email else { return }
+                        Task { await handleCatchUpReplyOutcome(outcome, email: email) }
+                    }
+                ) {
+                    GeometryReader { geo in
+                        let bottomBarHeight: CGFloat = 168
+                        let deckHeight = max(320, geo.size.height - bottomBarHeight - accountGroupBarHeight)
+                        VStack(spacing: 0) {
+                            accountGroupBar
+                            deckStack(deckHeight: deckHeight)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .task(id: loader.currentIndex) {
+                                    await loader.loadThread(at: loader.currentIndex)
+                                    if loader.currentIndex + 1 < loader.catchUpThreads.count {
+                                        await loader.loadThread(at: loader.currentIndex + 1)
+                                    }
                                 }
-                            }
 
-                        Divider().opacity(0.35)
+                            Divider().opacity(0.35)
 
-                        bottomControls
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 14)
-                            .background(MacAppTheme.secondaryBackground.opacity(0.98))
+                            bottomControls
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 14)
+                                .background(MacAppTheme.secondaryBackground.opacity(0.98))
+                        }
                     }
                 }
             }
@@ -139,26 +150,36 @@ struct MacCatchUpFeedView: View {
         }
         .onAppear {
             syncSidebarContextualShortcuts()
-            installKeyMonitor()
+            syncKeyboardMonitor()
+            keyboardMonitor.installIfNeeded()
         }
         .sheet(isPresented: $showReorderSheet) {
             AccountReorderSheet(store: accountOrderStore)
         }
-        .onDisappear { removeKeyMonitor() }
+        .onDisappear {
+            keyboardMonitor.remove()
+            sidebarShortcutsStore.removeLayers(withPrefix: "catchup.")
+        }
         .onChange(of: loader.isLoadingMetadata) { _, _ in syncSidebarContextualShortcuts() }
         .onChange(of: loader.hasMoreEmails) { _, _ in syncSidebarContextualShortcuts() }
         .onChange(of: hasUnsubscribeAvailable) { _, _ in syncSidebarContextualShortcuts() }
         .onChange(of: loader.currentEmail?.id) { _, _ in
-            Task { await checkUnsubscribeAvailability() }
-            // Reset scroll position when the front card changes
             scrollSignal = 0
             scrollStepAmount = 0
+            syncSidebarContextualShortcuts()
+            syncKeyboardMonitor()
         }
+        .onChange(of: replyPresentation?.id) { _, _ in
+            syncSidebarContextualShortcuts()
+            syncKeyboardMonitor()
+        }
+        .onChange(of: isAnimating) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: loader.hasMoreEmails) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: hasUnsubscribeAvailable) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: isProcessing) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: loader.isCurrentLoaded) { _, _ in syncKeyboardMonitor() }
         .sheet(isPresented: $showUnsubscribeWebView) {
             if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
-        }
-        .sheet(item: $replyComposerEmail) { email in
-            EmailReplyComposerView(email: email)
         }
     }
 
@@ -169,14 +190,13 @@ struct MacCatchUpFeedView: View {
     /// Groups emails by account, preserving accountOrderStore order.
     private var groupedCounts: [(account: String, total: Int, remaining: Int)] {
         let order = accountOrderStore.orderedAccounts
-        // Count all unseen emails per account
         var totalMap: [String: Int] = [:]
         var remainingMap: [String: Int] = [:]
-        for (idx, meta) in loader.emailMetadata.enumerated() {
-            guard !loader.sessionSeenEmailIds.contains(meta.id) else { continue }
-            totalMap[meta.account_email, default: 0] += 1
+        for (idx, thread) in loader.catchUpThreads.enumerated() {
+            guard !loader.sessionSeenThreadIds.contains(thread.id) else { continue }
+            totalMap[thread.key.accountEmail, default: 0] += thread.unreadCount
             if idx >= loader.currentIndex {
-                remainingMap[meta.account_email, default: 0] += 1
+                remainingMap[thread.key.accountEmail, default: 0] += 1
             }
         }
         let accounts = order.isEmpty ? Array(totalMap.keys.sorted()) : order
@@ -241,7 +261,7 @@ struct MacCatchUpFeedView: View {
 
     @ViewBuilder
     private func cardViewFor(_ cardInfo: CardInfo, cardHeight: CGFloat) -> some View {
-        let meta = loader.emailMetadata[cardInfo.actualIndex]
+        let thread = loader.catchUpThreads[cardInfo.actualIndex]
         let isDismissing = dismissingCardId == cardInfo.id
         let displayIndex = cardInfo.displayIndex
         let effectiveDisplayIndex = calcEffectiveDisplayIndex(displayIndex: displayIndex, isDismissing: isDismissing)
@@ -258,10 +278,11 @@ struct MacCatchUpFeedView: View {
             return 0
         }()
 
-        MacCatchUpDeckCard(
-            metadata: meta,
-            detail: loader.emailAt(index: cardInfo.actualIndex),
-            loadState: loader.loadStates[meta.id] ?? .pending,
+        MacCatchUpThreadDeckCard(
+            thread: thread,
+            conversation: loader.loadedConversations[thread.id],
+            conversationBinding: loader.bindingForConversation(threadStableId: thread.id),
+            loadState: loader.threadLoadStates[thread.id] ?? .pending,
             cardHeight: cardHeight,
             dragOffset: displayIndex == 0 && !isDismissing ? cardDragOffset : .zero,
             onRetry: {
@@ -279,7 +300,8 @@ struct MacCatchUpFeedView: View {
                 handleDragEnd(translation: translation, velocity: velocity)
             },
             scrollSignal: displayIndex == 0 ? scrollSignal : 0,
-            scrollStepAmount: displayIndex == 0 ? scrollStepAmount : 0
+            scrollStepAmount: displayIndex == 0 ? scrollStepAmount : 0,
+            onConversationChange: { loader.updateCurrentConversation($0) }
         )
         .offset(cardOffset)
         .scaleEffect(isDismissing ? 1.0 : scale)
@@ -386,18 +408,30 @@ struct MacCatchUpFeedView: View {
 
     private var isButtonsDisabled: Bool { isProcessing || !loader.isCurrentLoaded || isAnimating }
 
+    private var isReplyAllMeaningful: Bool {
+        guard let email = loader.currentEmail else { return false }
+        return ReplyRecipientResolver.isReplyAllMeaningful(email: email)
+    }
+
+    private var catchUpReadingHandlers: EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { Task { await handleReply(mode: .reply) } },
+            onReplyAll: { Task { await handleReply(mode: .replyAll) } },
+            onStar: { Task { await handleStar() } },
+            onMarkUnread: { Task { await handleKeepUnread() } },
+            onMarkAsRead: { Task { await handleMarkAsRead() } },
+            onUnsubscribe: { Task { await handleUnsubscribe() } }
+        )
+    }
+
     private var bottomControls: some View {
-        MacCatchUpControlCenter(
+        EmailReadingCatchUpActionBar(
             email: loader.currentEmail,
             remainingCount: loader.remainingCount,
             isDisabled: isButtonsDisabled,
             isAnimating: isAnimating,
-            hasUnsubscribe: hasUnsubscribeAvailable,
-            onReply:       { Task { await handleReply() } },
-            onStar:        { Task { await handleStar() } },
-            onKeepUnread:  { Task { await handleKeepUnread() } },
-            onMarkAsRead:  { Task { await handleMarkAsRead() } },
-            onUnsubscribe: { Task { await handleUnsubscribe() } }
+            hasUnsubscribe: $hasUnsubscribeAvailable,
+            handlers: catchUpReadingHandlers
         )
     }
 
@@ -405,63 +439,65 @@ struct MacCatchUpFeedView: View {
 
     private func syncSidebarContextualShortcuts() {
         guard !loader.isLoadingMetadata, loader.hasMoreEmails else {
-            contextualShortcuts = []
+            sidebarShortcutsStore.removeLayers(withPrefix: "catchup.")
             return
         }
+        if replyPresentation != nil {
+            sidebarShortcutsStore.removeLayer(id: "catchup.triage")
+            sidebarShortcutsStore.setLayer(
+                id: "catchup.replyComposer",
+                title: "Reply composer",
+                shortcuts: MacSidebarShortcutLibrary.mailReplyComposer,
+                priority: 30
+            )
+            return
+        }
+        sidebarShortcutsStore.removeLayer(id: "catchup.replyComposer")
+
         var items: [MacSidebarContextualShortcut] = [
-            MacSidebarContextualShortcut(title: "Keep unread", shortcutDisplay: "K"),
+            MacSidebarContextualShortcut(title: "Review Later", shortcutDisplay: "F"),
             MacSidebarContextualShortcut(title: "Star", shortcutDisplay: "S"),
-            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "E"),
-            MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "⌘R"),
+            MacSidebarContextualShortcut(title: "Mark as read", shortcutDisplay: "J"),
+            MacSidebarContextualShortcut(title: "Reply", shortcutDisplay: "R"),
         ]
+        if isReplyAllMeaningful {
+            items.append(MacSidebarContextualShortcut(title: "Reply All", shortcutDisplay: "⇧R"))
+        }
         if hasUnsubscribeAvailable {
             items.append(MacSidebarContextualShortcut(title: "Unsubscribe", shortcutDisplay: "⌘⇧U"))
         }
-        contextualShortcuts = items
+        sidebarShortcutsStore.setLayer(
+            id: "catchup.triage",
+            title: "Catch Up",
+            shortcuts: items,
+            priority: 20
+        )
     }
 
     // MARK: - Unsubscribe probe
 
-    private func checkUnsubscribeAvailability() async {
-        guard let email = loader.currentEmail else {
-            await MainActor.run { hasUnsubscribeAvailable = false }
-            return
-        }
-        if let _ = await UnsubscribeService.shared.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            await MainActor.run { hasUnsubscribeAvailable = true }
-        } else {
-            await MainActor.run { hasUnsubscribeAvailable = false }
-        }
-    }
-
     // MARK: - Action handlers
 
-    // MARK: - Arrow-key scroll monitor
-
-    private func installKeyMonitor() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            // Only intercept bare ↑/↓ — let all other keys through untouched
-            guard !isAnimating, loader.hasMoreEmails else { return event }
-            switch event.keyCode {
-            case 125: // ↓ Down arrow
-                scrollStepAmount = 160
-                scrollSignal += 1
-                return nil  // consume — do not propagate
-            case 126: // ↑ Up arrow
-                scrollStepAmount = -160
-                scrollSignal += 1
-                return nil
-            default:
-                return event
-            }
+    private func syncKeyboardMonitor() {
+        keyboardMonitor.isReplyComposerOpen = replyPresentation != nil
+        keyboardMonitor.isButtonsDisabled = isButtonsDisabled
+        keyboardMonitor.hasMoreEmails = loader.hasMoreEmails
+        keyboardMonitor.isAnimating = isAnimating
+        keyboardMonitor.hasUnsubscribe = hasUnsubscribeAvailable
+        keyboardMonitor.isReplyAllMeaningful = isReplyAllMeaningful
+        keyboardMonitor.onReply = { Task { await handleReply(mode: .reply) } }
+        keyboardMonitor.onReplyAll = { Task { await handleReply(mode: .replyAll) } }
+        keyboardMonitor.onKeepUnread = { Task { await handleKeepUnread() } }
+        keyboardMonitor.onStar = { Task { await handleStar() } }
+        keyboardMonitor.onMarkAsRead = { Task { await handleMarkAsRead() } }
+        keyboardMonitor.onUnsubscribe = { Task { await handleUnsubscribe() } }
+        keyboardMonitor.onScrollDown = {
+            scrollStepAmount = 160
+            scrollSignal += 1
         }
-    }
-
-    private func removeKeyMonitor() {
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
+        keyboardMonitor.onScrollUp = {
+            scrollStepAmount = -160
+            scrollSignal += 1
         }
     }
 
@@ -469,10 +505,99 @@ struct MacCatchUpFeedView: View {
         if sessionStartTime == nil { sessionStartTime = Date() }
     }
 
-    private func handleReply() async {
+    private var catchUpEmptyState: some View {
+        VStack(spacing: 20) {
+            ContentUnavailableView {
+                Label("All caught up", systemImage: "checkmark.circle")
+            } description: {
+                Text("No unread emails in this view.")
+            }
+
+            Button(action: onDone) {
+                HStack(spacing: 10) {
+                    Text("Return to Dashboard")
+                        .font(.headline)
+                    Text("↵")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.black.opacity(0.55))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                .foregroundStyle(.black)
+                .frame(maxWidth: 360)
+                .padding(.vertical, 12)
+                .background(MacAppTheme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.return, modifiers: [])
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func loadCompletionContext() async {
+        let todayMetric = await InboxMetricsStore.shared.metric(forDayContaining: Date())
+        await MainActor.run {
+            todaySendersReceived = todayMetric?.uniqueSendersReceived ?? sessionStats.reviewedSenders.count
+            todayUnsubscribesTotal = todayMetric?.successfulUnsubscribes ?? sessionStats.successfulUnsubscribes
+        }
+    }
+
+    private func persistSessionMetricsIfNeeded() async {
+        guard !didPersistSessionMetrics, sessionStats.reviewed > 0 else { return }
+        didPersistSessionMetrics = true
+        await InboxMetricsStore.shared.recordCatchUpSession(
+            stats: sessionStats,
+            sessionStart: sessionStartTime
+        )
+        await loadCompletionContext()
+    }
+
+    private func recordSenderForReviewedEmail(_ email: EmailDetail) {
+        sessionStats.reviewedSenders.insert(email.sender.lowercased())
+        if hasUnsubscribeAvailable {
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+        }
+    }
+
+    private func handleReply(mode: ReplyMode = .reply) async {
         guard let email = loader.currentEmail else { return }
         await MainActor.run {
-            replyComposerEmail = email
+            replyPresentation = ReplyComposerPresentation(email: email, mode: mode, isCatchUpContext: true)
+            syncSidebarContextualShortcuts()
+        }
+    }
+
+    private func handleCatchUpReplyOutcome(_ outcome: CatchUpReplyOutcome, email: EmailDetail) async {
+        sessionStats.repliesSent += 1
+        switch outcome {
+        case .markReadAndAdvance:
+            guard !isAnimating else { return }
+            isProcessing = true
+            isAnimating = true
+            await markUnreadMessagesReadInCurrentThread(fallback: email, animateDismiss: true)
+            sessionStats.reviewed += 1
+            sessionStats.markedAsRead += 1
+            recordSenderForReviewedEmail(email)
+            resetAnimationState()
+            isProcessing = false
+            isAnimating = false
+        case .keepUnreadAndAdvance:
+            guard !isAnimating else { return }
+            isAnimating = true
+            let threadCardId = loader.currentThread?.id ?? email.id
+            await performDismissalAnimation(cardId: threadCardId, direction: .left)
+            loader.moveToNext()
+            sessionStats.reviewed += 1
+            sessionStats.keptUnread += 1
+            recordSenderForReviewedEmail(email)
+            resetAnimationState()
+            isAnimating = false
+        case .stay:
+            break
         }
     }
 
@@ -482,10 +607,11 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .up)
+        let threadCardId = loader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .up)
 
         let newStar = !email.is_starred
-        loader.removeCurrentEmail()
+        loader.removeCurrentThread()
         await EmailActionSynchronizer.shared.enqueueStar(
             emailId: email.id,
             gmailId: email.gmail_id,
@@ -496,6 +622,7 @@ struct MacCatchUpFeedView: View {
 
         sessionStats.reviewed += 1
         sessionStats.starred += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isProcessing = false
@@ -508,12 +635,14 @@ struct MacCatchUpFeedView: View {
         recordFirstAction()
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .left)
+        let threadCardId = loader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .left)
 
         loader.moveToNext()
 
         sessionStats.reviewed += 1
         sessionStats.keptUnread += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isAnimating = false
@@ -525,22 +654,37 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        await performDismissalAnimation(cardId: email.id, direction: .right)
-
-        loader.removeCurrentEmail()
-        await EmailActionSynchronizer.shared.enqueueMarkRead(
-            emailId: email.id,
-            gmailId: email.gmail_id,
-            accountEmail: email.account_email
-        )
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        await markUnreadMessagesReadInCurrentThread(fallback: email, animateDismiss: true)
 
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
+        recordSenderForReviewedEmail(email)
 
         resetAnimationState()
         isProcessing = false
         isAnimating = false
+    }
+    
+    private func markUnreadMessagesReadInCurrentThread(fallback: EmailDetail, animateDismiss: Bool) async {
+        let unreadMessages = loader.currentConversation?.messages.filter { !$0.is_read } ?? [fallback]
+        let threadCardId = loader.currentThread?.id ?? fallback.id
+
+        if animateDismiss {
+            await performDismissalAnimation(cardId: threadCardId, direction: .right)
+        }
+
+        for message in unreadMessages {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: message.id,
+                gmailId: message.gmail_id,
+                accountEmail: message.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: message.id)
+            let updated = message.updating(isRead: true)
+            await EmailCache.shared.saveEmailDetail(updated)
+        }
+
+        loader.markMessagesReadInCurrentThread(emailIds: unreadMessages.map(\.id))
     }
 
     private func handleUnsubscribe() async {
@@ -552,12 +696,16 @@ struct MacCatchUpFeedView: View {
         if let method = await UnsubscribeService.shared.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
             let result = await UnsubscribeService.shared.executeUnsubscribe(method: method, userEmail: email.account_email)
             if result.success {
+                sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
                 if result.requiresManualAction, let url = result.manualActionURL {
                     await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
                 } else {
-                    await performDismissalAnimation(cardId: email.id, direction: .right)
-                    loader.removeCurrentEmail()
+                    let threadCardId = loader.currentThread?.id ?? email.id
+                    await performDismissalAnimation(cardId: threadCardId, direction: .right)
+                    loader.removeCurrentThread()
                     sessionStats.reviewed += 1
+                    sessionStats.successfulUnsubscribes += 1
+                    recordSenderForReviewedEmail(email)
                     resetAnimationState()
                 }
             } else if let url = result.manualActionURL {
@@ -570,7 +718,90 @@ struct MacCatchUpFeedView: View {
     }
 }
 
-// MARK: - Deck card (content only — parent owns all transforms)
+// MARK: - Thread deck card
+
+private struct MacCatchUpThreadDeckCard: View {
+    let thread: CatchUpThreadItem
+    let conversation: EmailThreadConversation?
+    let conversationBinding: Binding<EmailThreadConversation>?
+    let loadState: EmailLoadState
+    let cardHeight: CGFloat
+    let dragOffset: CGSize
+    let onRetry: () -> Void
+    let onSkipFailed: () -> Void
+    let onDragChanged: (CGSize) -> Void
+    let onDragEnded: (CGSize, CGSize) -> Void
+    var scrollSignal: Int = 0
+    var scrollStepAmount: CGFloat = 0
+    let onConversationChange: (EmailThreadConversation) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            swipeHintBar
+
+            Group {
+                switch loadState {
+                case .loaded:
+                    if let binding = conversationBinding {
+                        EmailThreadReaderView(
+                            conversation: binding,
+                            viewportHeight: cardHeight - 48,
+                            scrollSignal: scrollSignal,
+                            scrollStepAmount: scrollStepAmount
+                        )
+                        .onChange(of: binding.wrappedValue.selectedMessageId) { _, _ in
+                            onConversationChange(binding.wrappedValue)
+                        }
+                    } else if let conversation {
+                        EmailThreadReaderView(
+                            conversation: .constant(conversation),
+                            viewportHeight: cardHeight - 48,
+                            scrollSignal: scrollSignal,
+                            scrollStepAmount: scrollStepAmount
+                        )
+                    }
+                case .loading, .pending:
+                    ProgressView("Loading conversation…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failed:
+                    VStack(spacing: 12) {
+                        Text("Could not load this conversation")
+                            .font(.subheadline)
+                            .foregroundStyle(MacAppTheme.secondaryText)
+                        HStack(spacing: 10) {
+                            Button("Retry", action: onRetry)
+                                .buttonStyle(.borderedProminent)
+                            Button("Skip", action: onSkipFailed)
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { v in onDragChanged(v.translation) }
+                    .onEnded { v in onDragEnded(v.translation, v.velocity) }
+            )
+        }
+        .frame(height: cardHeight, alignment: .top)
+        .shadow(color: .black.opacity(0.45), radius: 14, y: 6)
+    }
+
+    private var swipeHintBar: some View {
+        let tint: Color = {
+            if dragOffset.width > 18 { return .green }
+            if dragOffset.width < -18 { return .orange }
+            if dragOffset.height < -18 { return MacAppTheme.accent }
+            return .clear
+        }()
+        return tint
+            .frame(height: 4)
+            .animation(.easeInOut(duration: 0.1), value: dragOffset.width)
+    }
+}
+
+// MARK: - Legacy single-message deck card
 
 private struct MacCatchUpDeckCard: View {
     let metadata: EmailMetadata
@@ -867,274 +1098,3 @@ private struct AccountReorderSheet: View {
     }
 }
 
-// MARK: - Control center
-
-private struct MacCatchUpControlCenter: View {
-    let email: EmailDetail?
-    let remainingCount: Int
-    let isDisabled: Bool
-    let isAnimating: Bool
-    let hasUnsubscribe: Bool
-    var onReply: () -> Void
-    var onStar: () -> Void
-    var onKeepUnread: () -> Void
-    var onMarkAsRead: () -> Void
-    var onUnsubscribe: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Status bar
-            HStack(spacing: 8) {
-                if isAnimating {
-                    ProgressView().scaleEffect(0.65).frame(width: 14, height: 14)
-                    Text("Processing…")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(MacAppTheme.secondaryText)
-                } else {
-                    Circle()
-                        .fill(remainingCount > 0 ? MacAppTheme.accent : Color.green)
-                        .frame(width: 7, height: 7)
-                    Text(remainingCount > 0
-                         ? "\(remainingCount) left to review"
-                         : "All caught up!")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(remainingCount > 0 ? MacAppTheme.accent : .green)
-                        .monospacedDigit()
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(MacAppTheme.secondaryBackground)
-
-            Divider().opacity(0.3)
-
-            // Primary triage row
-            HStack(spacing: 8) {
-                TriageButton(
-                    title: "Keep Unread",
-                    systemImage: "arrow.uturn.left.circle",
-                    shortcutDisplay: "K",
-                    shortcutKey: "k",
-                    shortcutModifiers: [],
-                    style: .secondary,
-                    isDisabled: isDisabled,
-                    action: onKeepUnread
-                )
-                .help("Leave unread and continue to next email  [K]")
-
-                TriageButton(
-                    title: "Star",
-                    systemImage: email?.is_starred == true ? "star.fill" : "star",
-                    shortcutDisplay: "S",
-                    shortcutKey: "s",
-                    shortcutModifiers: [],
-                    style: email?.is_starred == true ? .starred : .secondary,
-                    isDisabled: isDisabled,
-                    action: onStar
-                )
-                .help("Star and remove from queue  [S]")
-
-                TriageButton(
-                    title: "Mark Read",
-                    systemImage: "envelope.open.fill",
-                    shortcutDisplay: "E",
-                    shortcutKey: "e",
-                    shortcutModifiers: [],
-                    style: .prominent,
-                    isDisabled: isDisabled,
-                    action: onMarkAsRead
-                )
-                .help("Mark as read and remove from queue  [E]")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 4)
-
-            // Secondary actions row — Reply aligns with Star's left edge, Unsubscribe with its right edge
-            HStack(spacing: 8) {
-                // Empty spacer matching "Keep Unread" column width
-                Color.clear.frame(maxWidth: .infinity)
-
-                // Middle column mirrors the Star button width
-                HStack(spacing: 0) {
-                    SecondaryActionButton(
-                        label: "Reply",
-                        systemImage: "arrowshape.turn.up.left",
-                        shortcutDisplay: "R",
-                        shortcutKey: "r",
-                        shortcutModifiers: [],
-                        isDisabled: isDisabled,
-                        action: onReply
-                    )
-                    .help("Compose a reply  [R]")
-
-                    Spacer()
-
-                    if hasUnsubscribe {
-                        SecondaryActionButton(
-                            label: "Unsubscribe",
-                            systemImage: "envelope.badge.fill",
-                            shortcutDisplay: "⌘⇧U",
-                            shortcutKey: "u",
-                            shortcutModifiers: [.command, .shift],
-                            tint: .red,
-                            isDisabled: isDisabled,
-                            action: onUnsubscribe
-                        )
-                        .help("Unsubscribe from this sender  [⌘⇧U]")
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
-                // Empty spacer matching "Mark Read" column width
-                Color.clear.frame(maxWidth: .infinity)
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
-        }
-        .background(MacAppTheme.secondaryBackground.opacity(0.98))
-        .overlay(alignment: .top) {
-            Divider().opacity(0.35)
-        }
-    }
-}
-
-// MARK: - Triage button (primary actions)
-
-private enum TriageButtonStyle { case prominent, secondary, starred }
-
-private struct TriageButton: View {
-    let title: String
-    let systemImage: String
-    let shortcutDisplay: String
-    let shortcutKey: KeyEquivalent
-    let shortcutModifiers: EventModifiers
-    let style: TriageButtonStyle
-    let isDisabled: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    private var bgColor: Color {
-        switch style {
-        case .prominent: return isHovered ? MacAppTheme.accent.opacity(0.88) : MacAppTheme.accent
-        case .starred:   return isHovered ? MacAppTheme.accent.opacity(0.22) : MacAppTheme.accent.opacity(0.14)
-        case .secondary: return isHovered ? Color.white.opacity(0.1) : Color.white.opacity(0.05)
-        }
-    }
-    private var borderColor: Color {
-        switch style {
-        case .prominent: return .clear
-        case .starred:   return MacAppTheme.accent.opacity(0.5)
-        case .secondary: return Color.white.opacity(isHovered ? 0.2 : 0.1)
-        }
-    }
-    private var fgColor: Color {
-        switch style {
-        case .prominent: return .black
-        case .starred:   return MacAppTheme.accent
-        case .secondary: return MacAppTheme.primaryText
-        }
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .medium))
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                // Inline keycap badge — same style as the secondary action buttons
-                Text(shortcutDisplay)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(fgColor.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(fgColor.opacity(0.25), lineWidth: 0.5)
-                    )
-            }
-            .foregroundStyle(fgColor)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
-            .background(bgColor)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
-        .disabled(isDisabled)
-        .onHover { isHovered = $0 }
-        .scaleEffect(isHovered && !isDisabled ? 1.015 : 1.0)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .opacity(isDisabled ? 0.4 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isDisabled)
-    }
-}
-
-// MARK: - Secondary action button (reply, unsubscribe)
-
-private struct SecondaryActionButton: View {
-    let label: String
-    let systemImage: String
-    let shortcutDisplay: String
-    let shortcutKey: KeyEquivalent
-    let shortcutModifiers: EventModifiers
-    var tint: Color = MacAppTheme.accent
-    let isDisabled: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .medium))
-                Text(label)
-                    .font(.system(size: 13, weight: .semibold))
-                // Inline shortcut badge
-                Text(shortcutDisplay)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(tint == .red ? Color.red.opacity(0.8) : MacAppTheme.secondaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
-                    )
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(tint.opacity(isHovered ? 0.15 : 0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(tint.opacity(isHovered ? 0.45 : 0.28), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(shortcutKey, modifiers: shortcutModifiers)
-        .disabled(isDisabled)
-        .onHover { isHovered = $0 }
-        .scaleEffect(isHovered && !isDisabled ? 1.02 : 1.0)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .opacity(isDisabled ? 0.45 : 1.0)
-    }
-}

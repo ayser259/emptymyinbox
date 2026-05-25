@@ -22,6 +22,7 @@ struct CatchUpView: View {
     let accountId: Int?
     let accountEmail: String?
     @EnvironmentObject var authManager: AuthManager
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var debugSettings = DebugSettings.shared
     
     // Use the new lazy loader
@@ -60,11 +61,14 @@ struct CatchUpView: View {
     @State private var unsubscribeManualURL: URL? = nil
     @State private var showUnsubscribeWebView = false
     @State private var currentLoadRetryCount = 0
-    @State private var replyComposerEmail: EmailDetail?
+    @State private var replyPresentation: ReplyComposerPresentation?
     
     // Session tracking
     @State private var sessionStartTime: Date?
     @State private var sessionStats = CatchUpSessionStats()
+    @State private var didPersistSessionMetrics = false
+    @State private var todaySendersReceived = 0
+    @State private var todayUnsubscribesTotal = 0
     
     // Haptic generators (iOS only)
     #if os(iOS)
@@ -75,7 +79,7 @@ struct CatchUpView: View {
     
     /// Maximum cards to render in the deck (for performance)
     private let maxVisibleCards = 4
-    
+
     /// Visual offset between stacked cards (in points)
     private let stackOffsetY: CGFloat = 10
     
@@ -105,6 +109,7 @@ struct CatchUpView: View {
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .customBackButton()
         #endif
         .sheet(isPresented: $showUnsubscribeWebView) {
@@ -112,15 +117,49 @@ struct CatchUpView: View {
                 UnsubscribeWebView(url: url)
             }
         }
-        .sheet(item: $replyComposerEmail) { email in
-            EmailReplyComposerView(email: email)
+        .sheet(item: $replyPresentation) { presentation in
+            EmailReplyComposerView(
+                email: presentation.email,
+                mode: presentation.mode,
+                isCatchUpContext: true,
+                onCatchUpOutcome: { outcome in
+                    Task { await handleCatchUpReplyOutcome(outcome, email: presentation.email) }
+                }
+            )
         }
         .task {
             await onAppear()
         }
-        .onChange(of: emailLoader.currentIndex) { _, _ in
+        .onChange(of: emailLoader.currentIndex) { _, newIndex in
             currentLoadRetryCount = 0
+            Task {
+                await emailLoader.loadThread(at: newIndex)
+                if newIndex + 1 < emailLoader.catchUpThreads.count {
+                    await emailLoader.loadThread(at: newIndex + 1)
+                }
+            }
         }
+    }
+    
+    @ViewBuilder
+    private func threadLoadFailedView(cardHeight: CGFloat) -> some View {
+        VStack(spacing: 12) {
+            Text("Could not load this conversation")
+                .font(AppTheme.subheadline)
+                .secondaryText()
+            HStack(spacing: 10) {
+                Button("Retry") {
+                    Task { await emailLoader.retryCurrentEmail() }
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Skip") {
+                    emailLoader.skipCurrentFailedEmail()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: cardHeight * 0.5)
     }
     
     // MARK: - Toast Overlay
@@ -239,7 +278,19 @@ struct CatchUpView: View {
         if emailLoader.isLoadingMetadata {
             loadingView
         } else if !emailLoader.hasMoreEmails {
-            celebrationView
+            if sessionStats.reviewed > 0 {
+                CatchUpCompletionView(
+                    sessionStats: sessionStats,
+                    sessionStartTime: sessionStartTime,
+                    todaySendersReceived: todaySendersReceived,
+                    todayUnsubscribesTotal: todayUnsubscribesTotal,
+                    onDone: { dismiss() }
+                )
+                .task { await loadCompletionContext() }
+                .onAppear { Task { await persistSessionMetricsIfNeeded() } }
+            } else {
+                catchUpEmptyState
+            }
         } else {
             emailDeckView
         }
@@ -255,84 +306,109 @@ struct CatchUpView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    private var celebrationView: some View {
-        CelebrationView(
-            emailsCleared: sessionStats.reviewed > 0 ? sessionStats.reviewed : nil,
-            sessionStartTime: sessionStartTime,
-            accountEmail: accountEmail,
-            sessionStats: sessionStats.reviewed > 0 ? sessionStats : nil
+    private var catchUpEmptyState: some View {
+        VStack(spacing: 20) {
+            ContentUnavailableView {
+                Label("All caught up", systemImage: "checkmark.circle")
+            } description: {
+                Text("No unread emails in this view.")
+            }
+            Button("Return to Dashboard") {
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(SharedAppTheme.accent)
+            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.return, modifiers: [])
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func loadCompletionContext() async {
+        let todayMetric = await InboxMetricsStore.shared.metric(forDayContaining: Date())
+        await MainActor.run {
+            todaySendersReceived = todayMetric?.uniqueSendersReceived ?? sessionStats.reviewedSenders.count
+            todayUnsubscribesTotal = todayMetric?.successfulUnsubscribes ?? sessionStats.successfulUnsubscribes
+        }
+    }
+
+    private func persistSessionMetricsIfNeeded() async {
+        guard !didPersistSessionMetrics, sessionStats.reviewed > 0 else { return }
+        didPersistSessionMetrics = true
+        await InboxMetricsStore.shared.recordCatchUpSession(
+            stats: sessionStats,
+            sessionStart: sessionStartTime
         )
+        await loadCompletionContext()
+    }
+
+    private func recordSenderForReviewedEmail(_ email: EmailDetail) {
+        sessionStats.reviewedSenders.insert(email.sender.lowercased())
+        if hasUnsubscribeAvailable {
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+        }
     }
     
     // MARK: - Email Deck View
     
     private var emailDeckView: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    topBarSection
-                    cardStackSection(geometry: geometry)
-                }
-                if emailLoader.currentLoadState == .failed {
-                    failedCurrentCardBanner
-                        .padding(.bottom, 100)
-                        .padding(.horizontal, SharedAppTheme.spacingMedium)
-                }
-                actionButtonsSection
-                
-                // Debug copy button overlay
-                if debugSettings.isDebugModeEnabled, let email = emailLoader.currentEmail {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            DebugCopyButton(content: email.debugCopyContent)
-                                .padding(.trailing, 16)
-                        }
-                        Spacer()
+        VStack(spacing: 0) {
+            GeometryReader { deckGeometry in
+                let cardHeight = cardViewportHeight(in: deckGeometry)
+
+                ZStack {
+                    cardStackSection(cardHeight: cardHeight)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                    if emailLoader.currentLoadState == .failed {
+                        failedCurrentCardBanner
+                            .padding(.horizontal, SharedAppTheme.spacingMedium)
+                            .zIndex(50)
                     }
-                    .padding(.top, 60) // Below the top bar
+
+                    if debugSettings.isDebugModeEnabled, let email = emailLoader.currentEmail {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                DebugCopyButton(content: email.debugCopyContent)
+                                    .padding(.trailing, 16)
+                            }
+                            Spacer()
+                        }
+                        .zIndex(60)
+                    }
                 }
+                .clipped()
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+                .opacity(0.35)
+
+            actionButtonsSection
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
-    private var topBarSection: some View {
-        HStack {
-            Spacer()
-            HStack(spacing: 8) {
-                Text("\(emailLoader.remainingCount) left to review")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(SharedAppTheme.accent)
-                
-                if sessionStats.reviewed > 0 {
-                    Text("•")
-                        .foregroundColor(SharedAppTheme.secondaryText)
-                    Text("\(sessionStats.reviewed) reviewed")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(SharedAppTheme.secondaryText)
-                }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, SharedAppTheme.spacingMedium)
-        .padding(.vertical, SharedAppTheme.spacingSmall)
-        .background(SharedAppTheme.secondaryBackground.opacity(0.5))
+
+    /// Height for the front email card inside the reserved deck area (accounts for stacked cards behind).
+    private func cardViewportHeight(in deckGeometry: GeometryProxy) -> CGFloat {
+        let stackDepth = stackOffsetY * CGFloat(min(maxVisibleCards - 1, max(0, visibleCards.count - 1)))
+        let available = deckGeometry.size.height - stackDepth
+        return max(200, available)
     }
     
     // MARK: - Unified Card Stack Renderer
     
     /// Single unified renderer for all cards in the deck
     /// Cards are positioned based on their display index and animation state
-    private func cardStackSection(geometry: GeometryProxy) -> some View {
+    private func cardStackSection(cardHeight: CGFloat) -> some View {
         ZStack {
             // Render cards from back to front
             // Use email ID as identity so SwiftUI correctly tracks cards through index changes
             ForEach(visibleCards.reversed(), id: \.id) { cardInfo in
-                cardView(cardInfo: cardInfo, geometry: geometry)
+                cardView(cardInfo: cardInfo, cardHeight: cardHeight)
             }
         }
-        .frame(maxHeight: .infinity)
-        .padding(.bottom, 92)
     }
     
     /// Card info for rendering (captures both ID and current display position)
@@ -345,12 +421,12 @@ struct CatchUpView: View {
     /// Cards to render with their display positions
     private var visibleCards: [CardInfo] {
         let startIndex = emailLoader.currentIndex
-        let endIndex = min(startIndex + maxVisibleCards, emailLoader.emailMetadata.count)
+        let endIndex = min(startIndex + maxVisibleCards, emailLoader.catchUpThreads.count)
         
         return (startIndex..<endIndex).map { actualIndex in
-            let metadata = emailLoader.emailMetadata[actualIndex]
+            let thread = emailLoader.catchUpThreads[actualIndex]
             return CardInfo(
-                id: metadata.id,
+                id: thread.id,
                 actualIndex: actualIndex,
                 displayIndex: actualIndex - startIndex
             )
@@ -359,7 +435,7 @@ struct CatchUpView: View {
     
     /// Renders a single card with proper transforms based on its position and animation state
     @ViewBuilder
-    private func cardView(cardInfo: CardInfo, geometry: GeometryProxy) -> some View {
+    private func cardView(cardInfo: CardInfo, cardHeight: CGFloat) -> some View {
         let cardId = cardInfo.id
         let displayIndex = cardInfo.displayIndex
         let actualIndex = cardInfo.actualIndex
@@ -375,19 +451,28 @@ struct CatchUpView: View {
         let (yOffset, scale, opacity) = calculateCardTransforms(effectiveDisplayIndex: effectiveDisplayIndex)
         
         Group {
-            if let email = emailLoader.emailAt(index: actualIndex) {
-                EmailCardView(
-                    email: email,
-                    geometry: geometry,
+            if actualIndex < emailLoader.catchUpThreads.count,
+               let binding = emailLoader.bindingForConversation(
+                   threadStableId: emailLoader.catchUpThreads[actualIndex].id
+               ) {
+                EmailThreadReaderView(
+                    conversation: binding,
+                    viewportHeight: cardHeight,
                     isActive: displayIndex == 0 && !isDismissing,
                     onLoadComplete: {
-                        if actualIndex == 0 && sessionStartTime == nil {
+                        if actualIndex == emailLoader.currentIndex && sessionStartTime == nil {
                             sessionStartTime = Date()
                         }
                     }
                 )
+                .padding(.horizontal, AppTheme.spacingMedium)
+                .onChange(of: binding.wrappedValue.selectedMessageId) { _, _ in
+                    emailLoader.updateCurrentConversation(binding.wrappedValue)
+                }
+            } else if emailLoader.threadLoadStates[cardInfo.id] == .failed {
+                threadLoadFailedView(cardHeight: cardHeight)
             } else {
-                EmailCardSkeleton(geometry: geometry)
+                EmailCardSkeleton(cardHeight: cardHeight)
             }
         }
         // Apply transforms based on whether this card is dismissing or staying
@@ -443,69 +528,90 @@ struct CatchUpView: View {
     
     // MARK: - Action Buttons
     
-    private var actionButtonsSection: some View {
-        ScrollableEmailActionBar(
-            email: emailLoader.currentEmail,
-            isProcessing: isButtonDisabled,
-            showReply: true,
-            onReply: {
-                await handleReply()
-            },
-            onStar: {
-                await handleStar()
-            },
-            onKeepUnread: {
-                await handleKeepUnread()
-            },
-            onMarkAsRead: {
-                await handleMarkAsRead()
-            },
-            onUnsubscribe: {
-                await handleUnsubscribe()
-            },
-            hasUnsubscribe: hasUnsubscribeAvailable
+    private var catchUpReadingHandlers: EmailReadingActionHandlers {
+        EmailReadingActionHandlers(
+            onReply: { Task { await handleReply(mode: .reply) } },
+            onReplyAll: { Task { await handleReply(mode: .replyAll) } },
+            onStar: { Task { await handleStar() } },
+            onMarkUnread: { Task { await handleKeepUnread() } },
+            onMarkAsRead: { Task { await handleMarkAsRead() } },
+            onUnsubscribe: { Task { await handleUnsubscribe() } }
         )
-        .onChange(of: emailLoader.currentEmail?.id) { _, newEmailId in
-            // Check unsubscribe availability when email changes
-            Task {
-                await checkUnsubscribeAvailability()
-            }
-        }
-        .task {
-            // Check on initial load
-            await checkUnsubscribeAvailability()
-        }
     }
-    
-    private func checkUnsubscribeAvailability() async {
-        guard let email = emailLoader.currentEmail else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
-            return
-        }
-        
-        let unsubscribeService = UnsubscribeService.shared
-        if let _ = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            await MainActor.run {
-                hasUnsubscribeAvailable = true
-            }
-        } else {
-            await MainActor.run {
-                hasUnsubscribeAvailable = false
-            }
+
+    private var actionButtonsSection: some View {
+        EmailReadingCatchUpActionBar(
+            email: emailLoader.currentEmail,
+            remainingCount: emailLoader.remainingCount,
+            isDisabled: isButtonDisabled,
+            isAnimating: isAnimating,
+            hasUnsubscribe: $hasUnsubscribeAvailable,
+            handlers: catchUpReadingHandlers
+        )
+    }
+
+    private func handleReply(mode: ReplyMode) async {
+        guard let current = emailLoader.currentEmail else { return }
+        await MainActor.run {
+            replyPresentation = ReplyComposerPresentation(email: current, mode: mode, isCatchUpContext: true)
         }
     }
 
-    private func handleReply() async {
-        guard let current = emailLoader.currentEmail else { return }
-        await MainActor.run {
-            replyComposerEmail = current
+    private func handleCatchUpReplyOutcome(_ outcome: CatchUpReplyOutcome, email: EmailDetail) async {
+        sessionStats.repliesSent += 1
+        switch outcome {
+        case .markReadAndAdvance:
+            guard !isAnimating else { return }
+            isProcessing = true
+            isAnimating = true
+            await markUnreadMessagesReadInCurrentThread(animateDismiss: true)
+            sessionStats.reviewed += 1
+            sessionStats.markedAsRead += 1
+            recordSenderForReviewedEmail(email)
+            resetAnimationState()
+            isProcessing = false
+            isAnimating = false
+        case .keepUnreadAndAdvance:
+            guard !isAnimating else { return }
+            isAnimating = true
+            let threadCardId = emailLoader.currentThread?.id ?? email.id
+            await performDismissalAnimation(cardId: threadCardId, direction: .left)
+            emailLoader.moveToNext()
+            sessionStats.reviewed += 1
+            sessionStats.keptUnread += 1
+            recordSenderForReviewedEmail(email)
+            resetAnimationState()
+            isAnimating = false
+        case .stay:
+            break
         }
     }
     
     private var isButtonDisabled: Bool {
         isProcessing || !emailLoader.isCurrentLoaded || isAnimating
+    }
+    
+    private func markUnreadMessagesReadInCurrentThread(animateDismiss: Bool) async {
+        guard let fallback = emailLoader.currentEmail else { return }
+        let unreadMessages = emailLoader.currentConversation?.messages.filter { !$0.is_read } ?? [fallback]
+        let threadCardId = emailLoader.currentThread?.id ?? fallback.id
+
+        if animateDismiss {
+            await performDismissalAnimation(cardId: threadCardId, direction: .right)
+        }
+
+        for message in unreadMessages {
+            await EmailActionSynchronizer.shared.enqueueMarkRead(
+                emailId: message.id,
+                gmailId: message.gmail_id,
+                accountEmail: message.account_email
+            )
+            await DashboardDataManager.shared.markEmailAsRead(emailId: message.id)
+            let updated = message.updating(isRead: true)
+            await EmailCache.shared.saveEmailDetail(updated)
+        }
+
+        emailLoader.markMessagesReadInCurrentThread(emailIds: unreadMessages.map(\.id))
     }
 
     private var failedCurrentCardBanner: some View {
@@ -549,16 +655,18 @@ struct CatchUpView: View {
         #endif
         
         // Perform dismissal animation (card shoots up)
-        await performDismissalAnimation(cardId: email.id, direction: .up)
+        let threadCardId = emailLoader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .up)
         
         let newStarState = !email.is_starred
         
         // Update stats
         sessionStats.reviewed += 1
         sessionStats.starred += 1
+        recordSenderForReviewedEmail(email)
         
         // Remove from deck AFTER animation completes
-        emailLoader.removeCurrentEmail()
+        emailLoader.removeCurrentThread()
         
         // Persist user intent before UI flow completes.
         await EmailActionSynchronizer.shared.enqueueStar(
@@ -608,8 +716,14 @@ struct CatchUpView: View {
 
     private func skipCurrentFailedCard() {
         guard emailLoader.currentLoadState == .failed else { return }
-        sessionStats.reviewed += 1
-        sessionStats.keptUnread += 1
+        if let email = emailLoader.currentEmail {
+            sessionStats.reviewed += 1
+            sessionStats.keptUnread += 1
+            recordSenderForReviewedEmail(email)
+        } else {
+            sessionStats.reviewed += 1
+            sessionStats.keptUnread += 1
+        }
         emailLoader.skipCurrentFailedEmail()
         currentLoadRetryCount = 0
         Telemetry.event("catchup.card.skipped_failed", metadata: [
@@ -628,13 +742,17 @@ struct CatchUpView: View {
         #endif
         
         // Perform dismissal animation (card goes left)
-        await performDismissalAnimation(cardId: email.id, direction: .left)
-        
+        let threadCardId = emailLoader.currentThread?.id ?? email.id
+        await performDismissalAnimation(cardId: threadCardId, direction: .left)
+
         // Update stats
         sessionStats.reviewed += 1
         sessionStats.keptUnread += 1
+        if let email = emailLoader.currentEmail {
+            recordSenderForReviewedEmail(email)
+        }
         
-        // Move to next email AFTER animation
+        // Move to next thread AFTER animation
         emailLoader.moveToNext()
         
         // Reset animation state
@@ -659,22 +777,12 @@ struct CatchUpView: View {
         #endif
         
         // Perform dismissal animation (card goes right)
-        await performDismissalAnimation(cardId: email.id, direction: .right)
-        
         // Update stats
         sessionStats.reviewed += 1
         sessionStats.markedAsRead += 1
+        recordSenderForReviewedEmail(email)
         
-        // Remove from deck AFTER animation
-        emailLoader.removeCurrentEmail()
-        
-        // Persist user intent before completing UI transition.
-        await EmailActionSynchronizer.shared.enqueueMarkRead(
-            emailId: email.id,
-            gmailId: email.gmail_id,
-            accountEmail: email.account_email
-        )
-        await DashboardDataManager.shared.markEmailAsRead(emailId: email.id)
+        await markUnreadMessagesReadInCurrentThread(animateDismiss: true)
         
         // Reset animation state
         resetAnimationState()
@@ -728,6 +836,8 @@ struct CatchUpView: View {
                 notificationGenerator.notificationOccurred(.success)
                 #endif
                 
+                sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+                
                 // Extract domain from sender email or unsubscribe URL for tracking
                 var unsubscribeDomain: String? = nil
                 if let method = result.method {
@@ -780,9 +890,11 @@ struct CatchUpView: View {
                     
                     // Update stats
                     sessionStats.reviewed += 1
+                    sessionStats.successfulUnsubscribes += 1
+                    recordSenderForReviewedEmail(email)
                     
                     // Remove from deck AFTER animation
-                    emailLoader.removeCurrentEmail()
+                    emailLoader.removeCurrentThread()
                     
                     // Reset animation state
                     resetAnimationState()

@@ -37,6 +37,7 @@ struct MainAppTopBar<Center: View>: View {
 
 struct CalendarSkeletonView: View {
     var onMenuTap: () -> Void
+    @EnvironmentObject private var rootState: AdaptiveRootState
 
     @StateObject private var calendarModel = GoogleCalendarViewModel()
     @State private var showVisibility = false
@@ -48,11 +49,13 @@ struct CalendarSkeletonView: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Calendar")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
+                    if !rootState.usesWideChrome {
+                        MainAppTopBar(center: {
+                            Text("Calendar")
+                                .font(AppTheme.headline)
+                                .primaryText()
+                        }, onMenuTap: onMenuTap)
+                    }
 
                     calendarModeCarousel
 
@@ -174,6 +177,7 @@ private struct ActionItemsCenteredColumn<Content: View>: View {
 
 struct ActionItemsSkeletonView: View {
     var onMenuTap: () -> Void
+    @EnvironmentObject private var rootState: AdaptiveRootState
 
     @ObservedObject private var vaultManager: VaultManager = .shared
     @State private var allItems: [VaultActionItemRecord] = []
@@ -257,11 +261,13 @@ struct ActionItemsSkeletonView: View {
 
             if vaultManager.isVaultReady {
                 VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Action Items")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
+                    if !rootState.usesWideChrome {
+                        MainAppTopBar(center: {
+                            Text("Action Items")
+                                .font(AppTheme.headline)
+                                .primaryText()
+                        }, onMenuTap: onMenuTap)
+                    }
 
                     actionItemsFilterCarousel
 
@@ -296,11 +302,13 @@ struct ActionItemsSkeletonView: View {
                 .accessibilityLabel("Add Action Item")
             } else {
                 VStack(spacing: 0) {
-                    MainAppTopBar(center: {
-                        Text("Action Items")
-                            .font(AppTheme.headline)
-                            .primaryText()
-                    }, onMenuTap: onMenuTap)
+                    if !rootState.usesWideChrome {
+                        MainAppTopBar(center: {
+                            Text("Action Items")
+                                .font(AppTheme.headline)
+                                .primaryText()
+                        }, onMenuTap: onMenuTap)
+                    }
 
                     ScrollView {
                         ConfigureVaultPanel()

@@ -10,34 +10,30 @@ import EmptyMyInboxShared
 
 struct MainTabView: View {
     @EnvironmentObject private var authManager: AuthManager
-    @State private var showMenu = false
-    @State private var selectedTab = 0
+    @EnvironmentObject private var rootState: AdaptiveRootState
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            DashboardView(isMenuPresented: $showMenu)
+        TabView(selection: $rootState.selectedTab) {
+            DashboardView(isMenuPresented: $rootState.showMenu)
                 .tabItem {
                     Label("Mail", systemImage: "envelope.fill")
                 }
-                .tag(0)
+                .tag(AdaptiveRootState.RootTab.mail.rawValue)
 
-            CalendarSkeletonView(onMenuTap: { showMenu = true })
+            CalendarSkeletonView(onMenuTap: { rootState.showMenu = true })
                 .tabItem {
                     Label("Calendar", systemImage: "calendar")
                 }
-                .tag(1)
+                .tag(AdaptiveRootState.RootTab.calendar.rawValue)
 
-            ActionItemsSkeletonView(onMenuTap: { showMenu = true })
+            ActionItemsSkeletonView(onMenuTap: { rootState.showMenu = true })
                 .tabItem {
                     Label("Action Items", systemImage: "checklist")
                 }
-                .tag(2)
+                .tag(AdaptiveRootState.RootTab.actionItems.rawValue)
         }
         .tint(AppTheme.accent)
-        .onReceive(NotificationCenter.default.publisher(for: .switchToActionItemsTab)) { _ in
-            withAnimation { selectedTab = 2 }
-        }
-        .sheet(isPresented: $showMenu) {
+        .sheet(isPresented: $rootState.showMenu) {
             MenuView()
                 .environmentObject(authManager)
         }
@@ -47,4 +43,5 @@ struct MainTabView: View {
 #Preview {
     MainTabView()
         .environmentObject(AuthManager())
+        .environmentObject(AdaptiveRootState())
 }

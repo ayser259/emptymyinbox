@@ -13,6 +13,7 @@ public struct DashboardDataSnapshot: Codable {
     public let emails: [EmailListItem]
     public let allEmails: [EmailListItem]
     public let starredEmails: [EmailListItem]
+    public let sentEmails: [EmailListItem]
     public let labels: [GmailLabel]
     
     public init(
@@ -21,6 +22,7 @@ public struct DashboardDataSnapshot: Codable {
         emails: [EmailListItem],
         allEmails: [EmailListItem],
         starredEmails: [EmailListItem],
+        sentEmails: [EmailListItem] = [],
         labels: [GmailLabel]
     ) {
         self.timestamp = timestamp
@@ -28,11 +30,12 @@ public struct DashboardDataSnapshot: Codable {
         self.emails = emails
         self.allEmails = allEmails
         self.starredEmails = starredEmails
+        self.sentEmails = sentEmails
         self.labels = labels
     }
 
     private enum CodingKeys: String, CodingKey {
-        case timestamp, accounts, emails, allEmails, starredEmails, labels
+        case timestamp, accounts, emails, allEmails, starredEmails, sentEmails, labels
     }
 
     // Custom decoder so snapshots saved before `allEmails` was introduced still load correctly.
@@ -44,6 +47,7 @@ public struct DashboardDataSnapshot: Codable {
         emails = try c.decode([EmailListItem].self, forKey: .emails)
         allEmails = (try? c.decode([EmailListItem].self, forKey: .allEmails)) ?? emails
         starredEmails = (try? c.decode([EmailListItem].self, forKey: .starredEmails)) ?? []
+        sentEmails = (try? c.decode([EmailListItem].self, forKey: .sentEmails)) ?? []
         labels = (try? c.decode([GmailLabel].self, forKey: .labels)) ?? []
     }
 }
@@ -85,6 +89,7 @@ public actor DashboardCache {
                       emails: [EmailListItem],
                       allEmails: [EmailListItem],
                       starredEmails: [EmailListItem],
+                      sentEmails: [EmailListItem] = [],
                       labels: [GmailLabel]) {
         let snapshot = DashboardDataSnapshot(
             timestamp: Date(),
@@ -92,6 +97,7 @@ public actor DashboardCache {
             emails: emails,
             allEmails: allEmails,
             starredEmails: starredEmails,
+            sentEmails: sentEmails,
             labels: labels
         )
         saveSnapshot(snapshot)
@@ -165,6 +171,7 @@ public actor DashboardCache {
                 emails: snapshot.emails.map(migratedEmail),
                 allEmails: snapshot.allEmails.map(migratedEmail),
                 starredEmails: snapshot.starredEmails.map(migratedEmail),
+                sentEmails: snapshot.sentEmails.map(migratedEmail),
                 labels: snapshot.labels
             )
             
@@ -181,6 +188,7 @@ public actor DashboardCache {
         EmailListItem(
             id: StableID.emailId(gmailId: email.gmail_id),
             gmail_id: email.gmail_id,
+            thread_id: email.thread_id,
             subject: email.subject,
             sender: email.sender,
             sender_name: email.sender_name,

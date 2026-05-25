@@ -6,10 +6,17 @@
 import SwiftUI
 
 public struct EmailCardSkeleton: View {
-    public let geometry: GeometryProxy
+    private let geometry: GeometryProxy?
+    private let fixedCardHeight: CGFloat?
 
     public init(geometry: GeometryProxy) {
         self.geometry = geometry
+        self.fixedCardHeight = nil
+    }
+
+    public init(cardHeight: CGFloat) {
+        self.geometry = nil
+        self.fixedCardHeight = cardHeight
     }
 
     public var body: some View {
@@ -56,8 +63,16 @@ public struct EmailCardSkeleton: View {
         )
         .padding(.horizontal, SharedAppTheme.spacingMedium)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: geometry.size.height * 0.85)
+        .frame(height: skeletonHeight)
         .shimmer()
+    }
+
+    private var skeletonHeight: CGFloat {
+        if let fixedCardHeight {
+            return fixedCardHeight
+        }
+        guard let geometry else { return 320 }
+        return geometry.size.height * 0.85
     }
 }
 

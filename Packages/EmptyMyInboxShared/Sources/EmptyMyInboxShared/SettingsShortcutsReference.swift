@@ -23,6 +23,19 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Next primary tab", shortcutDisplay: "⌃Tab"),
     ]
 
+    /// Mail tab — detail tools.
+    public static let mailTools: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Catch Up", shortcutDisplay: "⌥C"),
+        SettingsShortcutReference(title: "Stories", shortcutDisplay: "⌥S"),
+        SettingsShortcutReference(title: "Brief", shortcutDisplay: "⌥B"),
+    ]
+
+    /// Mail — reading a message in a mailbox (inbox list + detail).
+    public static let mailMailboxDetail: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Reply", shortcutDisplay: "R"),
+        SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
+    ]
+
     /// Calendar tab — Calendar or Starred tools.
     public static let calendarModes: [SettingsShortcutReference] = [
         SettingsShortcutReference(title: "Events", shortcutDisplay: "E"),
@@ -33,11 +46,29 @@ public enum SettingsShortcutsReference {
 
     /// Mail — Catch Up contextual shortcuts (when viewing Catch Up).
     public static let mailCatchUp: [SettingsShortcutReference] = [
-        SettingsShortcutReference(title: "Keep unread", shortcutDisplay: "K"),
+        SettingsShortcutReference(title: "Review Later", shortcutDisplay: "F"),
         SettingsShortcutReference(title: "Star", shortcutDisplay: "S"),
-        SettingsShortcutReference(title: "Mark as read", shortcutDisplay: "E"),
-        SettingsShortcutReference(title: "Reply", shortcutDisplay: "⌘R"),
+        SettingsShortcutReference(title: "Mark as read", shortcutDisplay: "J"),
+        SettingsShortcutReference(title: "Reply", shortcutDisplay: "R"),
+        SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
         SettingsShortcutReference(title: "Unsubscribe", shortcutDisplay: "⌘⇧U"),
+    ]
+
+    /// Mail — Reply composer (when composing a reply).
+    public static let mailReplyComposer: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Quick Reply", shortcutDisplay: "⌥Q"),
+        SettingsShortcutReference(title: "Generate quick reply", shortcutDisplay: "⌥G"),
+        SettingsShortcutReference(title: "Update quick reply", shortcutDisplay: "⌥U"),
+        SettingsShortcutReference(title: "Insert quick reply", shortcutDisplay: "⌥I"),
+        SettingsShortcutReference(title: "Save draft", shortcutDisplay: "⌘S"),
+        SettingsShortcutReference(title: "Send", shortcutDisplay: "⌘↩"),
+    ]
+
+    /// Mail — after sending a reply from Catch Up.
+    public static let mailReplySentOutcome: [SettingsShortcutReference] = [
+        SettingsShortcutReference(title: "Mark read & next", shortcutDisplay: "J"),
+        SettingsShortcutReference(title: "Review later & next", shortcutDisplay: "F"),
+        SettingsShortcutReference(title: "Stay on this email", shortcutDisplay: "Esc"),
     ]
 
     /// Action Items tab — sidebar hints.

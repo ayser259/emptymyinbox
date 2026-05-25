@@ -11,12 +11,14 @@ import EmptyMyInboxShared
 
 struct DashboardView: View {
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var rootState: AdaptiveRootState
     @Binding var isMenuPresented: Bool
     @State private var navigationPath = NavigationPath()
     @State private var accounts: [EmailAccount] = []
     @State private var emails: [EmailListItem] = []
     @State private var allEmails: [EmailListItem] = [] // All emails for sender grouping
     @State private var starredEmails: [EmailListItem] = []
+    @State private var sentEmails: [EmailListItem] = []
     @State private var labels: [GmailLabel] = []
     @State private var isLoading = false
     @State private var isRefreshing = false
@@ -58,8 +60,12 @@ struct DashboardView: View {
                 switch destination {
                 case "all_emails":
                     AllEmailsView()
+                case "all_unread":
+                    MailboxListView(scope: .allUnread)
                 case "starred":
                     StarredEmailsView()
+                case "sent":
+                    SentEmailsView()
                 case "catch_up":
                     CatchUpView()
                         .environmentObject(authManager)
@@ -116,15 +122,14 @@ struct DashboardView: View {
                 self.emails = []
                 self.allEmails = []
                 self.starredEmails = []
+                self.sentEmails = []
                 self.labels = []
                 self.lastRefreshTime = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
-            // Only refresh if not already refreshing to prevent loops
-            // This is only called once per day automatically
             Task {
-                await refreshDashboard(shouldSync: true)
+                await refreshDashboardIfStale()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
@@ -135,10 +140,16 @@ struct DashboardView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            Task { await refreshBriefBadgeFromPersisted() }
+            Task {
+                await refreshLLMKeyStatus()
+                await refreshBriefBadgeFromPersisted()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
-            Task { await refreshBriefBadgeFromPersisted() }
+            Task {
+                await refreshLLMKeyStatus()
+                await refreshBriefBadgeFromPersisted()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .briefingPayloadDidPersist)) { _ in
             Task { await refreshBriefBadgeFromPersisted() }
@@ -202,88 +213,67 @@ struct DashboardView: View {
                 .padding(.horizontal, AppTheme.spacingMedium)
                 .padding(.bottom, AppTheme.spacingSmall)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    feedColumnScroll
-                        .frame(maxWidth: .infinity)
-                    calendarSidebarScroll
-                        .frame(width: 280)
-                }
-                .padding(.horizontal, AppTheme.spacingMedium)
-
+            ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
-                    feedColumnScroll
-                    calendarSidebarScroll
+                    feedColumnContent
+                    calendarSidebarContent
                 }
                 .padding(.horizontal, AppTheme.spacingMedium)
+                .padding(.bottom, AppTheme.spacingLarge)
+            }
+            .refreshable {
+                await refreshDashboard(shouldSync: true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    /// Left column: greeting + widgets + quick actions + account-grouped inbox cards.
-    private var feedColumnScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
-                // Greeting
-                DashboardGreetingSection(name: firstName)
-                    .padding(.top, AppTheme.spacingSmall)
+    /// Mail/dashboard feed: greeting, widgets, quick actions, account inbox cards.
+    private var feedColumnContent: some View {
+        VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
+            DashboardGreetingSection(name: firstName)
+                .padding(.top, AppTheme.spacingSmall)
 
-                // Brief + Action Items side by side
-                HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
-                    DashboardDailyBriefCard(
-                        payload: dailyBriefingPayload,
-                        hasLLMKey: hasLLMKey,
-                        isGenerating: isBriefGenerating,
-                        onRefresh: { refreshBrief() },
-                        onOpenLLMSettings: {
-                            navigationPath.append("llm_management")
-                        }
-                    )
-                    .frame(maxWidth: .infinity)
-
-                    DashboardActionItemsCard(
-                        items: dashboardActionItems,
-                        isVaultReady: VaultManager.shared.isVaultReady
-                    )
-                    .frame(width: 160)
-                }
-
-                // Account Updates
-                DashboardAccountUpdatesCard(
-                    unreadCount: unreadCount,
-                    starredCount: starredEmails.count
+            HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
+                DashboardDailyBriefCard(
+                    payload: dailyBriefingPayload,
+                    hasLLMKey: hasLLMKey,
+                    isGenerating: isBriefGenerating,
+                    onRefresh: { refreshBrief() },
+                    onOpenLLMSettings: {
+                        navigationPath.append("llm_management")
+                    }
                 )
+                .frame(maxWidth: .infinity)
 
-                // Stories Feed
-                DashboardStoriesFeedCard(stories: recentStories)
-
-                // Quick action buttons
-                actionButtonsSection
-                    .padding(.top, AppTheme.spacingSmall)
-
-                // Inbox feed header + account cards
-                inboxFeedHeader
-                    .padding(.top, AppTheme.spacingSmall)
-                    .padding(.bottom, AppTheme.spacingSmall)
-
-                accountSummaryCards
-                    .padding(.bottom, AppTheme.spacingLarge)
-
-                Spacer()
-                    .frame(height: 40)
+                DashboardActionItemsCard(
+                    items: dashboardActionItems,
+                    isVaultReady: VaultManager.shared.isVaultReady
+                )
+                .frame(width: 160)
             }
-        }
-        .refreshable {
-            await refreshDashboard(shouldSync: true)
+
+            DashboardAccountUpdatesCard(
+                unreadCount: unreadCount,
+                starredCount: starredEmails.count
+            )
+
+            DashboardStoriesFeedCard(stories: recentStories)
+
+            actionButtonsSection
+                .padding(.top, AppTheme.spacingSmall)
+
+            inboxFeedHeader
+                .padding(.top, AppTheme.spacingSmall)
+                .padding(.bottom, AppTheme.spacingSmall)
+
+            accountSummaryCards
         }
     }
 
-    /// Right column: mini month + upcoming events.
-    private var calendarSidebarScroll: some View {
-        ScrollView {
-            DashboardCalendarSidebar(model: calendarModel)
-        }
+    /// Calendar section below the mail feed.
+    private var calendarSidebarContent: some View {
+        DashboardCalendarSidebar(model: calendarModel)
     }
 
     private var inboxFeedHeader: some View {
@@ -298,12 +288,15 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
     private var topBarSection: some View {
-        MainAppTopBar(center: {
-            EmptyView()
-        }, onMenuTap: {
-            isMenuPresented = true
-        })
+        if !rootState.usesWideChrome {
+            MainAppTopBar(center: {
+                EmptyView()
+            }, onMenuTap: {
+                isMenuPresented = true
+            })
+        }
     }
 
     private var actionButtonsSection: some View {
@@ -349,6 +342,15 @@ struct DashboardView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+
+                NavigationLink(value: "all_unread") {
+                    ActionButton(
+                        title: "All unread",
+                        count: emails.count,
+                        icon: "envelope.badge"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
                 
                 NavigationLink(value: "senders") {
                     ActionButton(
@@ -364,6 +366,15 @@ struct DashboardView: View {
                         title: "Saved",
                         count: starredEmails.count,
                         icon: "star.fill"
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                NavigationLink(value: "sent") {
+                    ActionButton(
+                        title: "Sent",
+                        count: sentEmails.count,
+                        icon: "paperplane.fill"
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -602,19 +613,28 @@ struct DashboardView: View {
         await loadRecentStories()
         await loadDashboardActionItems()
 
-        // First, quickly show any cached data
-        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+        let cached = await DashboardDataManager.shared.loadCachedSnapshot()
+        if let cached {
             await MainActor.run {
-                applySnapshot(snapshot)
-                logInfo("Loaded cached snapshot: \(snapshot.emails.count) emails", category: "Dashboard")
+                applySnapshot(cached)
+                logInfo("Loaded cached snapshot: \(cached.emails.count) emails", category: "Dashboard")
             }
         }
-        
-        // Always sync on initial load to get fresh data
-        // This ensures we don't show stale counts
-        logInfo("Initial load - syncing with Gmail...", category: "Dashboard")
+
+        if DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) {
+            logInfo("Initial load - cached mail data stale or missing; syncing with Gmail...", category: "Dashboard")
+            await refreshDashboard(shouldSync: true)
+            NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
+        } else {
+            logInfo("Initial load - using fresh cached mail data (no auto-sync)", category: "Dashboard")
+        }
+    }
+
+    /// Auto-sync only when the dashboard snapshot is missing or past the shared freshness window.
+    private func refreshDashboardIfStale() async {
+        let cached = await DashboardDataManager.shared.loadCachedSnapshot()
+        guard DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) else { return }
         await refreshDashboard(shouldSync: true)
-        NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
     
     private func refreshDashboard(shouldSync: Bool) async {
@@ -702,7 +722,7 @@ struct DashboardView: View {
     }
     
     private var hasCachedData: Bool {
-        !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty)
+        !(accounts.isEmpty && emails.isEmpty && labels.isEmpty && allEmails.isEmpty && starredEmails.isEmpty && sentEmails.isEmpty)
     }
     
     private func applySnapshot(_ snapshot: DashboardDataSnapshot) {
@@ -710,6 +730,7 @@ struct DashboardView: View {
         self.emails = snapshot.emails
         self.allEmails = snapshot.allEmails
         self.starredEmails = snapshot.starredEmails
+        self.sentEmails = snapshot.sentEmails
         self.labels = snapshot.labels
         self.lastRefreshTime = snapshot.timestamp
     }
@@ -813,4 +834,5 @@ struct DashboardView: View {
 #Preview {
     DashboardView(isMenuPresented: .constant(false))
         .environmentObject(AuthManager())
+        .environmentObject(AdaptiveRootState())
 }

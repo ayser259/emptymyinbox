@@ -29,34 +29,27 @@ public actor OpenAIService {
         .notConnectedToInternet
     ]
 
-    public func classifyBriefingItem(subject: String, snippet: String, sender: String) async throws -> BriefingItemType {
+    public func generateDailyBrief(candidates: DailyBriefCandidates) async throws -> DailyBriefLLMResponse {
         let settings = await LLMSettingsStore.shared.currentSettings()
-        let inputJSON = encodePromptInput([
-            "sender": sender,
-            "subject": subject,
-            "snippet": snippet
-        ])
+        let inputJSON = encodePromptJSON(candidates)
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedBriefPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
         let response = try await runChatPrompt(
-            feature: "briefing.classify",
+            feature: "briefing.generate",
             systemPrompt: systemPrompt,
             userPrompt: prompt,
             model: settings.briefModel,
-            temperature: 0.0,
-            maxTokens: 40,
-            schema: Self.briefingTypeSchema
+            temperature: 0.1,
+            maxTokens: 2500,
+            schema: Self.dailyBriefSchema
         )
 
         guard let data = response.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let typeString = object["type"] as? String else {
+              let decoded = try? JSONDecoder().decode(DailyBriefLLMResponse.self, from: data) else {
             throw OpenAIServiceError.invalidResponse
         }
-
-        let normalized = typeString.trimmingCharacters(in: .whitespacesAndNewlines)
-        return BriefingItemType(rawValue: normalized) ?? .directCommunication
+        return decoded
     }
 
     public func summarizeNewsletterStories(
@@ -100,16 +93,23 @@ public actor OpenAIService {
         sender: String,
         snippet: String,
         body: String,
-        userAsk: String
+        userAsk: String,
+        currentDraft: String = "",
+        recipientsTo: String = "",
+        recipientsCc: String = ""
     ) async throws -> String {
         let settings = await LLMSettingsStore.shared.currentSettings()
-        let inputJSON = encodePromptInput([
+        var input: [String: String] = [
             "sender": sender,
             "subject": subject,
             "snippet": snippet,
             "body": body,
             "quickReplyAsk": userAsk
-        ])
+        ]
+        if !currentDraft.isEmpty { input["currentDraft"] = currentDraft }
+        if !recipientsTo.isEmpty { input["recipientsTo"] = recipientsTo }
+        if !recipientsCc.isEmpty { input["recipientsCc"] = recipientsCc }
+        let inputJSON = encodePromptInput(input)
         let (systemPrompt, userTemplate) = await PluginPromptStore.shared.resolvedQuickReplyPrompts()
         let prompt = userPromptWithInputJSON(template: userTemplate, inputJSON: inputJSON)
 
@@ -248,6 +248,16 @@ public actor OpenAIService {
         return encoded
     }
 
+    private func encodePromptJSON<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return encoded
+    }
+
     /// Replaces `{{INPUT_JSON}}` in the template; if missing, appends a fenced JSON block so requests stay well-formed.
     private func userPromptWithInputJSON(template: String, inputJSON: String) -> String {
         if template.contains(PluginPromptPlaceholder.inputJSON) {
@@ -349,15 +359,50 @@ public actor OpenAIService {
         )
     }
 
-    private static let briefingTypeSchema: [String: Any] = [
+    private static let dailyBriefItemSchema: [String: Any] = [
         "type": "object",
         "properties": [
-            "type": [
+            "emailId": ["type": "integer"],
+            "summary": ["type": "string"],
+            "actionItems": [
+                "type": "array",
+                "items": ["type": "string"]
+            ],
+            "sourceLabel": ["type": ["string", "null"]]
+        ],
+        "required": ["emailId", "summary", "actionItems", "sourceLabel"],
+        "additionalProperties": false
+    ]
+
+    private static let dailyBriefSectionSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "kind": [
                 "type": "string",
-                "enum": ["directCommunication", "calendarInvite", "urgentNotification"]
+                "enum": ["urgentToday", "criticalReminders", "unreadFromYesterday", "receiptsAndTransactions"]
+            ],
+            "title": ["type": "string"],
+            "items": [
+                "type": "array",
+                "items": dailyBriefItemSchema,
+                "maxItems": 12
             ]
         ],
-        "required": ["type"],
+        "required": ["kind", "title", "items"],
+        "additionalProperties": false
+    ]
+
+    private static let dailyBriefSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "introText": ["type": "string"],
+            "sections": [
+                "type": "array",
+                "items": dailyBriefSectionSchema,
+                "maxItems": 4
+            ]
+        ],
+        "required": ["introText", "sections"],
         "additionalProperties": false
     ]
 

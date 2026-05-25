@@ -32,17 +32,10 @@ extension GmailAPIService {
     public func buildReplyRFC2822Message(
         account: GmailAccount,
         original: GmailMessage,
-        replyBody: String
+        envelope: ReplyDraftEnvelope
     ) -> String {
         let headers = extractHeaders(from: original.payload)
         let fromLine = rfc822FromLine(account: account)
-
-        let replyToHeader = headers["reply-to"] ?? ""
-        let fromHeader = headers["from"] ?? ""
-        let toAddress = rfc822ExtractEmail(from: replyToHeader.isEmpty ? fromHeader : replyToHeader)
-
-        let subjectRaw = headers["subject"] ?? ""
-        let subjectLine = replySubjectLine(fromOriginalSubject: subjectRaw)
 
         let messageId = headers["message-id"] ?? ""
         let priorReferences = headers["references"] ?? ""
@@ -52,17 +45,42 @@ extension GmailAPIService {
             return "\(priorReferences) \(messageId)"
         }()
 
-        let normalizedBody = replyBody
+        let subjectLine = rfc822FoldSubject(
+            ReplyRecipientResolver.replySubject(fromOriginalSubject: envelope.subject)
+        )
+
+        var body = envelope.body
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
+
+        if envelope.includeQuotedOriginal {
+            let quote = quotedOriginalBlock(original: original, cachedDetail: nil)
+            if !quote.isEmpty {
+                if !body.isEmpty { body += "\n\n" }
+                body += quote
+            }
+        }
 
         var headerLines: [String] = []
         headerLines.append("MIME-Version: 1.0")
         headerLines.append("Content-Type: text/plain; charset=UTF-8")
         headerLines.append("Content-Transfer-Encoding: 8bit")
         headerLines.append("From: \(fromLine)")
-        headerLines.append("To: \(toAddress)")
-        headerLines.append("Subject: \(rfc822FoldSubject(subjectLine))")
+
+        let toLine = ReplyRecipientResolver.formattedHeaderList(envelope.to)
+        if !toLine.isEmpty {
+            headerLines.append("To: \(toLine)")
+        }
+        let ccLine = ReplyRecipientResolver.formattedHeaderList(envelope.cc)
+        if !ccLine.isEmpty {
+            headerLines.append("Cc: \(ccLine)")
+        }
+        let bccLine = ReplyRecipientResolver.formattedHeaderList(envelope.bcc)
+        if !bccLine.isEmpty {
+            headerLines.append("Bcc: \(bccLine)")
+        }
+
+        headerLines.append("Subject: \(subjectLine)")
         if !messageId.isEmpty {
             headerLines.append("In-Reply-To: \(messageId)")
         }
@@ -71,7 +89,34 @@ extension GmailAPIService {
         }
 
         let headerBlock = headerLines.joined(separator: "\r\n")
-        return "\(headerBlock)\r\n\r\n\(normalizedBody)"
+        return "\(headerBlock)\r\n\r\n\(body)"
+    }
+
+    /// Legacy single-recipient builder (plain reply body only).
+    public func buildReplyRFC2822Message(
+        account: GmailAccount,
+        original: GmailMessage,
+        replyBody: String
+    ) -> String {
+        let set = ReplyRecipientResolver.resolve(original: original, accountEmail: account.email, mode: .reply)
+        let headers = extractHeaders(from: original.payload)
+        let subject = ReplyRecipientResolver.replySubject(fromOriginalSubject: headers["subject"] ?? "")
+        let envelope = ReplyDraftEnvelope(to: set.to, subject: subject, body: replyBody)
+        return buildReplyRFC2822Message(account: account, original: original, envelope: envelope)
+    }
+
+    public func createReplyDraft(
+        account: GmailAccount,
+        original: GmailMessage,
+        envelope: ReplyDraftEnvelope
+    ) async throws -> String {
+        let raw = buildReplyRFC2822Message(account: account, original: original, envelope: envelope)
+        let draft = try await createDraft(account: account, rawRFC2822: raw, threadId: original.threadId)
+        Telemetry.event("gmail.draft_create", metadata: [
+            "thread_id": original.threadId,
+            "mode": envelope.cc.isEmpty ? "reply" : "reply_all"
+        ])
+        return draft.id
     }
 
     public func createReplyDraft(
@@ -79,12 +124,27 @@ extension GmailAPIService {
         original: GmailMessage,
         body: String
     ) async throws -> String {
-        let raw = buildReplyRFC2822Message(account: account, original: original, replyBody: body)
-        let draft = try await createDraft(account: account, rawRFC2822: raw, threadId: original.threadId)
-        Telemetry.event("gmail.draft_create", metadata: [
-            "thread_id": original.threadId
+        try await createReplyDraft(
+            account: account,
+            original: original,
+            envelope: ReplyRecipientResolver.resolve(original: original, accountEmail: account.email, mode: .reply)
+                .toEnvelope(subject: ReplyRecipientResolver.replySubject(
+                    fromOriginalSubject: extractHeaders(from: original.payload)["subject"] ?? ""
+                ), body: body)
+        )
+    }
+
+    public func updateReplyDraft(
+        account: GmailAccount,
+        draftId: String,
+        original: GmailMessage,
+        envelope: ReplyDraftEnvelope
+    ) async throws {
+        let raw = buildReplyRFC2822Message(account: account, original: original, envelope: envelope)
+        try await updateDraft(account: account, draftId: draftId, rawRFC2822: raw, threadId: original.threadId)
+        Telemetry.event("gmail.draft_update", metadata: [
+            "draft_id": draftId
         ])
-        return draft.id
     }
 
     public func updateReplyDraft(
@@ -93,11 +153,15 @@ extension GmailAPIService {
         original: GmailMessage,
         body: String
     ) async throws {
-        let raw = buildReplyRFC2822Message(account: account, original: original, replyBody: body)
-        try await updateDraft(account: account, draftId: draftId, rawRFC2822: raw, threadId: original.threadId)
-        Telemetry.event("gmail.draft_update", metadata: [
-            "draft_id": draftId
-        ])
+        let headers = extractHeaders(from: original.payload)
+        let subject = ReplyRecipientResolver.replySubject(fromOriginalSubject: headers["subject"] ?? "")
+        let set = ReplyRecipientResolver.resolve(original: original, accountEmail: account.email, mode: .reply)
+        try await updateReplyDraft(
+            account: account,
+            draftId: draftId,
+            original: original,
+            envelope: set.toEnvelope(subject: subject, body: body)
+        )
     }
 
     public func createDraft(
@@ -183,10 +247,16 @@ extension GmailAPIService {
             let snippet = String(data: data, encoding: .utf8) ?? ""
             throw GmailAPIError.apiError("Failed to send draft (\(http.statusCode)): \(snippet)")
         }
-        // HTTP 2xx means Gmail accepted the send; the draft is gone. Do not fail the whole operation
-        // if the returned Message JSON is empty or slightly different from our full GmailMessage model.
-        Telemetry.event("gmail.draft_send", metadata: ["draft_id": draftId])
-        return Self.decodeSentMessage(from: data)
+        let sent = Self.decodeSentMessage(from: data)
+        var telemetryMeta: [String: String] = ["draft_id": draftId]
+        if !sent.id.isEmpty {
+            telemetryMeta["message_id"] = Telemetry.hashForDiagnostics(sent.id)
+        }
+        if !sent.threadId.isEmpty {
+            telemetryMeta["thread_id"] = Telemetry.hashForDiagnostics(sent.threadId)
+        }
+        Telemetry.event("gmail.draft_send", metadata: telemetryMeta)
+        return sent
     }
 
     /// Best-effort decode after `drafts.send`. Never throws: send already succeeded when this runs.
@@ -247,6 +317,34 @@ extension GmailAPIService {
         Telemetry.event("gmail.draft_delete", metadata: ["draft_id": draftId])
     }
 
+    // MARK: - Quoted original
+
+    func quotedOriginalBlock(original: GmailMessage, cachedDetail: EmailDetail?) -> String {
+        let headers = extractHeaders(from: original.payload)
+        let from = headers["from"] ?? cachedDetail?.sender ?? ""
+        let date = headers["date"] ?? cachedDetail?.received_at ?? ""
+        let subject = headers["subject"] ?? cachedDetail?.subject ?? ""
+
+        var body = ""
+        if let detail = cachedDetail, !detail.body_text.isEmpty {
+            body = detail.body_text
+        } else {
+            let parsed = parseEmailDetail(from: original, accountEmail: cachedDetail?.account_email ?? "", emailId: cachedDetail?.id ?? 0)
+            body = parsed.body_text
+        }
+
+        let lines = body
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+
+        return """
+        On \(date), \(from) wrote regarding "\(subject)":
+        \(lines)
+        """
+    }
+
     // MARK: - Private helpers
 
     private static func base64URLEncodeRFC822(_ raw: String) -> String {
@@ -265,27 +363,25 @@ extension GmailAPIService {
         return "\"\(safeName)\" <\(email)>"
     }
 
-    private func rfc822ExtractEmail(from headerValue: String) -> String {
-        if let range = headerValue.range(of: "<") {
-            let emailPart = String(headerValue[range.upperBound...])
-            if let endRange = emailPart.range(of: ">") {
-                return String(emailPart[..<endRange.lowerBound]).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return headerValue.trimmingCharacters(in: .whitespaces)
-    }
-
-    private func replySubjectLine(fromOriginalSubject raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "Re: " }
-        if trimmed.lowercased().hasPrefix("re:") { return trimmed }
-        return "Re: \(trimmed)"
-    }
-
     /// Avoid bare newlines inside a subject header line.
     private func rfc822FoldSubject(_ s: String) -> String {
         s.replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
+    }
+}
+
+// MARK: - ReplyRecipientSet helpers
+
+private extension ReplyRecipientSet {
+    func toEnvelope(subject: String, body: String, includeQuotedOriginal: Bool = false) -> ReplyDraftEnvelope {
+        ReplyDraftEnvelope(
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            includeQuotedOriginal: includeQuotedOriginal
+        )
     }
 }

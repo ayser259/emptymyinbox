@@ -41,15 +41,13 @@ public actor GeminiAPIKeyStore {
         let read = readAPIKeyResult()
         guard read.success, let keyValue = read.keyValue, !keyValue.isEmpty else { return nil }
 
-        if let mask = userDefaults.string(forKey: apiKeyMaskKey),
-           let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
-            return LLMAPIKeyStatus(maskedKey: mask, addedAt: addedAt)
+        if let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
+            return LLMAPIKeyStatus(addedAt: addedAt)
         }
-        let repairedMask = maskedKey(from: keyValue)
         let repairedDate = Date()
-        userDefaults.set(repairedMask, forKey: apiKeyMaskKey)
+        userDefaults.set(maskedKey(from: keyValue), forKey: apiKeyMaskKey)
         userDefaults.set(repairedDate, forKey: apiKeyAddedAtKey)
-        return LLMAPIKeyStatus(maskedKey: repairedMask, addedAt: repairedDate)
+        return LLMAPIKeyStatus(addedAt: repairedDate)
     }
 
     public func readAPIKeyResult() -> LLMKeychainOperationResult {
@@ -168,15 +166,13 @@ public actor ClaudeAPIKeyStore {
         let read = readAPIKeyResult()
         guard read.success, let keyValue = read.keyValue, !keyValue.isEmpty else { return nil }
 
-        if let mask = userDefaults.string(forKey: apiKeyMaskKey),
-           let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
-            return LLMAPIKeyStatus(maskedKey: mask, addedAt: addedAt)
+        if let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
+            return LLMAPIKeyStatus(addedAt: addedAt)
         }
-        let repairedMask = maskedKey(from: keyValue)
         let repairedDate = Date()
-        userDefaults.set(repairedMask, forKey: apiKeyMaskKey)
+        userDefaults.set(maskedKey(from: keyValue), forKey: apiKeyMaskKey)
         userDefaults.set(repairedDate, forKey: apiKeyAddedAtKey)
-        return LLMAPIKeyStatus(maskedKey: repairedMask, addedAt: repairedDate)
+        return LLMAPIKeyStatus(addedAt: repairedDate)
     }
 
     public func readAPIKeyResult() -> LLMKeychainOperationResult {

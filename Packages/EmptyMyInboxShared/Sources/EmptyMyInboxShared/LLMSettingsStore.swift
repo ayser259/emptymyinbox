@@ -1,9 +1,13 @@
 import Foundation
 import Security
 
-public struct LLMAPIKeyStatus {
-    public let maskedKey: String
+/// Confirms a provider API key is stored without exposing key material.
+public struct LLMAPIKeyStatus: Sendable {
     public let addedAt: Date
+
+    public init(addedAt: Date) {
+        self.addedAt = addedAt
+    }
 }
 
 public struct LLMKeychainOperationResult {
@@ -113,17 +117,15 @@ public actor LLMSettingsStore {
             return nil
         }
 
-        if let mask = userDefaults.string(forKey: apiKeyMaskKey),
-           let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
-            return LLMAPIKeyStatus(maskedKey: mask, addedAt: addedAt)
+        if let addedAt = userDefaults.object(forKey: apiKeyAddedAtKey) as? Date {
+            return LLMAPIKeyStatus(addedAt: addedAt)
         }
 
-        // Self-heal metadata if key exists but status metadata was missing.
-        let repairedMask = maskedKey(from: keyValue)
+        // Self-heal metadata if key exists but added-at was missing.
         let repairedDate = Date()
-        userDefaults.set(repairedMask, forKey: apiKeyMaskKey)
+        userDefaults.set(maskedKey(from: keyValue), forKey: apiKeyMaskKey)
         userDefaults.set(repairedDate, forKey: apiKeyAddedAtKey)
-        return LLMAPIKeyStatus(maskedKey: repairedMask, addedAt: repairedDate)
+        return LLMAPIKeyStatus(addedAt: repairedDate)
     }
 
     public func invalidateAfterExternalFileChange() {
