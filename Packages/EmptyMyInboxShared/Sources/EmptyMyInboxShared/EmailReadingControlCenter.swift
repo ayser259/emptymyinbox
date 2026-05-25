@@ -65,6 +65,16 @@ struct EmailReadingControlCenter<Status: View>: View {
         !triageShortcuts.suppressButtonKeyboardShortcuts
     }
 
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var usesCompactSecondaryRow: Bool {
+        horizontalSizeClass == .compact
+    }
+    #else
+    private var usesCompactSecondaryRow: Bool { false }
+    #endif
+
     var body: some View {
         VStack(spacing: 0) {
             statusBar()
@@ -128,62 +138,12 @@ struct EmailReadingControlCenter<Status: View>: View {
             .padding(.top, 12)
             .padding(.bottom, 4)
 
-            HStack(spacing: 8) {
-                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
-
-                HStack(spacing: 8) {
-                    EmailReadingSecondaryButton(
-                        label: "Reply",
-                        systemImage: "arrowshape.turn.up.left",
-                        shortcutDisplay: "R",
-                        shortcutKey: "r",
-                        shortcutModifiers: [],
-                        registersKeyboardShortcut: registersButtonKeyboardShortcuts,
-                        isDisabled: isDisabled,
-                        action: onReply
-                    )
-                    #if os(macOS)
-                    .help("Compose a reply  [R]")
-                    #endif
-
-                    if showReplyAll {
-                        EmailReadingSecondaryButton(
-                            label: "All",
-                            systemImage: "arrowshape.turn.up.left.2",
-                            shortcutDisplay: "⇧R",
-                            shortcutKey: "r",
-                            shortcutModifiers: [.shift],
-                            registersKeyboardShortcut: registersButtonKeyboardShortcuts,
-                            isDisabled: isDisabled,
-                            action: onReplyAll
-                        )
-                        #if os(macOS)
-                        .help("Reply all  [⇧R]")
-                        #endif
-                    }
-
-                    Spacer()
-
-                    if hasUnsubscribe {
-                        EmailReadingSecondaryButton(
-                            label: "Unsubscribe",
-                            systemImage: "envelope.badge.fill",
-                            shortcutDisplay: "⌘⇧U",
-                            shortcutKey: "u",
-                            shortcutModifiers: [.command, .shift],
-                            registersKeyboardShortcut: registersButtonKeyboardShortcuts,
-                            tint: .red,
-                            isDisabled: isDisabled,
-                            action: onUnsubscribe
-                        )
-                        #if os(macOS)
-                        .help("Unsubscribe from this sender  [⌘⇧U]")
-                        #endif
-                    }
+            Group {
+                if usesCompactSecondaryRow {
+                    compactSecondaryActionsRow
+                } else {
+                    desktopSecondaryActionsRow
                 }
-                .frame(maxWidth: .infinity)
-
-                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
@@ -191,6 +151,110 @@ struct EmailReadingControlCenter<Status: View>: View {
         .background(SharedAppTheme.secondaryBackground.opacity(0.98))
         .overlay(alignment: .top) {
             Divider().opacity(0.35)
+        }
+    }
+
+    private var compactSecondaryActionsRow: some View {
+        HStack(spacing: 10) {
+            EmailReadingSecondaryButton(
+                label: "Reply",
+                systemImage: "arrowshape.turn.up.left",
+                shortcutDisplay: "R",
+                shortcutKey: "r",
+                shortcutModifiers: [],
+                registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                isDisabled: isDisabled,
+                action: onReply
+            )
+
+            if showReplyAll {
+                EmailReadingSecondaryButton(
+                    label: "Reply All",
+                    systemImage: "arrowshape.turn.up.left.2",
+                    shortcutDisplay: "⇧R",
+                    shortcutKey: "r",
+                    shortcutModifiers: [.shift],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                    isDisabled: isDisabled,
+                    action: onReplyAll
+                )
+            }
+
+            Spacer(minLength: 0)
+
+            if hasUnsubscribe {
+                EmailReadingSecondaryButton(
+                    label: "Unsubscribe",
+                    systemImage: "envelope.badge.fill",
+                    shortcutDisplay: "⌘⇧U",
+                    shortcutKey: "u",
+                    shortcutModifiers: [.command, .shift],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                    tint: .red,
+                    isDisabled: isDisabled,
+                    action: onUnsubscribe
+                )
+            }
+        }
+    }
+
+    private var desktopSecondaryActionsRow: some View {
+        HStack(spacing: 8) {
+            Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+
+            HStack(spacing: 8) {
+                EmailReadingSecondaryButton(
+                    label: "Reply",
+                    systemImage: "arrowshape.turn.up.left",
+                    shortcutDisplay: "R",
+                    shortcutKey: "r",
+                    shortcutModifiers: [],
+                    registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                    isDisabled: isDisabled,
+                    action: onReply
+                )
+                #if os(macOS)
+                .help("Compose a reply  [R]")
+                #endif
+
+                if showReplyAll {
+                    EmailReadingSecondaryButton(
+                        label: "All",
+                        systemImage: "arrowshape.turn.up.left.2",
+                        shortcutDisplay: "⇧R",
+                        shortcutKey: "r",
+                        shortcutModifiers: [.shift],
+                        registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                        isDisabled: isDisabled,
+                        action: onReplyAll
+                    )
+                    #if os(macOS)
+                    .help("Reply all  [⇧R]")
+                    #endif
+                }
+
+                Spacer()
+
+                if hasUnsubscribe {
+                    EmailReadingSecondaryButton(
+                        label: "Unsubscribe",
+                        systemImage: "envelope.badge.fill",
+                        shortcutDisplay: "⌘⇧U",
+                        shortcutKey: "u",
+                        shortcutModifiers: [.command, .shift],
+                        registersKeyboardShortcut: registersButtonKeyboardShortcuts,
+                        tint: .red,
+                        isDisabled: isDisabled,
+                        action: onUnsubscribe
+                    )
+                    #if os(macOS)
+                    .help("Unsubscribe from this sender  [⌘⇧U]")
+                    #endif
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
         }
     }
 }
@@ -243,6 +307,8 @@ struct EmailReadingTriageButton: View {
 
     #if os(macOS)
     @State private var isHovered = false
+    #else
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
 
     private var bgColor: Color {
@@ -279,32 +345,20 @@ struct EmailReadingTriageButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .medium))
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                #if os(macOS)
-                Text(shortcutDisplay)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(fgColor.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(fgColor.opacity(0.25), lineWidth: 0.5)
-                    )
+            Group {
+                #if os(iOS)
+                if horizontalSizeClass == .compact {
+                    compactTriageLabel
+                } else {
+                    horizontalTriageLabel
+                }
+                #else
+                horizontalTriageLabel
                 #endif
             }
             .foregroundStyle(fgColor)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
+            .padding(triageContentPadding)
             .background(bgColor)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(
@@ -327,6 +381,59 @@ struct EmailReadingTriageButton: View {
         .opacity(isDisabled ? 0.4 : 1.0)
         .animation(.easeOut(duration: 0.15), value: isDisabled)
     }
+
+    #if os(iOS)
+    private var usesCompactTriageLayout: Bool {
+        horizontalSizeClass == .compact
+    }
+    #else
+    private var usesCompactTriageLayout: Bool { false }
+    #endif
+
+    private var triageContentPadding: EdgeInsets {
+        if usesCompactTriageLayout {
+            return EdgeInsets(top: 12, leading: 8, bottom: 12, trailing: 8)
+        }
+        return EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+    }
+
+    @ViewBuilder
+    private var compactTriageLabel: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .medium))
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+        }
+    }
+
+    @ViewBuilder
+    private var horizontalTriageLabel: some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .medium))
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            #if os(macOS)
+            Text(shortcutDisplay)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(fgColor.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(fgColor.opacity(0.25), lineWidth: 0.5)
+                )
+            #endif
+        }
+    }
 }
 
 // MARK: - Secondary button
@@ -344,40 +451,31 @@ struct EmailReadingSecondaryButton: View {
 
     #if os(macOS)
     @State private var isHovered = false
+    #else
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .medium))
-                Text(label)
-                    .font(.system(size: 13, weight: .semibold))
-                #if os(macOS)
-                Text(shortcutDisplay)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(tint == .red ? Color.red.opacity(0.8) : SharedAppTheme.secondaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
-                    )
+            Group {
+                #if os(iOS)
+                if horizontalSizeClass == .compact {
+                    compactSecondaryLabel
+                } else {
+                    horizontalSecondaryLabel
+                }
+                #else
+                horizontalSecondaryLabel
                 #endif
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(tint.opacity(backgroundOpacity))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(tint.opacity(borderOpacity), lineWidth: 1)
-            )
+            .padding(secondaryContentPadding)
+            .modifier(SecondaryButtonChromeModifier(
+                usesCompactLayout: usesCompactSecondaryLayout,
+                tint: tint,
+                backgroundOpacity: backgroundOpacity,
+                borderOpacity: borderOpacity
+            ))
         }
         .buttonStyle(.plain)
         #if os(macOS)
@@ -394,6 +492,57 @@ struct EmailReadingSecondaryButton: View {
         .opacity(isDisabled ? 0.45 : 1.0)
     }
 
+    #if os(iOS)
+    private var usesCompactSecondaryLayout: Bool {
+        horizontalSizeClass == .compact
+    }
+    #else
+    private var usesCompactSecondaryLayout: Bool { false }
+    #endif
+
+    private var secondaryContentPadding: EdgeInsets {
+        if usesCompactSecondaryLayout {
+            return EdgeInsets(top: 9, leading: 14, bottom: 9, trailing: 14)
+        }
+        return EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
+    }
+
+    @ViewBuilder
+    private var compactSecondaryLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .medium))
+            Text(label)
+                .font(.system(size: 14, weight: .medium))
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var horizontalSecondaryLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+            #if os(macOS)
+            Text(shortcutDisplay)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(tint == .red ? Color.red.opacity(0.8) : SharedAppTheme.secondaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
+                )
+            #endif
+        }
+    }
+
     #if os(macOS)
     private var backgroundOpacity: Double { isHovered ? 0.15 : 0.08 }
     private var borderOpacity: Double { isHovered ? 0.45 : 0.28 }
@@ -401,6 +550,40 @@ struct EmailReadingSecondaryButton: View {
     private var backgroundOpacity: Double { 0.08 }
     private var borderOpacity: Double { 0.28 }
     #endif
+}
+
+private struct SecondaryButtonChromeModifier: ViewModifier {
+    let usesCompactLayout: Bool
+    let tint: Color
+    let backgroundOpacity: Double
+    let borderOpacity: Double
+
+    func body(content: Content) -> some View {
+        if usesCompactLayout {
+            content
+                .background {
+                    if tint == .red {
+                        Capsule(style: .continuous)
+                            .fill(Color.red.opacity(0.12))
+                    } else {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.07))
+                    }
+                }
+                .clipShape(Capsule(style: .continuous))
+        } else {
+            content
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(tint.opacity(backgroundOpacity))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(tint.opacity(borderOpacity), lineWidth: 1)
+                }
+        }
+    }
 }
 
 #if os(macOS)

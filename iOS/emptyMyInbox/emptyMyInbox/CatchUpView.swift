@@ -109,6 +109,7 @@ struct CatchUpView: View {
         .navigationTitle(accountEmail.map { "Catch Up (\($0))" } ?? "Catch Up")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .customBackButton()
         #endif
         .sheet(isPresented: $showUnsubscribeWebView) {
