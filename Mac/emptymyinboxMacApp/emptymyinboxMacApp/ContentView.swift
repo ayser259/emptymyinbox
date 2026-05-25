@@ -269,8 +269,7 @@ struct ContentView: View {
             lastMailRefreshAt = ts
         }
         persistSidebarRefreshTimestamps()
-        // No cached data at all — trigger a full fetch so the user sees their emails immediately.
-        if loaded == nil, !isRefreshing {
+        if DashboardRefreshPolicy.shouldAutoSync(snapshot: loaded, now: Date()), !isRefreshing {
             await refreshMailbox()
         }
     }
@@ -326,21 +325,19 @@ struct ContentView: View {
         }
     }
 
-    /// Matches iOS `checkAndRefreshIfNeeded` day gate: first foreground of a new calendar day pulls Gmail and posts companion (Calendar + Action Items).
+    /// Matches iOS foreground behavior: refresh mail when the cached snapshot is stale; companion tabs refresh via `refreshMailbox` notification.
     private func checkMacForegroundCompanionIfNeeded() {
         guard case .authenticated = authManager.sessionState else { return }
-        let userDefaults = UserDefaults.standard
-        let lastAutoRefreshKey = "lastAutoRefreshDate"
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        if let lastRefreshDate = userDefaults.object(forKey: lastAutoRefreshKey) as? Date {
-            let lastRefreshDay = calendar.startOfDay(for: lastRefreshDate)
-            if calendar.isDate(today, inSameDayAs: lastRefreshDay) {
-                return
+        Task {
+            let cached: DashboardDataSnapshot?
+            if let snapshot {
+                cached = snapshot
+            } else {
+                cached = await DashboardDataManager.shared.loadCachedSnapshot()
             }
+            guard DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) else { return }
+            await refreshMailbox()
         }
-        userDefaults.set(today, forKey: lastAutoRefreshKey)
-        Task { await refreshMailbox() }
     }
 }
 

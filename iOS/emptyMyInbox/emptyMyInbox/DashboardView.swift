@@ -128,10 +128,8 @@ struct DashboardView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
-            // Only refresh if not already refreshing to prevent loops
-            // This is only called once per day automatically
             Task {
-                await refreshDashboard(shouldSync: true)
+                await refreshDashboardIfStale()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAdded)) { _ in
@@ -615,19 +613,28 @@ struct DashboardView: View {
         await loadRecentStories()
         await loadDashboardActionItems()
 
-        // First, quickly show any cached data
-        if let snapshot = await DashboardDataManager.shared.loadCachedSnapshot() {
+        let cached = await DashboardDataManager.shared.loadCachedSnapshot()
+        if let cached {
             await MainActor.run {
-                applySnapshot(snapshot)
-                logInfo("Loaded cached snapshot: \(snapshot.emails.count) emails", category: "Dashboard")
+                applySnapshot(cached)
+                logInfo("Loaded cached snapshot: \(cached.emails.count) emails", category: "Dashboard")
             }
         }
-        
-        // Always sync on initial load to get fresh data
-        // This ensures we don't show stale counts
-        logInfo("Initial load - syncing with Gmail...", category: "Dashboard")
+
+        if DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) {
+            logInfo("Initial load - cached mail data stale or missing; syncing with Gmail...", category: "Dashboard")
+            await refreshDashboard(shouldSync: true)
+            NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
+        } else {
+            logInfo("Initial load - using fresh cached mail data (no auto-sync)", category: "Dashboard")
+        }
+    }
+
+    /// Auto-sync only when the dashboard snapshot is missing or past the shared freshness window.
+    private func refreshDashboardIfStale() async {
+        let cached = await DashboardDataManager.shared.loadCachedSnapshot()
+        guard DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) else { return }
         await refreshDashboard(shouldSync: true)
-        NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
     
     private func refreshDashboard(shouldSync: Bool) async {

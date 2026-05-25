@@ -63,7 +63,7 @@ struct iPadMailTabView: View {
             Task { await loadSnapshot() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .appShouldRefreshData)) { _ in
-            Task { await refreshMailbox() }
+            Task { await refreshMailboxIfStale() }
         }
         .sheet(isPresented: $showLLMSettings) {
             NavigationStack {
@@ -254,9 +254,20 @@ struct iPadMailTabView: View {
 
     private func loadSnapshot() async {
         snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
-        if snapshot == nil, !isRefreshing {
+        if DashboardRefreshPolicy.shouldAutoSync(snapshot: snapshot, now: Date()), !isRefreshing {
             await refreshMailbox()
         }
+    }
+
+    private func refreshMailboxIfStale() async {
+        let cached: DashboardDataSnapshot?
+        if let snapshot {
+            cached = snapshot
+        } else {
+            cached = await DashboardDataManager.shared.loadCachedSnapshot()
+        }
+        guard DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) else { return }
+        await refreshMailbox()
     }
 
     private func loadActionItems() async {
