@@ -480,9 +480,7 @@ private struct MacThreadConversationDetailView: View {
         .task(id: conversation?.selectedMessageId) {
             await refreshUnsubscribeAvailability()
         }
-        .sheet(isPresented: $showUnsubscribeWebView) {
-            if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
-        }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
     }
 
     private var conversationBinding: Binding<EmailThreadConversation> {
@@ -571,9 +569,7 @@ private struct MacThreadConversationDetailView: View {
         guard !isProcessing else { return }
         isProcessing = true
         defer { isProcessing = false }
-        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(for: detail, accountEmail: detail.account_email) else { return }
-        let result = await UnsubscribeService.shared.executeUnsubscribe(method: method, userEmail: detail.account_email)
-        if result.requiresManualAction, let url = result.manualActionURL {
+        if case .manualActionRequired(let url) = await EmailReadingActionSupport.executeUnsubscribe(for: detail) {
             unsubscribeManualURL = url
             showUnsubscribeWebView = true
         }
@@ -623,23 +619,10 @@ private struct MacCachedEmailDetailView: View {
             sidebarShortcutsStore.removeLayer(id: "mail.reading")
             sidebarShortcutsStore.removeLayer(id: "mail.replyComposer")
         }
-        .onChange(of: replyPresentation?.id) { _, _ in
-            syncKeyboardMonitor()
-            syncSidebarShortcuts()
-        }
-        .onChange(of: detail?.id) { _, _ in
-            syncKeyboardMonitor()
-            syncSidebarShortcuts()
-        }
-        .onChange(of: hasUnsubscribeAvailable) { _, _ in
-            syncKeyboardMonitor()
-            syncSidebarShortcuts()
-        }
-        .sheet(isPresented: $showUnsubscribeWebView) {
-            if let url = unsubscribeManualURL {
-                UnsubscribeWebView(url: url)
-            }
-        }
+        .onChange(of: replyPresentation?.id) { _, _ in scheduleMailReadingSync() }
+        .onChange(of: detail?.id) { _, _ in scheduleMailReadingSync() }
+        .onChange(of: hasUnsubscribeAvailable) { _, _ in scheduleMailReadingSync() }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
     }
 
     private var isReplyAllMeaningful: Bool {
@@ -704,6 +687,13 @@ private struct MacCachedEmailDetailView: View {
     private func openReply(mode: ReplyMode, for detail: EmailDetail) {
         replyPresentation = ReplyComposerPresentation(email: detail, mode: mode)
         syncSidebarShortcuts()
+    }
+
+    private func scheduleMailReadingSync() {
+        DispatchQueue.main.async {
+            syncKeyboardMonitor()
+            syncSidebarShortcuts()
+        }
     }
 
     private func syncKeyboardMonitor() {
@@ -817,22 +807,9 @@ private struct MacCachedEmailDetailView: View {
         isProcessing = true
         defer { isProcessing = false }
 
-        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(
-            for: email,
-            accountEmail: email.account_email
-        ) else { return }
+        let result = await EmailReadingActionSupport.executeUnsubscribe(for: email)
 
-        let result = await UnsubscribeService.shared.executeUnsubscribe(
-            method: method,
-            userEmail: email.account_email
-        )
-
-        if result.requiresManualAction, let url = result.manualActionURL {
-            await MainActor.run {
-                unsubscribeManualURL = url
-                showUnsubscribeWebView = true
-            }
-        } else if let url = result.manualActionURL {
+        if case .manualActionRequired(let url) = result {
             await MainActor.run {
                 unsubscribeManualURL = url
                 showUnsubscribeWebView = true

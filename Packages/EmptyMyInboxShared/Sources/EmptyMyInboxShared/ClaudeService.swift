@@ -320,21 +320,15 @@ public actor ClaudeService {
         model: String,
         requestBody: [String: Any]
     ) {
-        let encodedBody: String
-        if let data = try? JSONSerialization.data(withJSONObject: requestBody, options: [.sortedKeys]),
-           let text = String(data: data, encoding: .utf8) {
-            encodedBody = text
-        } else {
-            encodedBody = "\(requestBody)"
-        }
+        let maxTokens = requestBody["max_tokens"] as? Int ?? 0
+        let systemChars = (requestBody["system"] as? String)?.count ?? 0
+        let userChars = (requestBody["messages"] as? [[String: Any]])?
+            .compactMap { $0["content"] as? String }
+            .joined()
+            .count ?? 0
 
-        let maxChars = 12_000
-        let clippedBody = encodedBody.count > maxChars
-            ? String(encodedBody.prefix(maxChars)) + "…(truncated)"
-            : encodedBody
-
-        logInfo(
-            "LLM request payload provider=\(provider.rawValue) feature=\(feature) model=\(model) body=\(clippedBody)",
+        logDebug(
+            "LLM request provider=\(provider.rawValue) feature=\(feature) model=\(model) max_tokens=\(maxTokens) system_chars=\(systemChars) user_chars=\(userChars)",
             category: "LLM"
         )
     }

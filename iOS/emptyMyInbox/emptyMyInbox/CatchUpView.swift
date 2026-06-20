@@ -112,11 +112,7 @@ struct CatchUpView: View {
         .toolbar(.hidden, for: .tabBar)
         .customBackButton()
         #endif
-        .sheet(isPresented: $showUnsubscribeWebView) {
-            if let url = unsubscribeManualURL {
-                UnsubscribeWebView(url: url)
-            }
-        }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
         .sheet(item: $replyPresentation) { presentation in
             EmailReplyComposerView(
                 email: presentation.email,
@@ -346,6 +342,16 @@ struct CatchUpView: View {
         sessionStats.reviewedSenders.insert(email.sender.lowercased())
         if hasUnsubscribeAvailable {
             sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+        }
+    }
+
+    private func trackUnsubscribeDomain(for email: EmailDetail, manualURL: URL? = nil) {
+        if let host = manualURL?.host {
+            sessionStats.uniqueUnsubscribeDomains.insert(host)
+            return
+        }
+        if let atIndex = email.sender.firstIndex(of: "@") {
+            sessionStats.uniqueUnsubscribeDomains.insert(String(email.sender[email.sender.index(after: atIndex)...]))
         }
     }
     
@@ -811,133 +817,83 @@ struct CatchUpView: View {
         impactMedium.impactOccurred()
         #endif
         
-        // Get unsubscribe info
-        let unsubscribeService = UnsubscribeService.shared
-        if let method = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            let result = await unsubscribeService.executeUnsubscribe(
-                method: method,
-                userEmail: email.account_email
-            )
-            
-            // Log detailed information
-            let logMessage = """
-            Unsubscribe Result:
-            - Success: \(result.success)
-            - Method: \(result.verificationInfo)
-            - Details: \(result.details ?? "N/A")
-            """
-            
-            if result.success {
-                Telemetry.event("catchup.action.unsubscribe_succeeded", metadata: [
-                    "manual_required": "\(result.requiresManualAction)"
-                ])
-                logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
-                #if os(iOS)
-                notificationGenerator.notificationOccurred(.success)
-                #endif
-                
-                sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
-                
-                // Extract domain from sender email or unsubscribe URL for tracking
-                var unsubscribeDomain: String? = nil
-                if let method = result.method {
-                    switch method {
-                    case .http(let url):
-                        unsubscribeDomain = url.host
-                    case .mailto(let email):
-                        // Extract domain from email address
-                        if let atIndex = email.firstIndex(of: "@") {
-                            unsubscribeDomain = String(email[email.index(after: atIndex)...])
-                        }
-                    }
-                }
-                // Fallback to sender email domain if unsubscribe domain not available
-                if unsubscribeDomain == nil {
-                    if let atIndex = email.sender.firstIndex(of: "@") {
-                        unsubscribeDomain = String(email.sender[email.sender.index(after: atIndex)...])
-                    }
-                }
-                
-                // Track unique unsubscribe domain
-                if let domain = unsubscribeDomain {
-                    sessionStats.uniqueUnsubscribeDomains.insert(domain)
-                }
-                
-                // If manual action is required, open web view immediately
-                if result.requiresManualAction, let url = result.manualActionURL {
-                    await MainActor.run {
-                        unsubscribeManualURL = url
-                        showUnsubscribeWebView = true
-                    }
-                    
-                    // Still count as reviewed even if manual action is needed
-                    // The user has initiated the unsubscribe process
-                    sessionStats.reviewed += 1
-                    
-                    // Don't dismiss the email yet - let user complete unsubscribe first
-                    // They can dismiss manually after completing
-                } else {
-                    // Show success toast with verification info
-                    await MainActor.run {
-                        unsubscribeToastMessage = result.verificationInfo
-                        unsubscribeToastIsSuccess = true
-                        unsubscribeManualURL = result.manualActionURL
-                        showUnsubscribeToast = true
-                    }
-                    
-                    // Perform dismissal animation (card goes right, similar to mark as read)
-                    await performDismissalAnimation(cardId: email.id, direction: .right)
-                    
-                    // Update stats
-                    sessionStats.reviewed += 1
-                    sessionStats.successfulUnsubscribes += 1
-                    recordSenderForReviewedEmail(email)
-                    
-                    // Remove from deck AFTER animation
-                    emailLoader.removeCurrentThread()
-                    
-                    // Reset animation state
-                    resetAnimationState()
-                    
-                    // Hide toast after 4 seconds
-                    try? await Task.sleep(nanoseconds: 4_000_000_000)
-                    await MainActor.run {
-                        withAnimation {
-                            showUnsubscribeToast = false
-                        }
-                    }
-                }
-            } else {
-                Telemetry.event("catchup.action.unsubscribe_failed")
-                logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
-                #if os(iOS)
-                notificationGenerator.notificationOccurred(.error)
-                #endif
-                
-                // If manual action URL is available, open it immediately
-                if let url = result.manualActionURL {
-                    await MainActor.run {
-                        unsubscribeManualURL = url
-                        showUnsubscribeWebView = true
-                    }
-                } else {
-                    // Show error toast
-                    await MainActor.run {
-                        unsubscribeToastMessage = result.verificationInfo
-                        unsubscribeToastIsSuccess = false
-                        showUnsubscribeToast = true
-                    }
-                    
-                    // Hide toast after 3 seconds
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    await MainActor.run {
-                        withAnimation {
-                            showUnsubscribeToast = false
-                        }
-                    }
+        // Execute unsubscribe via shared helper
+        switch await EmailReadingActionSupport.executeUnsubscribe(for: email) {
+        case .manualActionRequired(let url):
+            Telemetry.event("catchup.action.unsubscribe_succeeded", metadata: [
+                "manual_required": "true"
+            ])
+            logInfo("✅ Unsubscribe requires manual confirmation", category: "Unsubscribe")
+            #if os(iOS)
+            notificationGenerator.notificationOccurred(.success)
+            #endif
+
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+            trackUnsubscribeDomain(for: email, manualURL: url)
+
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
+            }
+
+            sessionStats.reviewed += 1
+
+        case .oneClickSuccess(let verificationInfo):
+            Telemetry.event("catchup.action.unsubscribe_succeeded", metadata: [
+                "manual_required": "false"
+            ])
+            logInfo("✅ Successfully unsubscribed: \(verificationInfo)", category: "Unsubscribe")
+            #if os(iOS)
+            notificationGenerator.notificationOccurred(.success)
+            #endif
+
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+            trackUnsubscribeDomain(for: email)
+
+            await MainActor.run {
+                unsubscribeToastMessage = verificationInfo
+                unsubscribeToastIsSuccess = true
+                unsubscribeManualURL = nil
+                showUnsubscribeToast = true
+            }
+
+            await performDismissalAnimation(cardId: email.id, direction: .right)
+
+            sessionStats.reviewed += 1
+            sessionStats.successfulUnsubscribes += 1
+            recordSenderForReviewedEmail(email)
+
+            emailLoader.removeCurrentThread()
+            resetAnimationState()
+
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run {
+                withAnimation {
+                    showUnsubscribeToast = false
                 }
             }
-        } else {
+
+        case .failed(let verificationInfo):
+            Telemetry.event("catchup.action.unsubscribe_failed")
+            logError("❌ Failed to unsubscribe: \(verificationInfo)", category: "Unsubscribe")
+            #if os(iOS)
+            notificationGenerator.notificationOccurred(.error)
+            #endif
+
+            await MainActor.run {
+                unsubscribeToastMessage = verificationInfo
+                unsubscribeToastIsSuccess = false
+                showUnsubscribeToast = true
+            }
+
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run {
+                withAnimation {
+                    showUnsubscribeToast = false
+                }
+            }
+
+        case .noMethodAvailable:
             logWarning("⚠️ No unsubscribe method found for this email", category: "Unsubscribe")
             #if os(iOS)
             notificationGenerator.notificationOccurred(.warning)

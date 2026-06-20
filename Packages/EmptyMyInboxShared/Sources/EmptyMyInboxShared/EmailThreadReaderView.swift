@@ -313,6 +313,8 @@ public struct EmailThreadDetailScreen: View {
     @State private var replyPresentation: ReplyComposerPresentation?
     @State private var hasUnsubscribeAvailable = false
     @State private var isProcessing = false
+    @State private var showUnsubscribeWebView = false
+    @State private var unsubscribeManualURL: URL?
 
     public init(summary: EmailThreadSummary) {
         self.summary = summary
@@ -358,6 +360,7 @@ public struct EmailThreadDetailScreen: View {
                 isCatchUpContext: false
             )
         }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
     }
 
     @ViewBuilder
@@ -520,14 +523,13 @@ public struct EmailThreadDetailScreen: View {
         guard !isProcessing else { return }
         isProcessing = true
         defer { isProcessing = false }
-        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(
-            for: detail,
-            accountEmail: detail.account_email
-        ) else { return }
-        _ = await UnsubscribeService.shared.executeUnsubscribe(
-            method: method,
-            userEmail: detail.account_email
-        )
+
+        if case .manualActionRequired(let url) = await EmailReadingActionSupport.executeUnsubscribe(for: detail) {
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
+            }
+        }
     }
 
     private func formatCompactDate(_ dateString: String) -> String {

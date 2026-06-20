@@ -364,6 +364,12 @@ public struct ActionItemQuickEntryView: View {
         markMenuEdit()
     }
 
+    private func shortcutAccentText(_ string: String, weight: Font.Weight = .semibold) -> Text {
+        Text(string)
+            .foregroundStyle(SharedAppTheme.accent)
+            .fontWeight(weight)
+    }
+
     private var macQuickEntryHeader: some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: isNew ? "plus.circle.fill" : "square.and.pencil.circle.fill")
@@ -383,29 +389,34 @@ public struct ActionItemQuickEntryView: View {
 
     /// Subtitle under the “New action item” header — accent highlights on shortcut keys.
     private var macQuickEntryHeaderShortcutLine: some View {
-        (Text("Put ")
-            + Text("p0").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+        let priorityRange = shortcutAccentText("p0")
             + Text("–")
-            + Text("p4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
-            + Text(", ")
-            + Text("u0").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + shortcutAccentText("p4")
+        let urgencyRange = shortcutAccentText("u0")
             + Text("–")
-            + Text("u4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + shortcutAccentText("u4")
+        let keysIntro = Text("Put ")
+            + priorityRange
             + Text(", ")
-            + Text("@").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + urgencyRange
             + Text(", ")
-            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + shortcutAccentText("@")
+            + Text(", ")
+            + shortcutAccentText("#")
             + Text(", or ")
-            + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + shortcutAccentText("!")
             + Text(" as separate words in the title (e.g. ")
-            + Text("Call p2 u1").foregroundStyle(SharedAppTheme.accent).fontWeight(.medium)
+            + shortcutAccentText("Call p2 u1", weight: .medium)
             + Text("). ")
-            + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+        let bangExplain = shortcutAccentText("!")
             + Text(" counts: ")
-            + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + shortcutAccentText("!")
             + Text(" = P1 … ")
-            + Text("!!!!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
-            + Text(" = P4."))
+            + shortcutAccentText("!!!!")
+            + Text(" = P4.")
+        let subtitle = keysIntro + bangExplain
+
+        return subtitle
             .font(.subheadline)
             .foregroundStyle(SharedAppTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
@@ -413,17 +424,24 @@ public struct ActionItemQuickEntryView: View {
 
     /// Helper line above the notes field — same key highlights as the header subtitle.
     private var macProminentShortcutHelper: some View {
-        (Text("Separate words: ")
-            + Text("p0–p4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+        let priorityKeys = shortcutAccentText("p0–p4")
+        let urgencyKeys = shortcutAccentText("u0–u4")
+        let contextKey = shortcutAccentText("@")
+        let projectKey = shortcutAccentText("#")
+        let bangKey = shortcutAccentText("!")
+        let shortcutKeys = priorityKeys
             + Text(" · ")
-            + Text("u0–u4").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + urgencyKeys
             + Text(" · ")
-            + Text("@").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + contextKey
             + Text(" · ")
-            + Text("#").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
+            + projectKey
             + Text(" · ")
-            + Text("!").foregroundStyle(SharedAppTheme.accent).fontWeight(.semibold)
-            + Text("→P1…P4"))
+            + bangKey
+            + Text("→P1…P4")
+        let helperLine = Text("Separate words: ") + shortcutKeys
+
+        return helperLine
             .font(.subheadline)
             .foregroundStyle(SharedAppTheme.secondaryText.opacity(0.95))
             .lineLimit(3)
