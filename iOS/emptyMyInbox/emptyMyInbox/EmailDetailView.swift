@@ -202,11 +202,7 @@ struct EmailDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .customBackButton()
         .primaryBackground()
-        .sheet(isPresented: $showUnsubscribeWebView) {
-            if let url = unsubscribeManualURL {
-                UnsubscribeWebView(url: url)
-            }
-        }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
         .sheet(item: $replyPresentation) { presentation in
             EmailReplyComposerView(
                 email: presentation.email,
@@ -401,75 +397,46 @@ struct EmailDetailView: View {
         isProcessing = true
         defer { isProcessing = false }
         
-        // Get unsubscribe info
-        let unsubscribeService = UnsubscribeService.shared
-        if let method = await unsubscribeService.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            let result = await unsubscribeService.executeUnsubscribe(
-                method: method,
-                userEmail: email.account_email
-            )
-            
-            // Log detailed information
-            let logMessage = """
-            Unsubscribe Result:
-            - Success: \(result.success)
-            - Method: \(result.verificationInfo)
-            - Details: \(result.details ?? "N/A")
-            """
-            
-            if result.success {
-                logInfo("✅ Successfully unsubscribed\n\(logMessage)", category: "Unsubscribe")
-                
-                // If manual action is required, open web view immediately
-                if result.requiresManualAction, let url = result.manualActionURL {
-                    await MainActor.run {
-                        unsubscribeManualURL = url
-                        showUnsubscribeWebView = true
-                    }
-                } else {
-                    // Show success toast with verification info
-                    await MainActor.run {
-                        unsubscribeToastMessage = result.verificationInfo
-                        unsubscribeToastIsSuccess = true
-                        unsubscribeManualURL = result.manualActionURL
-                        showUnsubscribeToast = true
-                    }
-                    
-                    // Hide toast after 4 seconds
-                    try? await Task.sleep(nanoseconds: 4_000_000_000)
-                    await MainActor.run {
-                        withAnimation {
-                            showUnsubscribeToast = false
-                        }
-                    }
-                }
-            } else {
-                logError("❌ Failed to unsubscribe\n\(logMessage)", category: "Unsubscribe")
-                
-                // If manual action URL is available, open it immediately
-                if let url = result.manualActionURL {
-                    await MainActor.run {
-                        unsubscribeManualURL = url
-                        showUnsubscribeWebView = true
-                    }
-                } else {
-                    // Show error toast
-                    await MainActor.run {
-                        unsubscribeToastMessage = result.verificationInfo
-                        unsubscribeToastIsSuccess = false
-                        showUnsubscribeToast = true
-                    }
-                    
-                    // Hide toast after 3 seconds
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    await MainActor.run {
-                        withAnimation {
-                            showUnsubscribeToast = false
-                        }
-                    }
+        switch await EmailReadingActionSupport.executeUnsubscribe(for: email) {
+        case .manualActionRequired(let url):
+            logInfo("✅ Unsubscribe requires manual confirmation", category: "Unsubscribe")
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
+            }
+
+        case .oneClickSuccess(let verificationInfo):
+            logInfo("✅ Successfully unsubscribed: \(verificationInfo)", category: "Unsubscribe")
+            await MainActor.run {
+                unsubscribeToastMessage = verificationInfo
+                unsubscribeToastIsSuccess = true
+                unsubscribeManualURL = nil
+                showUnsubscribeToast = true
+            }
+
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run {
+                withAnimation {
+                    showUnsubscribeToast = false
                 }
             }
-        } else {
+
+        case .failed(let verificationInfo):
+            logError("❌ Failed to unsubscribe: \(verificationInfo)", category: "Unsubscribe")
+            await MainActor.run {
+                unsubscribeToastMessage = verificationInfo
+                unsubscribeToastIsSuccess = false
+                showUnsubscribeToast = true
+            }
+
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run {
+                withAnimation {
+                    showUnsubscribeToast = false
+                }
+            }
+
+        case .noMethodAvailable:
             logWarning("⚠️ No unsubscribe method found for this email", category: "Unsubscribe")
         }
     }

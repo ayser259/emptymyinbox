@@ -102,6 +102,13 @@ public struct EmailReadingActionHandlers {
 
 // MARK: - Unsubscribe probe
 
+public enum UnsubscribeExecutionOutcome: Sendable {
+    case manualActionRequired(url: URL)
+    case oneClickSuccess(verificationInfo: String)
+    case failed(verificationInfo: String)
+    case noMethodAvailable
+}
+
 public enum EmailReadingActionSupport {
     public static func hasUnsubscribeOption(for email: EmailDetail?) async -> Bool {
         guard let email else { return false }
@@ -109,6 +116,53 @@ public enum EmailReadingActionSupport {
             for: email,
             accountEmail: email.account_email
         ) != nil
+    }
+
+    public static func executeUnsubscribe(for email: EmailDetail) async -> UnsubscribeExecutionOutcome {
+        guard let method = await UnsubscribeService.shared.getUnsubscribeInfo(
+            for: email,
+            accountEmail: email.account_email
+        ) else {
+            return .noMethodAvailable
+        }
+
+        return outcome(
+            from: await UnsubscribeService.shared.executeUnsubscribe(
+                method: method,
+                userEmail: email.account_email
+            )
+        )
+    }
+
+    public static func executeUnsubscribe(
+        senderEmail: String,
+        accountEmail: String
+    ) async -> UnsubscribeExecutionOutcome {
+        guard let method = await UnsubscribeService.shared.getUnsubscribeInfoForSender(
+            senderEmail: senderEmail,
+            accountEmail: accountEmail
+        ) else {
+            return .noMethodAvailable
+        }
+
+        return outcome(
+            from: await UnsubscribeService.shared.executeUnsubscribe(
+                method: method,
+                userEmail: accountEmail
+            )
+        )
+    }
+
+    private static func outcome(from result: UnsubscribeResult) -> UnsubscribeExecutionOutcome {
+        if result.requiresManualAction, let url = result.manualActionURL {
+            return .manualActionRequired(url: url)
+        }
+
+        if result.success {
+            return .oneClickSuccess(verificationInfo: result.verificationInfo)
+        }
+
+        return .failed(verificationInfo: result.verificationInfo)
     }
 }
 

@@ -718,6 +718,7 @@ public struct ReplyCatchUpOutcomeSheet: View {
                     icon: "envelope.open.fill",
                     shortcutDisplay: "J",
                     shortcutKey: KeyEquivalent("j"),
+                    style: .prominent,
                     outcome: .markReadAndAdvance
                 )
                 outcomeButton(
@@ -725,6 +726,7 @@ public struct ReplyCatchUpOutcomeSheet: View {
                     icon: "envelope.badge",
                     shortcutDisplay: "F",
                     shortcutKey: KeyEquivalent("f"),
+                    style: .secondary,
                     outcome: .keepUnreadAndAdvance
                 )
                 outcomeButton(
@@ -732,6 +734,7 @@ public struct ReplyCatchUpOutcomeSheet: View {
                     icon: "arrow.uturn.backward",
                     shortcutDisplay: "Esc",
                     shortcutKey: .escape,
+                    style: .secondary,
                     outcome: .stay
                 )
             }
@@ -745,33 +748,22 @@ public struct ReplyCatchUpOutcomeSheet: View {
         icon: String,
         shortcutDisplay: String,
         shortcutKey: KeyEquivalent,
+        style: EmailReadingTriageButtonStyle,
         outcome: CatchUpReplyOutcome
     ) -> some View {
-        Button {
-            onSelect(outcome)
-        } label: {
-            HStack(spacing: 10) {
-                Label(title, systemImage: icon)
-                    .font(.body.weight(.semibold))
-                Spacer(minLength: 8)
-                #if os(macOS)
-                ReplyComposerKeycapBadge(
-                    shortcutDisplay: shortcutDisplay,
-                    prominent: outcome == .markReadAndAdvance
-                )
-                #else
-                Text(shortcutDisplay)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(SharedAppTheme.secondaryText)
-                #endif
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(outcome == .markReadAndAdvance ? SharedAppTheme.accent : SharedAppTheme.secondaryBackground)
-        .keyboardShortcut(shortcutKey, modifiers: [])
+        EmailReadingTriageButton(
+            title: title,
+            systemImage: icon,
+            shortcutDisplay: shortcutDisplay,
+            shortcutKey: shortcutKey,
+            shortcutModifiers: [],
+            style: style,
+            isDisabled: false,
+            action: { onSelect(outcome) }
+        )
+        #if os(macOS)
+        .help("\(title)  [\(shortcutDisplay)]")
+        #endif
     }
 }
 

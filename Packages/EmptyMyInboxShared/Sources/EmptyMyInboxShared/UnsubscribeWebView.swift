@@ -15,6 +15,7 @@ import AppKit
 public struct UnsubscribeWebView: View {
     public let url: URL
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var doneButtonFocused: Bool
     @State private var isLoading = true
     @State private var canGoBack = false
     @State private var canGoForward = false
@@ -61,30 +62,51 @@ public struct UnsubscribeWebView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .navigationBarLeading) {
-                    closeButton
+                    doneButton
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     navButtons
                 }
                 #else
                 ToolbarItem(placement: .cancellationAction) {
-                    closeButton
+                    doneButton
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
                     navButtons
                 }
                 #endif
             }
+            .onAppear {
+                doneButtonFocused = true
+            }
         }
+        #if os(macOS)
+        .frame(minWidth: 720, idealWidth: 900, minHeight: 560, idealHeight: 680)
+        #else
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        #endif
     }
 
-    private var closeButton: some View {
+    private var doneButton: some View {
         Button {
             dismiss()
         } label: {
-            Text("Close")
-                .foregroundColor(SharedAppTheme.accent)
+            HStack(spacing: 6) {
+                Text("Done")
+                    .font(.system(size: 13, weight: .semibold))
+                UnsubscribeDoneKeycapBadge()
+            }
+            .foregroundStyle(.black)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(SharedAppTheme.accent)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.defaultAction)
+        .keyboardShortcut(.return, modifiers: [])
+        .focused($doneButtonFocused)
     }
 
     private var navButtons: some View {
@@ -104,6 +126,39 @@ public struct UnsubscribeWebView: View {
                     .foregroundColor(canGoForward ? SharedAppTheme.accent : SharedAppTheme.secondaryText)
             }
             .disabled(!canGoForward)
+        }
+    }
+}
+
+private struct UnsubscribeDoneKeycapBadge: View {
+    var body: some View {
+        Text("↵")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(Color.black.opacity(0.65))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.black.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.18), lineWidth: 0.5)
+            )
+    }
+}
+
+// MARK: - Sheet presentation
+
+extension View {
+    public func unsubscribeManualActionSheet(
+        isPresented: Binding<Bool>,
+        url: Binding<URL?>
+    ) -> some View {
+        sheet(isPresented: isPresented) {
+            if let url = url.wrappedValue {
+                UnsubscribeWebView(url: url)
+            }
         }
     }
 }

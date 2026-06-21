@@ -160,27 +160,24 @@ struct MacCatchUpFeedView: View {
             keyboardMonitor.remove()
             sidebarShortcutsStore.removeLayers(withPrefix: "catchup.")
         }
-        .onChange(of: loader.isLoadingMetadata) { _, _ in syncSidebarContextualShortcuts() }
-        .onChange(of: loader.hasMoreEmails) { _, _ in syncSidebarContextualShortcuts() }
-        .onChange(of: hasUnsubscribeAvailable) { _, _ in syncSidebarContextualShortcuts() }
+        .onChange(of: loader.isLoadingMetadata) { _, _ in scheduleSidebarContextualShortcutsSync() }
+        .onChange(of: loader.hasMoreEmails) { _, _ in scheduleSidebarContextualShortcutsSync() }
+        .onChange(of: hasUnsubscribeAvailable) { _, _ in scheduleSidebarContextualShortcutsSync() }
         .onChange(of: loader.currentEmail?.id) { _, _ in
-            scrollSignal = 0
-            scrollStepAmount = 0
-            syncSidebarContextualShortcuts()
-            syncKeyboardMonitor()
+            DispatchQueue.main.async {
+                scrollSignal = 0
+                scrollStepAmount = 0
+                syncSidebarContextualShortcuts()
+                syncKeyboardMonitor()
+            }
         }
-        .onChange(of: replyPresentation?.id) { _, _ in
-            syncSidebarContextualShortcuts()
-            syncKeyboardMonitor()
-        }
-        .onChange(of: isAnimating) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: loader.hasMoreEmails) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: hasUnsubscribeAvailable) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: isProcessing) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: loader.isCurrentLoaded) { _, _ in syncKeyboardMonitor() }
-        .sheet(isPresented: $showUnsubscribeWebView) {
-            if let url = unsubscribeManualURL { UnsubscribeWebView(url: url) }
-        }
+        .onChange(of: replyPresentation?.id) { _, _ in scheduleCatchUpKeyboardSync() }
+        .onChange(of: isAnimating) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: loader.hasMoreEmails) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: hasUnsubscribeAvailable) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: isProcessing) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: loader.isCurrentLoaded) { _, _ in scheduleKeyboardMonitorSync() }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
     }
 
     // MARK: - Account group bar
@@ -478,6 +475,21 @@ struct MacCatchUpFeedView: View {
 
     // MARK: - Action handlers
 
+    private func scheduleKeyboardMonitorSync() {
+        DispatchQueue.main.async { syncKeyboardMonitor() }
+    }
+
+    private func scheduleSidebarContextualShortcutsSync() {
+        DispatchQueue.main.async { syncSidebarContextualShortcuts() }
+    }
+
+    private func scheduleCatchUpKeyboardSync() {
+        DispatchQueue.main.async {
+            syncSidebarContextualShortcuts()
+            syncKeyboardMonitor()
+        }
+    }
+
     private func syncKeyboardMonitor() {
         keyboardMonitor.isReplyComposerOpen = replyPresentation != nil
         keyboardMonitor.isButtonsDisabled = isButtonsDisabled
@@ -693,24 +705,21 @@ struct MacCatchUpFeedView: View {
         isProcessing = true
         isAnimating = true
 
-        if let method = await UnsubscribeService.shared.getUnsubscribeInfo(for: email, accountEmail: email.account_email) {
-            let result = await UnsubscribeService.shared.executeUnsubscribe(method: method, userEmail: email.account_email)
-            if result.success {
-                sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
-                if result.requiresManualAction, let url = result.manualActionURL {
-                    await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
-                } else {
-                    let threadCardId = loader.currentThread?.id ?? email.id
-                    await performDismissalAnimation(cardId: threadCardId, direction: .right)
-                    loader.removeCurrentThread()
-                    sessionStats.reviewed += 1
-                    sessionStats.successfulUnsubscribes += 1
-                    recordSenderForReviewedEmail(email)
-                    resetAnimationState()
-                }
-            } else if let url = result.manualActionURL {
-                await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
-            }
+        switch await EmailReadingActionSupport.executeUnsubscribe(for: email) {
+        case .manualActionRequired(let url):
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+            await MainActor.run { unsubscribeManualURL = url; showUnsubscribeWebView = true }
+        case .oneClickSuccess:
+            sessionStats.potentialUnsubscribeSenders.insert(email.sender.lowercased())
+            let threadCardId = loader.currentThread?.id ?? email.id
+            await performDismissalAnimation(cardId: threadCardId, direction: .right)
+            loader.removeCurrentThread()
+            sessionStats.reviewed += 1
+            sessionStats.successfulUnsubscribes += 1
+            recordSenderForReviewedEmail(email)
+            resetAnimationState()
+        case .failed, .noMethodAvailable:
+            break
         }
 
         isProcessing = false

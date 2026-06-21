@@ -27,16 +27,16 @@ struct EmailReplyComposerMacView: View {
             keyboardMonitor.installIfNeeded()
         }
         .onDisappear { keyboardMonitor.remove() }
-        .onChange(of: model.isQuickReplyAvailable) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.isQuickReplyVisible) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.quickReplyAsk) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.quickReplyDraft) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.isGeneratingQuickReply) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.showCatchUpOutcomePrompt) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.isBootstrapping) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.isSending) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.canSend) { _, _ in syncKeyboardMonitor() }
-        .onChange(of: model.canSaveDraft) { _, _ in syncKeyboardMonitor() }
+        .onChange(of: model.isQuickReplyAvailable) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.isQuickReplyVisible) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.quickReplyAsk) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.quickReplyDraft) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.isGeneratingQuickReply) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.showCatchUpOutcomePrompt) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.isBootstrapping) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.isSending) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.canSend) { _, _ in scheduleKeyboardMonitorSync() }
+        .onChange(of: model.canSaveDraft) { _, _ in scheduleKeyboardMonitorSync() }
         .onChange(of: model.requestDismiss) { _, shouldDismiss in
             if shouldDismiss { closeComposer() }
         }
@@ -88,6 +88,10 @@ struct EmailReplyComposerMacView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(SharedAppTheme.secondaryBackground.opacity(0.6))
+    }
+
+    private func scheduleKeyboardMonitorSync() {
+        DispatchQueue.main.async { syncKeyboardMonitor() }
     }
 
     private func syncKeyboardMonitor() {

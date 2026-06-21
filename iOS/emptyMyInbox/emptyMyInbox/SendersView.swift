@@ -16,6 +16,8 @@ struct SendersView: View {
     @State private var unsubscribingSenders: Set<String> = []
     @State private var sendersWithUnsubscribe: Set<String> = []  // Track which senders have unsubscribe available
     @State private var cachedSenders: [RichSenderInfo] = []  // Cached sender data
+    @State private var showUnsubscribeWebView = false
+    @State private var unsubscribeManualURL: URL?
     
     var body: some View {
         ZStack {
@@ -118,6 +120,7 @@ struct SendersView: View {
             await refreshFromServer()
             await checkUnsubscribeAvailability()
         }
+        .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
     }
     
     // MARK: - Computed Properties
@@ -325,24 +328,22 @@ struct SendersView: View {
         
         // Get account email (use first email's account)
         let accountEmail = allEmails.first(where: { $0.sender == sender.email })?.account_email ?? ""
-        
-        // Get unsubscribe info for this sender
-        let unsubscribeService = UnsubscribeService.shared
-        if let method = await unsubscribeService.getUnsubscribeInfoForSender(
+
+        switch await EmailReadingActionSupport.executeUnsubscribe(
             senderEmail: sender.email,
             accountEmail: accountEmail
         ) {
-            let result = await unsubscribeService.executeUnsubscribe(
-                method: method,
-                userEmail: accountEmail
-            )
-            
-            if result.success {
-                logInfo("Successfully unsubscribed from \(sender.email)", category: "Unsubscribe")
-            } else {
-                logError("Failed to unsubscribe from \(sender.email): \(result.message)", category: "Unsubscribe")
+        case .manualActionRequired(let url):
+            logInfo("Unsubscribe requires manual confirmation for \(sender.email)", category: "Unsubscribe")
+            await MainActor.run {
+                unsubscribeManualURL = url
+                showUnsubscribeWebView = true
             }
-        } else {
+        case .oneClickSuccess:
+            logInfo("Successfully unsubscribed from \(sender.email)", category: "Unsubscribe")
+        case .failed(let verificationInfo):
+            logError("Failed to unsubscribe from \(sender.email): \(verificationInfo)", category: "Unsubscribe")
+        case .noMethodAvailable:
             logWarning("No unsubscribe method found for \(sender.email)", category: "Unsubscribe")
         }
         

@@ -204,6 +204,8 @@ public class GmailAPIService {
     /// Serializes Keychain access and co-located persistence (`SecItem*` is not safe for concurrent mutation).
     private let persistenceLock = NSLock()
     private let oauthRefreshCoordinator = OAuthRefreshCoordinator()
+    /// Set when in-memory account fields changed but keychain write was deferred.
+    private var accountsPersistencePending = false
     
     // URLSession with timeout configuration to prevent hanging requests
     internal lazy var urlSession: URLSession = {
@@ -420,27 +422,52 @@ public class GmailAPIService {
     
     /// Get valid access token, refreshing if necessary (internal for use by extensions)
     public func getValidAccessToken(for account: GmailAccount) async throws -> String {
-        if let expiry = account.tokenExpiry, expiry > Date() {
-            return account.accessToken
+        let accountId = account.id
+        let (liveAccount, isValid): (GmailAccount?, Bool) = {
+            persistenceLock.lock()
+            defer { persistenceLock.unlock() }
+            guard let live = accounts.first(where: { $0.id == accountId }) else {
+                return (nil, false)
+            }
+            if let expiry = live.tokenExpiry, expiry > Date() {
+                return (live, true)
+            }
+            return (live, false)
+        }()
+
+        guard let liveAccount else {
+            throw GmailAPIError.notAuthenticated
         }
-        guard let refreshToken = account.refreshToken else {
+        if isValid {
+            return liveAccount.accessToken
+        }
+
+        guard let refreshToken = liveAccount.refreshToken else {
             throw GmailAPIError.tokenExpired
         }
-        let accountId = account.id
+
         return try await oauthRefreshCoordinator.run(accountId: accountId) { [self] in
             let newAccessToken = try await refreshAccessToken(
                 refreshToken: refreshToken,
                 clientID: getGoogleClientID(),
                 clientSecret: getGoogleClientSecret()
             )
+            let newExpiry = Date().addingTimeInterval(3600)
             persistenceLock.lock()
             defer { persistenceLock.unlock() }
-            if let index = accounts.firstIndex(where: { $0.id == accountId }) {
-                var updatedAccount = accounts[index]
-                updatedAccount.accessToken = newAccessToken
-                updatedAccount.tokenExpiry = Date().addingTimeInterval(3600)
-                accounts[index] = updatedAccount
+            guard let index = accounts.firstIndex(where: { $0.id == accountId }) else {
+                throw GmailAPIError.notAuthenticated
             }
+            let previous = accounts[index]
+            if previous.accessToken == newAccessToken,
+               let expiry = previous.tokenExpiry,
+               expiry > Date() {
+                return newAccessToken
+            }
+            var updatedAccount = previous
+            updatedAccount.accessToken = newAccessToken
+            updatedAccount.tokenExpiry = newExpiry
+            accounts[index] = updatedAccount
             saveAccountsWhileLocked()
             return newAccessToken
         }
@@ -462,7 +489,18 @@ public class GmailAPIService {
             _ = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
             logSuccess("Google Sign-In: restored previous session", category: "Auth")
         } catch {
-            logWarning("Google Sign-In: restorePreviousSignIn — \(error.localizedDescription)", category: "Auth")
+            let message = error.localizedDescription
+            let hasPersistedTokens = accounts.contains { !$0.accessToken.isEmpty }
+            if hasPersistedTokens,
+               message.localizedCaseInsensitiveContains("invalid_grant")
+                || message.localizedCaseInsensitiveContains("bad request") {
+                logDebug(
+                    "Google Sign-In SDK session unavailable; using persisted keychain tokens (\(message))",
+                    category: "Auth"
+                )
+            } else {
+                logWarning("Google Sign-In: restorePreviousSignIn — \(message)", category: "Auth")
+            }
         }
     }
 
@@ -929,6 +967,21 @@ public class GmailAPIService {
     private func saveAccounts() {
         persistenceLock.lock()
         defer { persistenceLock.unlock() }
+        accountsPersistencePending = false
+        saveAccountsWhileLocked()
+    }
+
+    private func markAccountsPersistencePending() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
+        accountsPersistencePending = true
+    }
+
+    private func persistAccountsIfNeeded() {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
+        guard accountsPersistencePending else { return }
+        accountsPersistencePending = false
         saveAccountsWhileLocked()
     }
 
@@ -1236,8 +1289,9 @@ public class GmailAPIService {
             updatedAccount.unreadEmailsNextPageToken = nextPageToken
             updatedAccount.lastSync = Date()
             accounts[index] = updatedAccount
-            saveAccounts()
+            markAccountsPersistencePending()
         }
+        persistAccountsIfNeeded()
         
         return (emailItems, nextPageToken)
     }
@@ -1259,6 +1313,7 @@ public class GmailAPIService {
         guard !messageRefs.isEmpty else {
             // Still update lastSync even if no emails
             updateAccountLastSync(email: account.email)
+            persistAccountsIfNeeded()
             return []
         }
         
@@ -1300,6 +1355,7 @@ public class GmailAPIService {
         
         // Update lastSync timestamp
         updateAccountLastSync(email: account.email)
+        persistAccountsIfNeeded()
         
         return allMetadata
     }
@@ -1316,6 +1372,7 @@ public class GmailAPIService {
 
         guard !messageRefs.isEmpty else {
             updateAccountLastSync(email: account.email)
+            persistAccountsIfNeeded()
             return []
         }
 
@@ -1353,6 +1410,7 @@ public class GmailAPIService {
         allMetadata.sort { $0.received_at > $1.received_at }
 
         updateAccountLastSync(email: account.email)
+        persistAccountsIfNeeded()
 
         return allMetadata
     }
@@ -1456,13 +1514,15 @@ public class GmailAPIService {
         return allMetadata
     }
     
-    /// Update the lastSync timestamp for an account
+    /// Update the lastSync timestamp for an account (deferred keychain write).
     private func updateAccountLastSync(email: String) {
+        persistenceLock.lock()
+        defer { persistenceLock.unlock() }
         if let index = accounts.firstIndex(where: { $0.email == email }) {
             var updatedAccount = accounts[index]
             updatedAccount.lastSync = Date()
             accounts[index] = updatedAccount
-            saveAccounts()
+            accountsPersistencePending = true
         }
     }
     
@@ -1682,8 +1742,9 @@ public class GmailAPIService {
             var updatedAccount = accounts[index]
             updatedAccount.lastSync = Date()
             accounts[index] = updatedAccount
-            saveAccounts()
+            markAccountsPersistencePending()
         }
+        persistAccountsIfNeeded()
         
         return emailItems
     }
