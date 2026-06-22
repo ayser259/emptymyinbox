@@ -10,6 +10,7 @@ import EmptyMyInboxShared
 
 struct MacUnifiedDashboardView: View {
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @ObservedObject var calendarModel: GoogleCalendarViewModel
     let snapshot: DashboardDataSnapshot?
     let actionItems: [VaultActionItemRecord]
@@ -61,6 +62,7 @@ struct MacUnifiedDashboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
+        .tint(appearanceSettings.resolvedPalette.accent)
         .navigationTitle("Dashboard")
         .task {
             await loadWidgetData()

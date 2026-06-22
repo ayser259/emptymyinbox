@@ -158,6 +158,10 @@ enum EmailHTMLRenderer {
         return nil
     }
 
+    private static var darkCardBackgroundHex: String {
+        ThemePaletteBridge.current.cardBackgroundHex
+    }
+
     static func getCommonStyles(isDarkMode: Bool) -> String {
         // Use box-sizing universally but avoid blanket max-width/overflow-x overrides that clip
         // embedded images and break table-based email layouts.
@@ -166,7 +170,7 @@ enum EmailHTMLRenderer {
             "html, body { width: 100%; margin: 0 !important; padding: 0 !important; }" +
             "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; " +
             "font-size: 15px; line-height: 1.6; " +
-            "color: \(isDarkMode ? "#ffffff" : "#000000"); background-color: \(isDarkMode ? "#252525" : "#ffffff"); " +
+            "color: \(isDarkMode ? "#ffffff" : "#000000"); background-color: \(isDarkMode ? darkCardBackgroundHex : "#ffffff"); " +
             "-webkit-text-size-adjust: 100%; word-wrap: break-word; overflow-wrap: break-word; overflow-x: hidden; }" +
             "#email-container { width: 100%; margin: 0 auto; padding: 0; overflow-x: hidden; }" +
             // Images: constrain to container width, preserve aspect ratio, never clip

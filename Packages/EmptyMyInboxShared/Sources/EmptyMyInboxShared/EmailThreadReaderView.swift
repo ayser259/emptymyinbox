@@ -146,7 +146,7 @@ public struct EmailThreadReaderView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(hex: "#252525"))
+        .background(SharedAppTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusMedium, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusMedium, style: .continuous)
@@ -214,7 +214,7 @@ public struct EmailThreadReaderView: View {
             }
             .padding(.horizontal, SharedAppTheme.spacingMedium)
             .padding(.vertical, 12)
-            .background(Color(hex: "#1e1e1e"))
+            .background(SharedAppTheme.elevatedSurface)
         }
         .buttonStyle(.plain)
     }
@@ -250,7 +250,7 @@ public struct EmailThreadReaderView: View {
                 .multilineTextAlignment(.leading)
         }
         .padding(SharedAppTheme.spacingMedium)
-        .background(Color(hex: "#252525"))
+        .background(SharedAppTheme.cardBackground)
     }
 
     private func formatCompactDate(_ dateString: String) -> String {
@@ -433,7 +433,7 @@ public struct EmailThreadDetailScreen: View {
             }
         }
         .padding(SharedAppTheme.spacingMedium)
-        .background(Color(hex: "#252525"))
+        .background(SharedAppTheme.cardBackground)
     }
 
     private var conversationBinding: Binding<EmailThreadConversation> {

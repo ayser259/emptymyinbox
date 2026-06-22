@@ -74,6 +74,7 @@ private enum MailSidebarSelection: Hashable {
 struct MacMailTabView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var sidebarShortcutsStore: MacSidebarShortcutsStore
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @Binding var snapshot: DashboardDataSnapshot?
     @Binding var isRefreshing: Bool
     @Binding var refreshMessage: String?
@@ -124,7 +125,7 @@ struct MacMailTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .tint(MacAppTheme.accent)
+        .tint(appearanceSettings.resolvedPalette.accent)
         .background(MacAppTheme.primaryBackground)
         .onChange(of: selection) { _, _ in
             navigationPath = NavigationPath()
@@ -341,6 +342,7 @@ struct MacMailTabView: View {
 // MARK: - Mailbox list (middle column)
 
 private struct MacMailboxListColumn: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     let scope: MailMailboxScope
     let snapshot: DashboardDataSnapshot?
     @Binding var selectedThreadId: Int?
@@ -398,8 +400,17 @@ private struct MacMailboxListColumn: View {
                     ForEach(threadRows) { thread in
                         MailboxThreadEmailRow(thread: thread, showsAccountEmail: showsAccountOnRows)
                             .tag(Optional(thread.id))
+                            .listRowBackground(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(
+                                        selectedThreadId == thread.id
+                                            ? appearanceSettings.resolvedPalette.selectionHighlight
+                                            : Color.clear
+                                    )
+                            )
                     }
                 }
+                .tint(appearanceSettings.resolvedPalette.accent)
                 .scrollContentBackground(.hidden)
             }
         }

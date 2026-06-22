@@ -11,6 +11,7 @@ import EmptyMyInboxShared
 struct iPadMailTabView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var rootState: AdaptiveRootState
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
 
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
@@ -39,7 +40,7 @@ struct iPadMailTabView: View {
                     .background(AppTheme.secondaryBackground)
 
                     Divider()
-                        .background(AppTheme.accent.opacity(0.25))
+                        .background(appearanceSettings.resolvedPalette.accent.opacity(0.25))
                 }
 
                 NavigationStack(path: $rootState.mailNavigationPath) {
@@ -52,7 +53,7 @@ struct iPadMailTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .tint(AppTheme.accent)
+        .tint(appearanceSettings.resolvedPalette.accent)
         .background(AppTheme.primaryBackground)
         .task {
             await loadSnapshot()
@@ -297,6 +298,7 @@ struct iPadMailTabView: View {
 // MARK: - Mailbox list column
 
 private struct iPadMailboxListColumn: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     let scope: MailboxScope
     let snapshot: DashboardDataSnapshot?
     @Binding var selectedThreadId: Int?
@@ -346,8 +348,17 @@ private struct iPadMailboxListColumn: View {
                     ForEach(threadRows) { thread in
                         MailboxThreadEmailRow(thread: thread, showsAccountEmail: showsAccountOnRows)
                             .tag(Optional(thread.id))
+                            .listRowBackground(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(
+                                        selectedThreadId == thread.id
+                                            ? appearanceSettings.resolvedPalette.selectionHighlight
+                                            : Color.clear
+                                    )
+                            )
                     }
                 }
+                .tint(appearanceSettings.resolvedPalette.accent)
                 .scrollContentBackground(.hidden)
             }
         }
@@ -375,6 +386,7 @@ private struct iPadMailboxListColumn: View {
 // MARK: - Sidebar row
 
 private struct iPadSidebarRow: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     let title: String
     let systemImage: String
     var badge: Int? = nil
@@ -394,7 +406,7 @@ private struct iPadSidebarRow: View {
                         .foregroundStyle(AppTheme.primaryBackground)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(AppTheme.accent))
+                        .background(Capsule().fill(appearanceSettings.resolvedPalette.accent))
                 }
             }
             .contentShape(Rectangle())
@@ -402,7 +414,7 @@ private struct iPadSidebarRow: View {
         .buttonStyle(.plain)
         .listRowBackground(
             isSelected
-                ? AppTheme.secondaryBackground
+                ? appearanceSettings.resolvedPalette.selectionHighlight
                 : Color.clear
         )
     }

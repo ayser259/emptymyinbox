@@ -41,6 +41,7 @@ struct ContentView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @StateObject private var calendarModel = GoogleCalendarViewModel()
     @State private var rootTab: MacRootTab = .mail
     @State private var snapshot: DashboardDataSnapshot?
@@ -91,7 +92,7 @@ struct ContentView: View {
                 isAddingAccount: $isAddingGmailAccount,
                 onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
                 onDismiss: { showAppSettings = false },
-                accentColor: MacAppTheme.accent
+                accentColor: appearanceSettings.resolvedPalette.accent
             )
             .environmentObject(authManager)
             .frame(minWidth: 760, minHeight: 560)
@@ -160,6 +161,7 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacAppTheme.primaryBackground)
+        .tint(appearanceSettings.resolvedPalette.accent)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 MacRootTabBar(selection: $rootTab)
@@ -345,12 +347,13 @@ struct ContentView: View {
 
 private struct MacLoginView: View {
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 24) {
-            LogoView(size: 88)
-            Text("Empty My Inbox")
+            BrandedLogoView(size: 88)
+            Text(appearanceSettings.resolvedDisplayName)
                 .font(.largeTitle.weight(.semibold))
                 .foregroundStyle(MacAppTheme.primaryText)
             Text("Sign in with Google to load your Gmail accounts and dashboard.")
@@ -406,11 +409,13 @@ private struct MacLoginView: View {
 // MARK: - Splash
 
 private struct MacSplashView: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
+
     var body: some View {
         VStack(spacing: 16) {
-            LogoView(size: 64)
+            BrandedLogoView(size: 64)
             ProgressView()
-                .tint(MacAppTheme.accent)
+                .tint(appearanceSettings.resolvedPalette.accent)
             Text("Loading…")
                 .foregroundStyle(MacAppTheme.secondaryText)
         }

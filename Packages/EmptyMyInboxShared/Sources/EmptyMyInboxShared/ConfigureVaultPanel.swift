@@ -271,13 +271,13 @@ public struct ConfigureVaultPanel: View {
         }
         await setBusy {
             try await GmailAPIService.shared.requestGoogleDriveFileScope(presentingViewController: vc)
-            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: "Empty My Inbox Vault", accountEmail: nil)
+            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: AppearanceSettingsStore.shared.resolvedVaultDisplayName, accountEmail: nil)
             refreshDiscoveredVaults()
         }
         #elseif os(macOS)
         await setBusy {
             try await GmailAPIService.shared.requestGoogleDriveFileScope(presentingWindow: NSApp.keyWindow)
-            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: "Empty My Inbox Vault", accountEmail: nil)
+            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: AppearanceSettingsStore.shared.resolvedVaultDisplayName, accountEmail: nil)
             refreshDiscoveredVaults()
         }
         #endif

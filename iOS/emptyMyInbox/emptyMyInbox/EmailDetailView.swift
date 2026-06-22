@@ -120,7 +120,7 @@ struct EmailDetailView: View {
                                     }
                                 }
                                 .padding(AppTheme.spacingMedium)
-                                .background(Color(hex: "#252525"))
+                                .background(SharedAppTheme.cardBackground)
                                 
                                 // Email body section
                                 VStack(alignment: .leading, spacing: 0) {
@@ -150,7 +150,7 @@ struct EmailDetailView: View {
                                             .padding(AppTheme.spacingMedium)
                                     }
                                 }
-                                .background(Color(hex: "#252525"))
+                                .background(SharedAppTheme.cardBackground)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

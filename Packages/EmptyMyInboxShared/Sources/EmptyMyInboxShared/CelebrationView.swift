@@ -142,7 +142,7 @@ public struct CelebrationView: View {
                 Spacer()
 
                 VStack(spacing: SharedAppTheme.spacingLarge) {
-                    LogoView(size: 80)
+                    BrandedLogoView(size: 80)
                         .scaleEffect(emojiScale)
                         .opacity(showContent ? 1 : 0)
 
@@ -178,7 +178,7 @@ public struct CelebrationView: View {
                     RoundedRectangle(cornerRadius: 32)
                         .fill(
                             LinearGradient(
-                                colors: [Color(hex: "#0a0a0a"), Color(hex: "#1a1a1a"), Color.black],
+                                colors: [SharedAppTheme.secondaryBackground, SharedAppTheme.elevatedSurface, SharedAppTheme.primaryBackground],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )

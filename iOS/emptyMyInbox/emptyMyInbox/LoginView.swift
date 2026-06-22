@@ -11,14 +11,14 @@ import EmptyMyInboxShared
 
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @State private var errorMessage = ""
     
     var body: some View {
         VStack(spacing: AppTheme.spacingLarge) {
-            // Logo
-            LogoView(size: 80)
+            BrandedLogoView(size: 80)
             
-            Text("Welcome to Empty My Inbox")
+            Text("Welcome to \(appearanceSettings.resolvedDisplayName)")
                 .font(AppTheme.title)
                 .primaryText()
             

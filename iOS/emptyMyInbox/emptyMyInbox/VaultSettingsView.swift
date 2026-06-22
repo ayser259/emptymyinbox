@@ -355,7 +355,7 @@ struct VaultSettingsView: View {
         }
         await setBusy {
             try await GmailAPIService.shared.requestGoogleDriveFileScope(presentingViewController: vc)
-            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: "Empty My Inbox Vault", accountEmail: nil)
+            try await vaultManager.createGoogleDriveVaultAfterScopeGranted(displayName: AppearanceSettingsStore.shared.resolvedVaultDisplayName, accountEmail: nil)
             refreshDiscoveredVaults()
         }
     }

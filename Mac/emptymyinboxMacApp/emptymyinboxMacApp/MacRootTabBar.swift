@@ -4,9 +4,11 @@
 //
 
 import SwiftUI
+import EmptyMyInboxShared
 
 /// Primary window tabs with inline ⌘1–⌘3 keycaps (replaces toolbar segmented picker).
 struct MacRootTabBar: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
     @Binding var selection: MacRootTab
 
     var body: some View {
@@ -14,7 +16,8 @@ struct MacRootTabBar: View {
             ForEach(MacRootTab.allCases) { tab in
                 MacRootTabSegment(
                     tab: tab,
-                    isSelected: selection == tab
+                    isSelected: selection == tab,
+                    accent: appearanceSettings.resolvedPalette.accent
                 ) {
                     selection = tab
                 }
@@ -38,6 +41,7 @@ struct MacRootTabBar: View {
 private struct MacRootTabSegment: View {
     let tab: MacRootTab
     let isSelected: Bool
+    let accent: Color
     let action: () -> Void
 
     @State private var isHovered = false
@@ -71,7 +75,7 @@ private struct MacRootTabSegment: View {
     }
 
     private var background: Color {
-        if isSelected { return MacAppTheme.accent }
+        if isSelected { return accent }
         return isHovered ? Color.white.opacity(0.08) : .clear
     }
 }

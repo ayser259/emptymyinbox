@@ -182,7 +182,7 @@ public struct ActionItemQuickEntryView: View {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color(hex: "#1e1e1e"),
+                                    SharedAppTheme.elevatedSurface,
                                     SharedAppTheme.secondaryBackground
                                 ],
                                 startPoint: .topLeading,
@@ -916,7 +916,7 @@ public struct ActionItemQuickEntryView: View {
                     Task { await submitDraft() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.yellow)
+                .tint(SharedAppTheme.accent)
                 .controlSize(isMacProminentQuickEntry ? .large : .regular)
                 .font(isMacProminentQuickEntry ? .body.weight(.semibold) : .body)
                 .focusable(true)

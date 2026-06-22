@@ -15,7 +15,7 @@ struct MainAppTopBar<Center: View>: View {
 
     var body: some View {
         HStack(alignment: .center) {
-            LogoView(size: 40)
+            BrandedLogoView(size: 40)
 
             Spacer()
 

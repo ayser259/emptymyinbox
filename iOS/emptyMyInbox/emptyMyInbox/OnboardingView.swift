@@ -9,13 +9,15 @@ import SwiftUI
 import EmptyMyInboxShared
 
 struct OnboardingView: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
+
     var body: some View {
         VStack(spacing: AppTheme.spacingXLarge) {
             Spacer()
             
-            LogoView(size: 80)
+            BrandedLogoView(size: 80)
             
-            Text("Welcome to Empty My Inbox")
+            Text("Welcome to \(appearanceSettings.resolvedDisplayName)")
                 .font(AppTheme.title)
                 .primaryText()
             

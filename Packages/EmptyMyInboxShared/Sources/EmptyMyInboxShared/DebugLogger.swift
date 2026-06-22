@@ -143,7 +143,7 @@ public class DebugLogger: ObservableObject {
         #endif
         let header = """
         =====================================
-        Empty My Inbox - Debug Log Export
+        \(AppearanceSettingsStore.shared.resolvedDisplayName) - Debug Log Export
         Exported: \(Date().formatted())
         \(deviceLine)
         App Version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")

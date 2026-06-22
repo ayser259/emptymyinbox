@@ -22,6 +22,7 @@ struct MacAppEnvironment {
 @main
 struct emptymyinboxMacAppApp: App {
     @StateObject private var authManager: AuthManager
+    @StateObject private var appearanceSettings = AppearanceSettingsStore.shared
 
     init() {
         let environment = MacAppEnvironment.live
@@ -47,8 +48,11 @@ struct emptymyinboxMacAppApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(authManager)
-                .preferredColorScheme(.dark)
-                .tint(MacAppTheme.accent)
+                .environmentObject(appearanceSettings)
+                .preferredColorScheme(appearanceSettings.swiftUIColorScheme)
+                .tint(appearanceSettings.resolvedPalette.accent)
+                .appThemePalette(appearanceSettings.resolvedPalette)
+                .id(appearanceSettings.paletteRevision)
                 .task {
                     await VaultManager.shared.reloadFromPreferences()
                     await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()

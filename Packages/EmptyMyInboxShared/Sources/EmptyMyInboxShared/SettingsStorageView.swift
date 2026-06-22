@@ -10,7 +10,7 @@ public struct SettingsStorageView<Vault: View>: View {
 
     public init(
         vaultSettings: @escaping () -> Vault,
-        accentColor: Color = SharedAppTheme.accent
+        accentColor: Color = AppThemePalette.defaultDarkGold.accent
     ) {
         self.vaultSettings = vaultSettings
         self.accentColor = accentColor

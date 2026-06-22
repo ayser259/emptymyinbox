@@ -50,19 +50,19 @@ public struct EmailCardView: View {
                 }
             }
             .padding(SharedAppTheme.spacingMedium)
-            .background(Color(hex: "#252525"))
+            .background(SharedAppTheme.cardBackground)
 
             GeometryReader { scrollGeometry in
                 emailBodyScroll(minHeight: scrollGeometry.size.height)
             }
-            .background(Color(hex: "#252525"))
+            .background(SharedAppTheme.cardBackground)
         }
-        .background(Color(hex: "#252525"))
+        .background(SharedAppTheme.cardBackground)
         .cornerRadius(SharedAppTheme.cornerRadiusMedium)
         .overlay(
             Group {
                 if !isActive {
-                    Color(hex: "#252525").opacity(0.99)
+                    SharedAppTheme.cardBackground.opacity(0.99)
                         .cornerRadius(SharedAppTheme.cornerRadiusMedium)
                 }
             }

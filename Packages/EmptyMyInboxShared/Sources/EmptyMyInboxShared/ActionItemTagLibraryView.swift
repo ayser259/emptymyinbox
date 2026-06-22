@@ -74,7 +74,7 @@ public struct ActionItemTagLibraryView: View {
                 } label: {
                     HStack {
                         Image(systemName: resolvedSymbolName(c.symbolName, fallback: "tag.fill"))
-                            .foregroundStyle(Color(hex: c.accentColorHex ?? "#f6ac0a"))
+                            .foregroundStyle(Color(hex: c.accentColorHex ?? SharedAppTheme.accentHex))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.name)
                                 .font(SharedAppTheme.body)
@@ -110,7 +110,7 @@ public struct ActionItemTagLibraryView: View {
                 } label: {
                     HStack {
                         Image(systemName: resolvedSymbolName(t.symbolName, fallback: "square.grid.2x2"))
-                            .foregroundStyle(Color(hex: t.accentColorHex ?? "#f6ac0a"))
+                            .foregroundStyle(Color(hex: t.accentColorHex ?? SharedAppTheme.accentHex))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(t.name)
                                 .font(SharedAppTheme.body)
@@ -143,7 +143,7 @@ public struct ActionItemTagLibraryView: View {
             title: "Context",
             name: ctx.name,
             notes: ctx.notes ?? "",
-            accentHex: ctx.accentColorHex ?? "f6ac0a",
+            accentHex: ctx.accentColorHex ?? SharedAppTheme.accentHex.trimmingCharacters(in: CharacterSet(charactersIn: "#")),
             symbolName: ctx.symbolName ?? "",
             sortOrder: ctx.sortOrder,
             id: ctx.id,
@@ -169,7 +169,7 @@ public struct ActionItemTagLibraryView: View {
             title: "Type",
             name: t.name,
             notes: t.notes ?? "",
-            accentHex: t.accentColorHex ?? "f6ac0a",
+            accentHex: t.accentColorHex ?? SharedAppTheme.accentHex.trimmingCharacters(in: CharacterSet(charactersIn: "#")),
             symbolName: t.symbolName ?? "",
             sortOrder: t.sortOrder,
             id: t.id,

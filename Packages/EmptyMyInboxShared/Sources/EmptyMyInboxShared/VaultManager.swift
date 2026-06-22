@@ -166,7 +166,7 @@ public final class VaultManager: ObservableObject {
         let account = try resolveGoogleDriveAccount(preferredEmail: accountEmail)
         let token = try await GmailAPIService.shared.getValidAccessToken(for: account)
         let rootId = try await GoogleDriveVaultAPI.createFolder(
-            name: displayName ?? "Empty My Inbox Vault",
+            name: displayName ?? AppearanceSettingsStore.shared.resolvedVaultDisplayName,
             parentId: "root",
             accessToken: token
         )

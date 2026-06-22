@@ -326,8 +326,8 @@ public actor OpenAIService {
         requestBody: [String: Any]
     ) {
         let maxTokens = requestBody["max_tokens"] as? Int ?? 0
-        let systemChars = (requestBody["messages"] as? [[String: Any]])?
-            .first(where: { ($0["role"] as? String) == "system" })?["content"] as? String
+        let systemChars = ((requestBody["messages"] as? [[String: Any]])?
+            .first(where: { ($0["role"] as? String) == "system" })?["content"] as? String)?
             .count ?? 0
         let userChars = (requestBody["messages"] as? [[String: Any]])?
             .compactMap { $0["content"] as? String }

@@ -3,6 +3,7 @@ import Foundation
 /// Sidebar destinations for the Obsidian-style settings split view.
 public enum SettingsSidebarItem: String, CaseIterable, Identifiable, Hashable {
     case general
+    case appearance
     case connectedAccounts
     case shortcuts
     case storage
@@ -14,6 +15,7 @@ public enum SettingsSidebarItem: String, CaseIterable, Identifiable, Hashable {
     public var title: String {
         switch self {
         case .general: return "General"
+        case .appearance: return "Appearance"
         case .connectedAccounts: return "Connected Accounts"
         case .shortcuts: return "Shortcuts"
         case .storage: return "Storage"
@@ -25,6 +27,7 @@ public enum SettingsSidebarItem: String, CaseIterable, Identifiable, Hashable {
     public var systemImage: String {
         switch self {
         case .general: return "gearshape"
+        case .appearance: return "paintpalette"
         case .connectedAccounts: return "person.crop.circle.badge.checkmark"
         case .shortcuts: return "keyboard"
         case .storage: return "internaldrive"

@@ -11,6 +11,7 @@ import EmptyMyInboxShared
 struct iPadWideRootView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var rootState: AdaptiveRootState
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,7 +31,7 @@ struct iPadWideRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
-                .background(AppTheme.accent.opacity(0.35))
+                .background(appearanceSettings.resolvedPalette.accent.opacity(0.35))
 
             VaultRefreshStatusLabel(font: .caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -50,11 +51,12 @@ struct iPadWideRootView: View {
 
 private struct iPadWideTopBar: View {
     @EnvironmentObject private var rootState: AdaptiveRootState
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
 
     var body: some View {
         ZStack {
             HStack(spacing: AppTheme.spacingMedium) {
-                LogoView(size: 36)
+                BrandedLogoView(size: 36)
                 Spacer(minLength: 0)
                 Button {
                     rootState.showMenu = true
@@ -74,6 +76,7 @@ private struct iPadWideTopBar: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(appearanceSettings.resolvedPalette.accent)
             .frame(maxWidth: 520)
         }
         .padding(.horizontal, AppTheme.spacingMedium)

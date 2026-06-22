@@ -24,6 +24,7 @@ struct AppEnvironment {
 @main
 struct emptyMyInboxApp: App {
     @StateObject private var authManager: AuthManager
+    @StateObject private var appearanceSettings = AppearanceSettingsStore.shared
     @Environment(\.scenePhase) private var scenePhase
     
     init() {
@@ -56,8 +57,12 @@ struct emptyMyInboxApp: App {
         WindowGroup {
             rootView
             .environmentObject(authManager)
-            .preferredColorScheme(.dark) // Force dark mode
-            .background(AppTheme.primaryBackground)
+            .environmentObject(appearanceSettings)
+            .preferredColorScheme(appearanceSettings.swiftUIColorScheme)
+            .tint(appearanceSettings.resolvedPalette.accent)
+            .appThemePalette(appearanceSettings.resolvedPalette)
+            .id(appearanceSettings.paletteRevision)
+            .background(appearanceSettings.resolvedPalette.primaryBackground)
             .task {
                 await VaultManager.shared.reloadFromPreferences()
                 await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
@@ -127,16 +132,18 @@ extension Notification.Name {
 }
 
 struct SplashView: View {
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
+
     var body: some View {
         ZStack {
-            AppTheme.primaryBackground.ignoresSafeArea()
+            appearanceSettings.resolvedPalette.primaryBackground.ignoresSafeArea()
             VStack(spacing: AppTheme.spacingMedium) {
-                LogoView(size: 64)
+                BrandedLogoView(size: 64)
                 Text("Loading your inbox…")
                     .font(AppTheme.body)
                     .primaryText()
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: AppTheme.accent))
+                    .progressViewStyle(CircularProgressViewStyle(tint: appearanceSettings.resolvedPalette.accent))
             }
         }
     }

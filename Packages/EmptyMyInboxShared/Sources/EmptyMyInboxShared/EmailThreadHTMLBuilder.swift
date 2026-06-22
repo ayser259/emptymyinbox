@@ -13,9 +13,10 @@ public enum EmailThreadHTMLBuilder {
         selectedId: Int,
         isDarkMode: Bool = false
     ) -> String {
-        let accent = isDarkMode ? "#667eea" : "#d4a012"
-        let sectionBackground = isDarkMode ? "#252525" : "#ffffff"
-        let dividerBackground = isDarkMode ? "#171717" : "#f0f0f0"
+        let palette = ThemePaletteBridge.current
+        let accent = isDarkMode ? palette.accentHex : "#d4a012"
+        let sectionBackground = isDarkMode ? palette.cardBackgroundHex : "#ffffff"
+        let dividerBackground = isDarkMode ? palette.secondaryBackgroundHex : "#f0f0f0"
 
         var sectionsHTML = ""
         for (index, message) in messages.enumerated() {

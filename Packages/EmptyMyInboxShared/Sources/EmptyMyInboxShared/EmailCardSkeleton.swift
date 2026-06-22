@@ -24,38 +24,38 @@ public struct EmailCardSkeleton: View {
             VStack(alignment: .leading, spacing: SharedAppTheme.spacingExtraSmall) {
                 HStack {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(hex: "#252525").opacity(0.3))
+                        .fill(SharedAppTheme.cardBackground.opacity(0.3))
                         .frame(width: 150, height: 20)
 
                     Spacer()
 
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(hex: "#252525").opacity(0.3))
+                        .fill(SharedAppTheme.cardBackground.opacity(0.3))
                         .frame(width: 80, height: 16)
                 }
 
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: "#252525").opacity(0.3))
+                    .fill(SharedAppTheme.cardBackground.opacity(0.3))
                     .frame(height: 18)
                     .frame(maxWidth: .infinity)
             }
             .padding(SharedAppTheme.spacingMedium)
-            .background(Color(hex: "#252525"))
+            .background(SharedAppTheme.cardBackground)
 
             GeometryReader { _ in
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(0..<8, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(hex: "#252525").opacity(0.2))
+                            .fill(SharedAppTheme.cardBackground.opacity(0.2))
                             .frame(height: 16)
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .padding(SharedAppTheme.spacingMedium)
             }
-            .background(Color(hex: "#252525"))
+            .background(SharedAppTheme.cardBackground)
         }
-        .background(Color(hex: "#252525"))
+        .background(SharedAppTheme.cardBackground)
         .cornerRadius(SharedAppTheme.cornerRadiusMedium)
         .overlay(
             RoundedRectangle(cornerRadius: SharedAppTheme.cornerRadiusMedium)

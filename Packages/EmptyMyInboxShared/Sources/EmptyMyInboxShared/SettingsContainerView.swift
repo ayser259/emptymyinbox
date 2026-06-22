@@ -21,7 +21,7 @@ public struct SettingsContainerView<Vault: View>: View {
         isAddingAccount: Binding<Bool>,
         onAddGmailAccount: @escaping () -> Void,
         onDismiss: @escaping () -> Void,
-        accentColor: Color = SharedAppTheme.accent
+        accentColor: Color = AppThemePalette.defaultDarkGold.accent
     ) {
         self.vaultSettings = vaultSettings
         self._isAddingAccount = isAddingAccount
@@ -242,6 +242,8 @@ public struct SettingsContainerView<Vault: View>: View {
         switch item {
         case .general:
             SettingsGeneralView()
+        case .appearance:
+            SettingsAppearanceView()
         case .connectedAccounts:
             SettingsConnectedAccountsView(
                 isAddingAccount: $isAddingAccount,

@@ -74,7 +74,7 @@ struct MacActionItemsBoardsScrollView<Row: View>: View {
             LinearGradient(
                 colors: [
                     MacAppTheme.primaryBackground,
-                    Color(hex: "#050505")
+                    MacAppTheme.primaryBackground
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -186,8 +186,8 @@ struct MacActionItemsBoardsScrollView<Row: View>: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(hex: "#1c1c1c"),
-                            Color(hex: "#121212")
+                            MacAppTheme.secondaryBackground,
+                            MacAppTheme.primaryBackground
                         ],
                         startPoint: .top,
                         endPoint: .bottom

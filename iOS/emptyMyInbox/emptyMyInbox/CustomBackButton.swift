@@ -19,7 +19,7 @@ struct CustomBackButton: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AppTheme.primaryText)
                 .frame(width: 32, height: 32)
-                .background(Color(hex: "#252525"))
+                .background(SharedAppTheme.cardBackground)
                 .clipShape(Circle())
         }
     }

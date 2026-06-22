@@ -1,26 +1,32 @@
 import SwiftUI
 
-/// Cross-platform colors and typography aligned with iOS `AppTheme` and macOS `MacAppTheme`.
+/// Cross-platform colors and typography driven by user appearance settings.
 public enum SharedAppTheme {
-    public static let primaryBackground = Color.black
-    public static let secondaryBackground = Color(red: 10 / 255, green: 10 / 255, blue: 10 / 255)
-    public static let primaryText = Color.white
-    public static let secondaryText = Color(red: 224 / 255, green: 224 / 255, blue: 224 / 255)
-    public static let accent = Color(red: 246 / 255, green: 172 / 255, blue: 10 / 255)
+    private static var palette: AppThemePalette {
+        ThemePaletteBridge.current
+    }
 
-    // MARK: - Mailbox list rows (Gmail-style read / unread fills on dark backgrounds)
+    public static var primaryBackground: Color { palette.primaryBackground }
+    public static var secondaryBackground: Color { palette.secondaryBackground }
+    public static var cardBackground: Color { palette.cardBackground }
+    public static var elevatedSurface: Color { palette.elevatedSurface }
+    public static var primaryText: Color { palette.primaryText }
+    public static var secondaryText: Color { palette.secondaryText }
+    public static var accent: Color { palette.accent }
+    public static var accentHex: String { palette.accentHex }
+    public static var accentPressed: Color { palette.accentPressed }
+    public static var accentMuted: Color { palette.accentMuted }
+    public static var sidebarSelectionBackground: Color { palette.sidebarSelectionBackground }
+    public static var selectionHighlight: Color { palette.selectionHighlight }
 
-    /// Unread rows: lighter, more filled — stands out against the inbox background.
-    public static let mailboxRowUnreadBackground = Color(red: 38 / 255, green: 38 / 255, blue: 40 / 255)
-    /// Read rows: darker, subtler — recedes so unread mail is easy to scan.
-    public static let mailboxRowReadBackground = Color(red: 14 / 255, green: 14 / 255, blue: 14 / 255).opacity(0.65)
+    public static var mailboxRowUnreadBackground: Color { palette.mailboxRowUnreadBackground }
+    public static var mailboxRowReadBackground: Color { palette.mailboxRowReadBackground }
 
     public static func mailboxRowBackground(isRead: Bool) -> Color {
-        isRead ? mailboxRowReadBackground : mailboxRowUnreadBackground
+        palette.mailboxRowBackground(isRead: isRead)
     }
 
     public static let spacingUnit: CGFloat = 8
-    /// Tight spacing (4pt) — matches iOS `AppTheme.spacingSmall`.
     public static let spacingExtraSmall: CGFloat = 4
     public static let spacingSmall: CGFloat = 8
     public static let spacingMedium: CGFloat = 16
@@ -30,7 +36,6 @@ public enum SharedAppTheme {
     public static let cornerRadiusMedium: CGFloat = 12
     public static let cornerRadiusLarge: CGFloat = 16
 
-    /// Dynamic Type–aware text styles (prefer these over fixed `system(size:)` in forms).
     public static let title2: Font = .title2.weight(.bold)
     public static let title3: Font = .title3.weight(.semibold)
     public static let headline: Font = .headline
@@ -39,7 +44,7 @@ public enum SharedAppTheme {
     public static let caption: Font = .caption
 }
 
-// MARK: - Text styles (match iOS Theme.swift)
+// MARK: - Text styles
 
 public extension View {
     func primaryText() -> some View {
@@ -49,9 +54,21 @@ public extension View {
     func secondaryText() -> some View {
         foregroundStyle(SharedAppTheme.secondaryText)
     }
+
+    func appPrimaryBackground() -> some View {
+        background(SharedAppTheme.primaryBackground)
+    }
+
+    func appSecondaryBackground() -> some View {
+        background(SharedAppTheme.secondaryBackground)
+    }
+
+    func appCardBackground() -> some View {
+        background(SharedAppTheme.cardBackground)
+    }
 }
 
-// MARK: - Hex colors (match iOS / Mac theme helpers)
+// MARK: - Hex colors
 
 public extension Color {
     init(hex: String) {

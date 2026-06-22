@@ -14,7 +14,7 @@ public struct SettingsConnectedAccountsView: View {
 
     public init(
         isAddingAccount: Binding<Bool>,
-        accentColor: Color = SharedAppTheme.accent,
+        accentColor: Color = AppThemePalette.defaultDarkGold.accent,
         onAddGmailAccount: @escaping () -> Void
     ) {
         self._isAddingAccount = isAddingAccount
@@ -98,7 +98,7 @@ public struct SettingsConnectedAccountsView: View {
     private func disconnectExplanation(for account: GmailAccount) -> String {
         let s = account.connectionSummary(activeVault: vaultManager.activeConfiguration)
         var lines: [String] = []
-        lines.append("You will remove \(account.email) from Empty My Inbox.")
+        lines.append("You will remove \(account.email) from \(AppearanceSettingsStore.shared.resolvedDisplayName).")
         if s.calendar {
             lines.append("Calendar access for this account will stop.")
         }

@@ -11,6 +11,7 @@ import EmptyMyInboxShared
 struct MainTabView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var rootState: AdaptiveRootState
+    @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
 
     var body: some View {
         TabView(selection: $rootState.selectedTab) {
@@ -32,7 +33,7 @@ struct MainTabView: View {
                 }
                 .tag(AdaptiveRootState.RootTab.actionItems.rawValue)
         }
-        .tint(AppTheme.accent)
+        .tint(appearanceSettings.resolvedPalette.accent)
         .sheet(isPresented: $rootState.showMenu) {
             MenuView()
                 .environmentObject(authManager)
