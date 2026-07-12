@@ -197,7 +197,8 @@ struct ContentView: View {
         await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
-        refreshMessage = "Updated (snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—")"
+        let stamp = snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        refreshMessage = "Updated \(stamp)"
     }
 
     private func addGmailAccountFromSettings() async {

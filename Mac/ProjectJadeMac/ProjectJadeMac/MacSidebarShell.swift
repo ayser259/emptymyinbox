@@ -197,7 +197,7 @@ struct MacSidebarShell<Content: View>: View {
     var minColumnWidth: CGFloat = 220
     var idealColumnWidth: CGFloat = 240
     var maxColumnWidth: CGFloat = 280
-    /// Static feature shortcuts when not using the shared store (e.g. Calendar / Action Items tabs).
+    /// Static feature shortcuts when not using the shared store.
     var featureShortcutSection: MacSidebarFeatureShortcutSection? = nil
     /// App-wide shortcuts (navigation, refresh, next tab). Shown **below** feature shortcuts.
     var globalShortcuts: [MacSidebarContextualShortcut] = MacSidebarShortcutLibrary.global

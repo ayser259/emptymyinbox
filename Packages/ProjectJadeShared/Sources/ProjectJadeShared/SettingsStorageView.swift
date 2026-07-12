@@ -60,7 +60,7 @@ public struct SettingsStorageView<Vault: View>: View {
             } header: {
                 Text("Vault")
             } footer: {
-                Text("Store Calendar and Action Items as files in Inbox, Calendar, and Action Items folders—locally, in a synced folder, or on Google Drive.")
+                Text("Store mail, stories, and brief data as files in Inbox, Stories, and Brief folders—locally, in a synced folder, or on Google Drive.")
             }
         }
         .scrollContentBackground(.hidden)

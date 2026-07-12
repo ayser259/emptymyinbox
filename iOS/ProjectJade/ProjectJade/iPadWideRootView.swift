@@ -60,15 +60,9 @@ private struct iPadWideTopBar: View {
                 .accessibilityLabel("Menu")
             }
 
-            Picker("Section", selection: $rootState.selectedTab) {
-                ForEach(AdaptiveRootState.RootTab.allCases, id: .rawValue) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .tint(appearanceSettings.resolvedPalette.accent)
-            .frame(maxWidth: 520)
+            Label(AdaptiveRootState.RootTab.mail.title, systemImage: AdaptiveRootState.RootTab.mail.systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(appearanceSettings.resolvedPalette.accent)
         }
         .padding(.horizontal, AppTheme.spacingMedium)
         .padding(.vertical, AppTheme.spacingSmall)

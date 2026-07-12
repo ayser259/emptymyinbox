@@ -477,9 +477,6 @@ private struct MacDailyBriefCard: View {
     }
 }
 
-// MARK: - Action Items Card
-
-
 // MARK: - Account Updates Card
 
 private struct MacAccountUpdatesCard: View {
