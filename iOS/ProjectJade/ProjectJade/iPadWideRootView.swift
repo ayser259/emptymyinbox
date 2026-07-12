@@ -2,7 +2,7 @@
 //  iPadWideRootView.swift
 //  ProjectJade
 //
-//  Mac-like root chrome for wide iPad: top tab bar, split mail, calendar, action items.
+//  Mac-like root chrome for wide iPad: top tab bar and split mail.
 //
 
 import SwiftUI
@@ -17,18 +17,9 @@ struct iPadWideRootView: View {
         VStack(spacing: 0) {
             iPadWideTopBar()
 
-            Group {
-                switch rootState.rootTab {
-                case .mail:
-                    iPadMailTabView()
-                        .environmentObject(authManager)
-                case .calendar:
-                    CalendarSkeletonView(onMenuTap: { rootState.showMenu = true })
-                case .actionItems:
-                    ActionItemsSkeletonView(onMenuTap: { rootState.showMenu = true })
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            iPadMailTabView()
+                .environmentObject(authManager)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
                 .background(appearanceSettings.resolvedPalette.accent.opacity(0.35))
@@ -70,7 +61,7 @@ private struct iPadWideTopBar: View {
             }
 
             Picker("Section", selection: $rootState.selectedTab) {
-                ForEach(AdaptiveRootState.RootTab.allCases, id: \.rawValue) { tab in
+                ForEach(AdaptiveRootState.RootTab.allCases, id: .rawValue) { tab in
                     Label(tab.title, systemImage: tab.systemImage)
                         .tag(tab.rawValue)
                 }

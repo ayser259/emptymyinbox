@@ -29,10 +29,8 @@ struct DashboardView: View {
     @State private var dailyBriefingPayload: DailyBriefingPayload?
     @State private var storiesCount = 0
     @State private var recentStories: [InsightCard] = []
-    @State private var dashboardActionItems: [VaultActionItemRecord] = []
     @State private var hasLLMKey = false
     @State private var isBriefGenerating = false
-    @StateObject private var calendarModel = GoogleCalendarViewModel()
     
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -112,9 +110,6 @@ struct DashboardView: View {
         .task {
             await loadInitialData()
         }
-        .task {
-            await calendarModel.refreshIfNeeded()
-        }
         .onReceive(NotificationCenter.default.publisher(for: .cacheCleared)) { _ in
             Task { @MainActor in
                 // Clear in-memory state so UI reflects empty cache immediately
@@ -193,11 +188,6 @@ struct DashboardView: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .companionVaultCalendarActionItemsRefresh)) { _ in
-            Task {
-                await calendarModel.refreshIfNeeded()
-            }
-        }
         .sheet(isPresented: $showProgressModal) {
             RefreshProgressModal(progressTracker: progressTracker)
         }
@@ -216,7 +206,6 @@ struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
                     feedColumnContent
-                    calendarSidebarContent
                 }
                 .padding(.horizontal, AppTheme.spacingMedium)
                 .padding(.bottom, AppTheme.spacingLarge)
@@ -246,10 +235,6 @@ struct DashboardView: View {
                 )
                 .frame(maxWidth: .infinity)
 
-                DashboardActionItemsCard(
-                    items: dashboardActionItems,
-                    isVaultReady: VaultManager.shared.isVaultReady
-                )
                 .frame(width: 160)
             }
 
@@ -271,10 +256,6 @@ struct DashboardView: View {
         }
     }
 
-    /// Calendar section below the mail feed.
-    private var calendarSidebarContent: some View {
-        DashboardCalendarSidebar(model: calendarModel)
-    }
 
     private var inboxFeedHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -611,7 +592,6 @@ struct DashboardView: View {
         await refreshBriefBadgeFromPersisted()
         await refreshLLMKeyStatus()
         await loadRecentStories()
-        await loadDashboardActionItems()
 
         let cached = await DashboardDataManager.shared.loadCachedSnapshot()
         if let cached {
@@ -624,7 +604,6 @@ struct DashboardView: View {
         if DashboardRefreshPolicy.shouldAutoSync(snapshot: cached, now: Date()) {
             logInfo("Initial load - cached mail data stale or missing; syncing with Gmail...", category: "Dashboard")
             await refreshDashboard(shouldSync: true)
-            NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
         } else {
             logInfo("Initial load - using fresh cached mail data (no auto-sync)", category: "Dashboard")
         }
@@ -705,8 +684,6 @@ struct DashboardView: View {
                 await refreshBriefBadgeFromPersisted()
                 await refreshLLMKeyStatus()
                 await loadRecentStories()
-                await loadDashboardActionItems()
-                await calendarModel.refreshIfNeeded()
             } else {
                 logWarning("refreshData returned nil", category: "Dashboard")
             }
@@ -774,13 +751,6 @@ struct DashboardView: View {
         }
     }
 
-    private func loadDashboardActionItems() async {
-        guard VaultManager.shared.isVaultReady else { return }
-        let items = (try? await VaultManager.shared.listActionItems()) ?? []
-        await MainActor.run {
-            dashboardActionItems = ActionItemsFeatureModel.defaultSorted(items)
-        }
-    }
 
     private func refreshBrief() {
         Task {

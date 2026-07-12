@@ -2,18 +2,13 @@
 //  DashboardWidgets.swift
 //  ProjectJade
 //
-//  Dashboard widget components: greeting, daily brief card, action items card,
+//  Dashboard widget components: greeting, daily brief card,
 //  account updates card, and stories feed card.
 //
 
 import SwiftUI
 import ProjectJadeShared
 
-// MARK: - Notification names (iOS-local)
-
-extension Notification.Name {
-    static let switchToActionItemsTab = Notification.Name("SwitchToActionItemsTab")
-}
 
 // MARK: - Greeting
 
@@ -268,89 +263,6 @@ struct DashboardDailyBriefCard: View {
     }
 }
 
-// MARK: - Action Items Card
-
-struct DashboardActionItemsCard: View {
-    let items: [VaultActionItemRecord]
-    let isVaultReady: Bool
-
-    var body: some View {
-        DashboardCard {
-            VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                CardHeaderRow(
-                    icon: "checklist",
-                    title: "ACTION ITEMS",
-                    count: items.isEmpty ? nil : items.count
-                )
-
-                Divider().opacity(0.15)
-
-                actionContent
-                    .animation(.easeOut(duration: 0.2), value: isVaultReady)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var actionContent: some View {
-        if !isVaultReady {
-            CardEmptyState(
-                icon: "externaldrive.badge.xmark",
-                title: "Vault not connected",
-                subtitle: "Set up a vault in Settings"
-            )
-        } else if items.isEmpty {
-            CardEmptyState(
-                icon: "checkmark.circle",
-                title: "All clear",
-                subtitle: "No pending action items"
-            )
-        } else {
-            let preview = Array(items.prefix(3))
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(preview.enumerated()), id: \.element.id) { idx, item in
-                    ActionItemPreviewRow(item: item)
-                    if idx < preview.count - 1 {
-                        Divider().opacity(0.1).padding(.leading, 20)
-                    }
-                }
-
-                Button {
-                    NotificationCenter.default.post(name: .switchToActionItemsTab, object: nil)
-                } label: {
-                    ViewMoreRow(label: items.count > 3 ? "View all \(items.count)" : "View all")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-private struct ActionItemPreviewRow: View {
-    let item: VaultActionItemRecord
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if let p = item.priority {
-                    Circle()
-                        .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 1.5)
-                } else {
-                    Circle()
-                        .strokeBorder(AppTheme.secondaryText.opacity(0.35), lineWidth: 1.5)
-                }
-            }
-            .frame(width: 11, height: 11)
-
-            Text(item.title)
-                .font(AppTheme.caption)
-                .foregroundStyle(AppTheme.primaryText)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.vertical, 5)
-    }
-}
 
 // MARK: - Account Updates Card
 

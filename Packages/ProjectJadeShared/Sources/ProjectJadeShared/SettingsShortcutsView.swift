@@ -15,8 +15,6 @@ public struct SettingsShortcutsView: View {
             shortcutSection(title: "Mail — Catch Up", items: SettingsShortcutsReference.mailCatchUp)
             shortcutSection(title: "Mail — Reply composer", items: SettingsShortcutsReference.mailReplyComposer)
             shortcutSection(title: "Mail — Reply sent", items: SettingsShortcutsReference.mailReplySentOutcome)
-            shortcutSection(title: "Calendar", items: SettingsShortcutsReference.calendarModes)
-            shortcutSection(title: "Action Items", items: SettingsShortcutsReference.actionItems)
             #else
             if horizontalSizeClass == .compact {
                 Section {
@@ -30,8 +28,6 @@ public struct SettingsShortcutsView: View {
                 shortcutSection(title: "Mail — Catch Up", items: SettingsShortcutsReference.mailCatchUp)
                 shortcutSection(title: "Mail — Reply composer", items: SettingsShortcutsReference.mailReplyComposer)
             shortcutSection(title: "Mail — Reply sent", items: SettingsShortcutsReference.mailReplySentOutcome)
-                shortcutSection(title: "Calendar", items: SettingsShortcutsReference.calendarModes)
-                shortcutSection(title: "Action Items", items: SettingsShortcutsReference.actionItems)
             }
             #endif
         }

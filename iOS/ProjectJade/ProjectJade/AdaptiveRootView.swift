@@ -36,10 +36,5 @@ struct AdaptiveRootView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .switchToActionItemsTab)) { _ in
-            withAnimation {
-                rootState.selectedTab = AdaptiveRootState.RootTab.actionItems.rawValue
-            }
-        }
     }
 }

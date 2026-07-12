@@ -12,22 +12,16 @@ import ProjectJadeShared
 final class AdaptiveRootState: ObservableObject {
     enum RootTab: Int, CaseIterable {
         case mail = 0
-        case calendar = 1
-        case actionItems = 2
 
         var title: String {
             switch self {
             case .mail: return "Mail"
-            case .calendar: return "Calendar"
-            case .actionItems: return "Action Items"
             }
         }
 
         var systemImage: String {
             switch self {
             case .mail: return "envelope.fill"
-            case .calendar: return "calendar"
-            case .actionItems: return "checklist"
             }
         }
     }

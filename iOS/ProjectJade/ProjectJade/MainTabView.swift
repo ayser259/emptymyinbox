@@ -2,7 +2,7 @@
 //  MainTabView.swift
 //  ProjectJade
 //
-//  Root tab bar: Mail (existing dashboard), Calendar, Action Items.
+//  Root tab bar: Mail (dashboard).
 //
 
 import SwiftUI
@@ -20,18 +20,6 @@ struct MainTabView: View {
                     Label("Mail", systemImage: "envelope.fill")
                 }
                 .tag(AdaptiveRootState.RootTab.mail.rawValue)
-
-            CalendarSkeletonView(onMenuTap: { rootState.showMenu = true })
-                .tabItem {
-                    Label("Calendar", systemImage: "calendar")
-                }
-                .tag(AdaptiveRootState.RootTab.calendar.rawValue)
-
-            ActionItemsSkeletonView(onMenuTap: { rootState.showMenu = true })
-                .tabItem {
-                    Label("Action Items", systemImage: "checklist")
-                }
-                .tag(AdaptiveRootState.RootTab.actionItems.rawValue)
         }
         .id(appearanceSettings.paletteRevision)
         .tint(appearanceSettings.resolvedPalette.accent)

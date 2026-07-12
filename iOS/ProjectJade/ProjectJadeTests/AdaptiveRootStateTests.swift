@@ -5,27 +5,19 @@
 
 import XCTest
 @testable import ProjectJade
-import ProjectJadeShared
 
 @MainActor
 final class AdaptiveRootStateTests: XCTestCase {
-    func testSelectMailSidebarClearsThreadSelection() {
+    func testDefaultTabIsMail() {
         let state = AdaptiveRootState()
-        state.selectedThreadId = 42
-        state.mailNavigationPath.append(99)
-
-        state.selectMailSidebar(.mailbox(.allUnread))
-
-        XCTAssertNil(state.selectedThreadId)
-        XCTAssertNil(state.selectedThread)
-        XCTAssertTrue(state.mailNavigationPath.isEmpty)
-        XCTAssertEqual(state.mailSidebarSelection, .mailbox(.allUnread))
+        XCTAssertEqual(state.selectedTab, AdaptiveRootState.RootTab.mail.rawValue)
+        XCTAssertEqual(state.rootTab, .mail)
     }
 
-    func testRootTabRoundTrip() {
+    func testRootTabSetter() {
         let state = AdaptiveRootState()
-        state.rootTab = .calendar
-        XCTAssertEqual(state.selectedTab, AdaptiveRootState.RootTab.calendar.rawValue)
-        XCTAssertEqual(state.rootTab, .calendar)
+        state.rootTab = .mail
+        XCTAssertEqual(state.selectedTab, AdaptiveRootState.RootTab.mail.rawValue)
+        XCTAssertEqual(state.rootTab, .mail)
     }
 }

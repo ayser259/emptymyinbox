@@ -79,13 +79,10 @@ public class AuthManager: ObservableObject {
             await dashboardCache.clear()
             await emailCache.clearAll()
             if let email = removedEmail {
-                await CalendarCache.shared.clear(accountEmail: email)
                 await SenderCache.shared.clear(accountEmail: email)
             } else {
-                await CalendarCache.shared.clearAll()
                 await SenderCache.shared.clearAll()
             }
-            await CalendarVisibilityStore.shared.refreshFromConnectedAccounts()
             await AccountInclusionStore.shared.refreshFromConnectedAccounts()
             if accountsEmpty {
                 await VaultManager.shared.purgeAllLocalVaultMirrorsAndReset()
@@ -141,7 +138,6 @@ public class AuthManager: ObservableObject {
         self.isAuthenticated = true
         self.sessionState = .authenticated
         await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
-        await CalendarVisibilityStore.shared.refreshFromConnectedAccounts()
 
         NotificationCenter.default.post(name: .accountAdded, object: nil)
         #elseif os(macOS)
@@ -156,7 +152,6 @@ public class AuthManager: ObservableObject {
         self.isAuthenticated = true
         self.sessionState = .authenticated
         await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
-        await CalendarVisibilityStore.shared.refreshFromConnectedAccounts()
         NotificationCenter.default.post(name: .accountAdded, object: nil)
         #else
         throw GmailAPIError.configurationError

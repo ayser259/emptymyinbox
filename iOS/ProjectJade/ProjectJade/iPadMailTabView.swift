@@ -16,8 +16,6 @@ struct iPadMailTabView: View {
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
     @State private var showLLMSettings = false
-    @StateObject private var calendarModel = GoogleCalendarViewModel()
-    @State private var dashboardActionItems: [VaultActionItemRecord] = []
 
     private var unreadCount: Int {
         snapshot?.emails.count ?? 0
@@ -57,8 +55,6 @@ struct iPadMailTabView: View {
         .background(AppTheme.primaryBackground)
         .task {
             await loadSnapshot()
-            await loadActionItems()
-            await calendarModel.refreshIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
             Task { await loadSnapshot() }
@@ -271,9 +267,6 @@ struct iPadMailTabView: View {
         await refreshMailbox()
     }
 
-    private func loadActionItems() async {
-        dashboardActionItems = (try? await VaultManager.shared.listActionItems()) ?? []
-    }
 
     private func refreshMailbox() async {
         isRefreshing = true
@@ -281,9 +274,6 @@ struct iPadMailTabView: View {
         await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
-        await loadActionItems()
-        await calendarModel.refreshIfNeeded()
-        NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
     }
 
     private func addGmailAccount() async {

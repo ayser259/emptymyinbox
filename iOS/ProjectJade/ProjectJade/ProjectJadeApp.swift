@@ -104,7 +104,6 @@ struct ProjectJadeApp: App {
             let snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
             guard DashboardRefreshPolicy.shouldAutoSync(snapshot: snapshot, now: Date()) else { return }
             NotificationCenter.default.post(name: .appShouldRefreshData, object: nil)
-            NotificationCenter.default.post(name: .companionVaultCalendarActionItemsRefresh, object: nil)
         }
     }
     

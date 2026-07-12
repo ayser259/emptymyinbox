@@ -6,14 +6,8 @@ public extension Notification.Name {
     static let appStateCloudKitDidMerge = Notification.Name("AppStateCloudKitDidMerge")
     /// Posted after a vault sync completes successfully (e.g. Google Drive pull/push).
     static let vaultDidSync = Notification.Name("VaultDidSync")
-    /// Posted when calendar account/calendar visibility settings change.
-    static let calendarVisibilityDidChange = Notification.Name("CalendarVisibilityDidChange")
     /// Local email / dashboard caches were cleared.
     static let cacheCleared = Notification.Name("CacheCleared")
-    /// macOS toolbar refresh for Action Items tab (reload vault-backed lists).
-    static let macActionItemsShouldReload = Notification.Name("MacActionItemsShouldReload")
-    /// Mail dashboard refreshed (first open, daily foreground, etc.); Calendar + Action Items sync to match.
-    static let companionVaultCalendarActionItemsRefresh = Notification.Name("CompanionVaultCalendarActionItemsRefresh")
     /// Daily inbox metrics file was updated (refresh or catch-up session).
     static let inboxMetricsDidUpdate = Notification.Name("InboxMetricsDidUpdate")
 }

@@ -224,7 +224,6 @@ public struct SettingsAppearanceView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Capsule().fill(ActionItemPriorityColors.color(forStoredPriority: 1)))
                     Text("Today 2:00 PM")
                         .font(.caption)
                         .foregroundStyle(appearance.resolvedPalette.accent)

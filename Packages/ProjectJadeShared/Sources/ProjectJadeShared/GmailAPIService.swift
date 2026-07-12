@@ -27,8 +27,6 @@ public struct GmailAccount: Codable, Identifiable {
     public var tokenExpiry: Date?
     public var lastSync: Date?
     public var unreadEmailsNextPageToken: String?
-    /// Last known Calendar API scope grant (from Google Sign-In). `nil` in legacy saves → treat as granted.
-    public var hasGoogleCalendarReadonlyScope: Bool?
     /// Last known Drive `drive.file` scope grant (vault). `nil`/false until user authorizes Drive.
     public var hasGoogleDriveFileScope: Bool?
 
@@ -41,7 +39,6 @@ public struct GmailAccount: Codable, Identifiable {
         tokenExpiry: Date?,
         lastSync: Date?,
         unreadEmailsNextPageToken: String?,
-        hasGoogleCalendarReadonlyScope: Bool? = nil,
         hasGoogleDriveFileScope: Bool? = nil
     ) {
         self.id = id
@@ -52,14 +49,9 @@ public struct GmailAccount: Codable, Identifiable {
         self.tokenExpiry = tokenExpiry
         self.lastSync = lastSync
         self.unreadEmailsNextPageToken = unreadEmailsNextPageToken
-        self.hasGoogleCalendarReadonlyScope = hasGoogleCalendarReadonlyScope
         self.hasGoogleDriveFileScope = hasGoogleDriveFileScope
     }
 
-    /// Gmail + Calendar are requested at initial sign-in; missing legacy flag means “yes”.
-    public var hasCalendarAccessForSettings: Bool {
-        hasGoogleCalendarReadonlyScope ?? true
-    }
 
     /// Drive file access is granted only after the vault / Drive scope flow.
     public var hasDriveFileAccessForSettings: Bool {
@@ -258,7 +250,6 @@ public class GmailAPIService {
     @MainActor
     private func applyGrantedScopes(from user: GIDGoogleUser, to account: inout GmailAccount) {
         let granted = Set(user.grantedScopes ?? [])
-        account.hasGoogleCalendarReadonlyScope = granted.contains(Self.googleCalendarReadonlyScope)
         account.hasGoogleDriveFileScope = granted.contains(Self.googleDriveFileScope)
     }
 
@@ -321,8 +312,7 @@ public class GmailAPIService {
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
             "https://www.googleapis.com/auth/gmail.settings.basic",
-            "https://www.googleapis.com/auth/gmail.send",
-            Self.googleCalendarReadonlyScope
+            "https://www.googleapis.com/auth/gmail.send"
         ]
 
         let googleUser: GIDGoogleUser
@@ -366,8 +356,7 @@ public class GmailAPIService {
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
             "https://www.googleapis.com/auth/gmail.settings.basic",
-            "https://www.googleapis.com/auth/gmail.send",
-            Self.googleCalendarReadonlyScope
+            "https://www.googleapis.com/auth/gmail.send"
         ]
         
         guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
@@ -477,8 +466,6 @@ public class GmailAPIService {
 
     public static let googleDriveFileScope = "https://www.googleapis.com/auth/drive.file"
 
-    /// Read-only access to calendars and events (Google Calendar API).
-    public static let googleCalendarReadonlyScope = "https://www.googleapis.com/auth/calendar.readonly"
 
     /// Restores the Google Sign-In SDK session so `GIDSignIn.sharedInstance.currentUser` is set. Call after launch if you persist Gmail accounts; otherwise `addScopes` / Drive vault flows see no `currentUser` and throw "Not authenticated with Gmail".
     @MainActor

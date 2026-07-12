@@ -61,7 +61,6 @@ public struct SettingsConnectedAccountsView: View {
                 if authManager.accounts.isEmpty {
                     Text("No accounts connected. Add a Gmail account to get started.")
                 } else {
-                    Text("Mail and Calendar are enabled when you sign in. Action Items reflects whether this account owns the active vault.")
                 }
             }
         }
@@ -99,9 +98,6 @@ public struct SettingsConnectedAccountsView: View {
         let s = account.connectionSummary(activeVault: vaultManager.activeConfiguration)
         var lines: [String] = []
         lines.append("You will remove \(account.email) from \(AppearanceSettingsStore.shared.resolvedDisplayName).")
-        if s.calendar {
-            lines.append("Calendar access for this account will stop.")
-        }
         lines.append(
             s.drive
                 ? "Google Drive file access for this account will be removed on this device (the cloud copy is not deleted)."

@@ -78,8 +78,6 @@ struct MacMailTabView: View {
     @Binding var snapshot: DashboardDataSnapshot?
     @Binding var isRefreshing: Bool
     @Binding var refreshMessage: String?
-    @ObservedObject var calendarModel: GoogleCalendarViewModel
-    let dashboardActionItems: [VaultActionItemRecord]
     var refreshState: MacSidebarRefreshState = .init()
     var onRefreshMailbox: () -> Void
     var onOpenSettings: () -> Void
@@ -276,9 +274,7 @@ struct MacMailTabView: View {
         switch tool {
         case .dashboard:
             MacUnifiedDashboardView(
-                calendarModel: calendarModel,
                 snapshot: snapshot,
-                actionItems: dashboardActionItems,
                 isRefreshing: isRefreshing,
                 refreshMessage: refreshMessage,
                 onOpenMailbox: { email in

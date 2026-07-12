@@ -2,7 +2,7 @@
 //  MacUnifiedDashboardView.swift
 //  ProjectJadeMac
 //
-//  Dashboard: greeting + widgets (brief, action items, account updates, stories) + inbox feed.
+//  Dashboard: greeting + widgets (brief, account updates, stories) + inbox feed.
 //
 
 import SwiftUI
@@ -11,9 +11,7 @@ import ProjectJadeShared
 struct MacUnifiedDashboardView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
-    @ObservedObject var calendarModel: GoogleCalendarViewModel
     let snapshot: DashboardDataSnapshot?
-    let actionItems: [VaultActionItemRecord]
     let isRefreshing: Bool
     let refreshMessage: String?
     var onOpenMailbox: ((String) -> Void)?
@@ -28,19 +26,7 @@ struct MacUnifiedDashboardView: View {
 
     private var calendar: Calendar { Calendar.current }
 
-    private var openTasks: [VaultActionItemRecord] {
-        ActionItemsFeatureModel.defaultSorted(actionItems.filter { !$0.isDone })
-    }
 
-    private var upcomingEvents: [GoogleCalendarDisplayEvent] {
-        let now = Date()
-        guard let horizon = calendar.date(byAdding: .day, value: 21, to: now) else { return [] }
-        return calendarModel.events
-            .filter { $0.end > now && $0.start < horizon }
-            .sorted { $0.start < $1.start }
-            .prefix(16)
-            .map { $0 }
-    }
 
     private var firstName: String? {
         guard let fullName = authManager.accounts.first?.name, !fullName.isEmpty else { return nil }
@@ -66,9 +52,6 @@ struct MacUnifiedDashboardView: View {
         .navigationTitle("Dashboard")
         .task {
             await loadWidgetData()
-            if calendarModel.events.isEmpty && !calendarModel.isLoading {
-                await calendarModel.refresh()
-            }
         }
         .onChange(of: snapshot?.timestamp) { _, _ in
             Task { await loadRecentStories() }
@@ -87,22 +70,13 @@ struct MacUnifiedDashboardView: View {
     // MARK: - Layout
 
     private var twoColumnLayout: some View {
-        HStack(alignment: .top, spacing: 20) {
-            leftFeedColumn
-                .frame(maxWidth: .infinity)
-            rightCalendarColumn
-                .frame(width: 300)
-        }
-        .padding(24)
+        leftFeedColumn
+            .padding(24)
     }
 
     private var stackedLayout: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            leftFeedColumn
-            rightCalendarColumn
-                .frame(maxWidth: .infinity)
-        }
-        .padding(24)
+        leftFeedColumn
+            .padding(24)
     }
 
     // MARK: - Left column
@@ -127,24 +101,6 @@ struct MacUnifiedDashboardView: View {
                         .foregroundStyle(MacAppTheme.secondaryText)
                 }
 
-                // Brief + Action Items side by side
-                HStack(alignment: .top, spacing: 12) {
-                    MacDailyBriefCard(
-                        payload: dailyBriefingPayload,
-                        hasLLMKey: hasLLMKey,
-                        isGenerating: isBriefGenerating,
-                        onRefresh: { refreshBrief() },
-                        onOpenBrief: onOpenBrief,
-                        onOpenLLMSettings: { onOpenBrief?() }
-                    )
-                    .frame(maxWidth: .infinity)
-
-                    MacActionItemsCard(
-                        items: openTasks,
-                        isVaultReady: VaultManager.shared.isVaultReady
-                    )
-                    .frame(width: 220)
-                }
 
                 // Account Updates
                 MacAccountUpdatesCard(
@@ -182,45 +138,6 @@ struct MacUnifiedDashboardView: View {
         }
     }
 
-    // MARK: - Right column
-
-    private var rightCalendarColumn: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                MacDashboardSectionTitle("Calendar")
-                MacCalendarMiniMonthView(
-                    selectedDate: $calendarModel.selectedDate,
-                    accentColor: MacAppTheme.accent,
-                    hasEventOnDay: { day in
-                        !calendarModel.eventsOverlapping(dayContaining: day).isEmpty
-                    }
-                )
-
-                MacDashboardSectionTitle("Upcoming")
-                Group {
-                    if calendarModel.isLoading && calendarModel.events.isEmpty {
-                        ProgressView("Loading calendar…")
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    } else if upcomingEvents.isEmpty {
-                        Text("No upcoming events in the next few weeks.")
-                            .font(.body)
-                            .foregroundStyle(MacAppTheme.secondaryText)
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(upcomingEvents) { ev in
-                                MacDashboardUpcomingEventRow(event: ev)
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(MacAppTheme.secondaryBackground.opacity(0.55))
-                .clipShape(RoundedRectangle(cornerRadius: MacAppTheme.cornerRadiusSmall))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 
     // MARK: - Greeting
 
@@ -562,100 +479,6 @@ private struct MacDailyBriefCard: View {
 
 // MARK: - Action Items Card
 
-private struct MacActionItemsCard: View {
-    let items: [VaultActionItemRecord]
-    let isVaultReady: Bool
-
-    var body: some View {
-        MacDashboardCard {
-            VStack(alignment: .leading, spacing: 8) {
-                MacCardHeader(
-                    icon: "checklist",
-                    title: "ACTION ITEMS",
-                    count: items.isEmpty ? nil : items.count
-                )
-
-                Divider().opacity(0.15)
-
-                actionContent
-                    .animation(.easeOut(duration: 0.2), value: isVaultReady)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var actionContent: some View {
-        if !isVaultReady {
-            MacCardEmptyState(
-                icon: "externaldrive.badge.xmark",
-                title: "Vault not connected",
-                subtitle: "Set up a vault in Settings"
-            )
-        } else if items.isEmpty {
-            MacCardEmptyState(
-                icon: "checkmark.circle",
-                title: "All clear",
-                subtitle: "No pending action items"
-            )
-        } else {
-            let preview = Array(items.prefix(3))
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(preview.enumerated()), id: \.element.id) { idx, item in
-                    MacActionItemPreviewRow(item: item)
-                    if idx < preview.count - 1 {
-                        Divider().opacity(0.1).padding(.leading, 18)
-                    }
-                }
-
-                Button {
-                    NotificationCenter.default.post(
-                        name: .macSelectRootTab,
-                        object: MacRootTab.actionItems.rawValue
-                    )
-                } label: {
-                    HStack(spacing: 3) {
-                        Spacer()
-                        Text(items.count > 3 ? "View all \(items.count)" : "View all")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(MacAppTheme.accent)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9))
-                            .foregroundStyle(MacAppTheme.accent)
-                    }
-                    .padding(.top, 6)
-                }
-                .buttonStyle(.plain)
-                .cursor(.pointingHand)
-            }
-        }
-    }
-}
-
-private struct MacActionItemPreviewRow: View {
-    let item: VaultActionItemRecord
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Group {
-                if let p = item.priority {
-                    Circle()
-                        .strokeBorder(ActionItemPriorityColors.color(forStoredPriority: p), lineWidth: 1.5)
-                } else {
-                    Circle()
-                        .strokeBorder(MacAppTheme.secondaryText.opacity(0.35), lineWidth: 1.5)
-                }
-            }
-            .frame(width: 10, height: 10)
-
-            Text(item.title)
-                .font(.caption)
-                .foregroundStyle(MacAppTheme.primaryText)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.vertical, 4)
-    }
-}
 
 // MARK: - Account Updates Card
 
@@ -883,39 +706,6 @@ private struct MacDashboardAccountSection: View {
     }
 }
 
-// MARK: - Upcoming row (kept from original)
-
-private struct MacDashboardUpcomingEventRow: View {
-    let event: GoogleCalendarDisplayEvent
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(timeRange)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(MacAppTheme.accent)
-
-            Text(event.title.isEmpty ? "(No title)" : event.title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(MacAppTheme.primaryText)
-                .lineLimit(2)
-
-            Text(event.calendarTitle)
-                .font(.caption2)
-                .foregroundStyle(MacAppTheme.secondaryText)
-                .lineLimit(1)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var timeRange: String {
-        if event.isAllDay {
-            return event.start.formatted(date: .abbreviated, time: .omitted) + " · All day"
-        }
-        let start = event.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
-        let end = event.end.formatted(date: .omitted, time: .shortened)
-        return "\(start) – \(end)"
-    }
-}
 
 // MARK: - Cursor helper
 

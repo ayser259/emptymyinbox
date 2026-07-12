@@ -21,19 +21,12 @@ struct MacSidebarContextualShortcut: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Feature-specific shortcuts shown **above** the global block in the sidebar (e.g. Catch Up, Calendar, Action Items).
+/// Feature-specific shortcuts shown **above** the global block in the sidebar (e.g. Catch Up).
 struct MacSidebarFeatureShortcutSection: Equatable, Sendable {
     let title: String
     let shortcuts: [MacSidebarContextualShortcut]
 }
 
-/// Asset names in `Assets.xcassets` for Action Items **Categories** parent rows (Priority, Urgency, Labels, Projects).
-enum MacActionItemsCategorySidebarAsset {
-    static let priority = "ActionItemsCategoryPriority"
-    static let urgency = "ActionItemsCategoryUrgency"
-    static let labels = "ActionItemsCategoryLabels"
-    static let projects = "ActionItemsCategoryProjects"
-}
 
 /// Leading icon for `MacSidebarListRowButton`: SF Symbol or catalog image.
 enum MacSidebarListRowIcon: Equatable, Sendable {
@@ -77,12 +70,9 @@ struct MacSidebarRowLeadingContent: View {
 /// Snapshot of per-domain refresh state passed into `MacSidebarShell` to power the refresh widget.
 struct MacSidebarRefreshState: Equatable {
     var isRefreshingMail: Bool = false
-    var isRefreshingCalendar: Bool = false
     var lastMailRefreshAt: Date? = nil
-    var lastCalendarRefreshAt: Date? = nil
-    var lastActionItemsRefreshAt: Date? = nil
 
-    var isAnyRefreshing: Bool { isRefreshingMail || isRefreshingCalendar }
+    var isAnyRefreshing: Bool { isRefreshingMail }
 }
 
 // MARK: - Refresh widget
@@ -103,20 +93,6 @@ private struct MacSidebarRefreshWidget: View {
                             label: "Mail",
                             date: refreshState.lastMailRefreshAt,
                             isRefreshing: refreshState.isRefreshingMail,
-                            now: timeline.date
-                        )
-                        domainRow(
-                            icon: "calendar",
-                            label: "Calendar",
-                            date: refreshState.lastCalendarRefreshAt,
-                            isRefreshing: refreshState.isRefreshingCalendar,
-                            now: timeline.date
-                        )
-                        domainRow(
-                            icon: "checkmark.square",
-                            label: "Tasks",
-                            date: refreshState.lastActionItemsRefreshAt,
-                            isRefreshing: false,
                             now: timeline.date
                         )
                     }

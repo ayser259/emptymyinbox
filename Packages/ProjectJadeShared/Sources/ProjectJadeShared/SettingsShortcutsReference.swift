@@ -17,8 +17,6 @@ public enum SettingsShortcutsReference {
     /// Primary navigation + refresh (every tab).
     public static let global: [SettingsShortcutReference] = [
         SettingsShortcutReference(title: "Mail", shortcutDisplay: "⌘1"),
-        SettingsShortcutReference(title: "Calendar", shortcutDisplay: "⌘2"),
-        SettingsShortcutReference(title: "Action Items", shortcutDisplay: "⌘3"),
         SettingsShortcutReference(title: "Refresh", shortcutDisplay: "⌘R"),
         SettingsShortcutReference(title: "Next primary tab", shortcutDisplay: "⌃Tab"),
     ]
@@ -36,13 +34,6 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Reply All (when others are on the thread)", shortcutDisplay: "⇧R"),
     ]
 
-    /// Calendar tab — Calendar or Starred tools.
-    public static let calendarModes: [SettingsShortcutReference] = [
-        SettingsShortcutReference(title: "Events", shortcutDisplay: "E"),
-        SettingsShortcutReference(title: "Day", shortcutDisplay: "D"),
-        SettingsShortcutReference(title: "Week", shortcutDisplay: "W"),
-        SettingsShortcutReference(title: "Month", shortcutDisplay: "M"),
-    ]
 
     /// Mail — Catch Up contextual shortcuts (when viewing Catch Up).
     public static let mailCatchUp: [SettingsShortcutReference] = [
@@ -71,11 +62,4 @@ public enum SettingsShortcutsReference {
         SettingsShortcutReference(title: "Stay on this email", shortcutDisplay: "Esc"),
     ]
 
-    /// Action Items tab — sidebar hints.
-    public static let actionItems: [SettingsShortcutReference] = [
-        SettingsShortcutReference(title: "Priority", shortcutDisplay: "p0–p4"),
-        SettingsShortcutReference(title: "Urgency", shortcutDisplay: "u0–u4"),
-        SettingsShortcutReference(title: "Labels", shortcutDisplay: "@"),
-        SettingsShortcutReference(title: "Projects", shortcutDisplay: "#"),
-    ]
 }
