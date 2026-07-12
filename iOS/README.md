@@ -1,11 +1,11 @@
-# Empty My Inbox - iOS App
+# Jade - iOS App
 
 iOS application for managing your inbox and reaching inbox zero.
 
 ## Project Structure
 
 ```
-EmptyMyInbox/
+ProjectJade/
 ├── App.swift          # Main app entry point
 ├── ContentView.swift  # Main view
 └── Info.plist        # App configuration

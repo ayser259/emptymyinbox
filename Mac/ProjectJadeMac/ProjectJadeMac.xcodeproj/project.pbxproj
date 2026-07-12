@@ -1,0 +1,673 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AEFBF47B2F79B37900AA180E /* ProjectJadeShared in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000052EBEF8FC001ACEAA /* ProjectJadeShared */; };
+		AEFBF47C2F79B37900AA180E /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000062EBEF8FC001ACEAA /* GoogleSignIn */; };
+		AEFBF47D2F79B37900AA180E /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AEF000072EBEF8FC001ACEAA /* GoogleSignInSwift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AEFBF4472F79AE0000AA180E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AEFBF4312F79ADFE00AA180E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AEFBF4382F79ADFE00AA180E;
+			remoteInfo = ProjectJadeMac;
+		};
+		AEFBF4512F79AE0000AA180E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AEFBF4312F79ADFE00AA180E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AEFBF4382F79ADFE00AA180E;
+			remoteInfo = ProjectJadeMac;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		AEFBF4392F79ADFE00AA180E /* Project Jade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Project Jade.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEFBF4462F79AE0000AA180E /* ProjectJadeMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProjectJadeMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AEFBF4502F79AE0000AA180E /* ProjectJadeMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProjectJadeMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AEFBF43B2F79ADFE00AA180E /* ProjectJadeMac */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ProjectJadeMac;
+			sourceTree = "<group>";
+		};
+		AEFBF4492F79AE0000AA180E /* ProjectJadeMacTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ProjectJadeMacTests;
+			sourceTree = "<group>";
+		};
+		AEFBF4532F79AE0000AA180E /* ProjectJadeMacUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ProjectJadeMacUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AEFBF4362F79ADFE00AA180E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AEFBF47D2F79B37900AA180E /* GoogleSignInSwift in Frameworks */,
+				AEFBF47C2F79B37900AA180E /* GoogleSignIn in Frameworks */,
+				AEFBF47B2F79B37900AA180E /* ProjectJadeShared in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF4432F79AE0000AA180E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF44D2F79AE0000AA180E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AEFBF4302F79ADFE00AA180E = {
+			isa = PBXGroup;
+			children = (
+				AEFBF43B2F79ADFE00AA180E /* ProjectJadeMac */,
+				AEFBF4492F79AE0000AA180E /* ProjectJadeMacTests */,
+				AEFBF4532F79AE0000AA180E /* ProjectJadeMacUITests */,
+				AEFBF43A2F79ADFE00AA180E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AEFBF43A2F79ADFE00AA180E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AEFBF4392F79ADFE00AA180E /* Project Jade.app */,
+				AEFBF4462F79AE0000AA180E /* ProjectJadeMacTests.xctest */,
+				AEFBF4502F79AE0000AA180E /* ProjectJadeMacUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AEFBF4382F79ADFE00AA180E /* ProjectJadeMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AEFBF45A2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMac" */;
+			buildPhases = (
+				AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */,
+				AEFBF4352F79ADFE00AA180E /* Sources */,
+				AEFBF4362F79ADFE00AA180E /* Frameworks */,
+				AEFBF4372F79ADFE00AA180E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AEFBF43B2F79ADFE00AA180E /* ProjectJadeMac */,
+			);
+			name = ProjectJadeMac;
+			packageProductDependencies = (
+				AEF000052EBEF8FC001ACEAA /* ProjectJadeShared */,
+				AEF000062EBEF8FC001ACEAA /* GoogleSignIn */,
+				AEF000072EBEF8FC001ACEAA /* GoogleSignInSwift */,
+			);
+			productName = "Project Jade";
+			productReference = AEFBF4392F79ADFE00AA180E /* Project Jade.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AEFBF4452F79AE0000AA180E /* ProjectJadeMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AEFBF45D2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMacTests" */;
+			buildPhases = (
+				AEFBF4422F79AE0000AA180E /* Sources */,
+				AEFBF4432F79AE0000AA180E /* Frameworks */,
+				AEFBF4442F79AE0000AA180E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AEFBF4482F79AE0000AA180E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AEFBF4492F79AE0000AA180E /* ProjectJadeMacTests */,
+			);
+			name = ProjectJadeMacTests;
+			packageProductDependencies = (
+			);
+			productName = ProjectJadeMacTests;
+			productReference = AEFBF4462F79AE0000AA180E /* ProjectJadeMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AEFBF44F2F79AE0000AA180E /* ProjectJadeMacUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AEFBF4602F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMacUITests" */;
+			buildPhases = (
+				AEFBF44C2F79AE0000AA180E /* Sources */,
+				AEFBF44D2F79AE0000AA180E /* Frameworks */,
+				AEFBF44E2F79AE0000AA180E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AEFBF4522F79AE0000AA180E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AEFBF4532F79AE0000AA180E /* ProjectJadeMacUITests */,
+			);
+			name = ProjectJadeMacUITests;
+			packageProductDependencies = (
+			);
+			productName = ProjectJadeMacUITests;
+			productReference = AEFBF4502F79AE0000AA180E /* ProjectJadeMacUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AEFBF4312F79ADFE00AA180E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					AEFBF4382F79ADFE00AA180E = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					AEFBF4452F79AE0000AA180E = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = AEFBF4382F79ADFE00AA180E;
+					};
+					AEFBF44F2F79AE0000AA180E = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = AEFBF4382F79ADFE00AA180E;
+					};
+				};
+			};
+			buildConfigurationList = AEFBF4342F79ADFE00AA180E /* Build configuration list for PBXProject "ProjectJadeMac" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AEFBF4302F79ADFE00AA180E;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AEF000032EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/ProjectJadeShared" */,
+				AEF000042EBEF8FC001ACEAA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AEFBF43A2F79ADFE00AA180E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AEFBF4382F79ADFE00AA180E /* ProjectJadeMac */,
+				AEFBF4452F79AE0000AA180E /* ProjectJadeMacTests */,
+				AEFBF44F2F79AE0000AA180E /* ProjectJadeMacUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AEFBF4372F79ADFE00AA180E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF4442F79AE0000AA180E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF44E2F79AE0000AA180E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AEFBF4702F79ADFE00AA180E /* Sync shared icons from iOS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sync shared icons from iOS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nIOS_ASSETS=\"${SRCROOT}/../../iOS/ProjectJade/ProjectJade/Assets.xcassets\"\nMAC_ASSETS=\"${SRCROOT}/ProjectJadeMac/Assets.xcassets\"\nmkdir -p \"${MAC_ASSETS}\"\nrsync -a --delete \"${IOS_ASSETS}/AppIcon.appiconset/\" \"${MAC_ASSETS}/AppIcon.appiconset/\"\nrsync -a --delete \"${IOS_ASSETS}/Logo.imageset/\" \"${MAC_ASSETS}/Logo.imageset/\"\nfor theme in Gold Ocean Forest Violet; do\n  rsync -a --delete \"${IOS_ASSETS}/ThemeIcon${theme}.imageset/\" \"${MAC_ASSETS}/ThemeIcon${theme}.imageset/\"\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AEFBF4352F79ADFE00AA180E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF4422F79AE0000AA180E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AEFBF44C2F79AE0000AA180E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AEFBF4482F79AE0000AA180E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AEFBF4382F79ADFE00AA180E /* ProjectJadeMac */;
+			targetProxy = AEFBF4472F79AE0000AA180E /* PBXContainerItemProxy */;
+		};
+		AEFBF4522F79AE0000AA180E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AEFBF4382F79ADFE00AA180E /* ProjectJadeMac */;
+			targetProxy = AEFBF4512F79AE0000AA180E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AEFBF4582F79AE0000AA180E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AEFBF4592F79AE0000AA180E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		AEFBF45B2F79AE0000AA180E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ProjectJadeMac/ProjectJadeMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Jade;
+				INFOPLIST_KEY_CFBundleName = "Project Jade";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMac;
+				PRODUCT_MODULE_NAME = ProjectJadeMac;
+				PRODUCT_NAME = "Project Jade";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AEFBF45C2F79AE0000AA180E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ProjectJadeMac/ProjectJadeMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Jade;
+				INFOPLIST_KEY_CFBundleName = "Project Jade";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMac;
+				PRODUCT_MODULE_NAME = ProjectJadeMac;
+				PRODUCT_NAME = "Project Jade";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		AEFBF45E2F79AE0000AA180E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Project Jade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Project Jade";
+			};
+			name = Debug;
+		};
+		AEFBF45F2F79AE0000AA180E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Project Jade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Project Jade";
+			};
+			name = Release;
+		};
+		AEFBF4612F79AE0000AA180E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMacUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ProjectJadeMac;
+			};
+			name = Debug;
+		};
+		AEFBF4622F79AE0000AA180E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = XFXK72ST27;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aysersHobbies.ProjectJadeMacUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = ProjectJadeMac;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AEFBF4342F79ADFE00AA180E /* Build configuration list for PBXProject "ProjectJadeMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AEFBF4582F79AE0000AA180E /* Debug */,
+				AEFBF4592F79AE0000AA180E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AEFBF45A2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AEFBF45B2F79AE0000AA180E /* Debug */,
+				AEFBF45C2F79AE0000AA180E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AEFBF45D2F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AEFBF45E2F79AE0000AA180E /* Debug */,
+				AEFBF45F2F79AE0000AA180E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AEFBF4602F79AE0000AA180E /* Build configuration list for PBXNativeTarget "ProjectJadeMacUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AEFBF4612F79AE0000AA180E /* Debug */,
+				AEFBF4622F79AE0000AA180E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AEF000032EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/ProjectJadeShared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Packages/ProjectJadeShared;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AEF000042EBEF8FC001ACEAA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AEF000052EBEF8FC001ACEAA /* ProjectJadeShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AEF000032EBEF8FC001ACEAA /* XCLocalSwiftPackageReference "../../Packages/ProjectJadeShared" */;
+			productName = ProjectJadeShared;
+		};
+		AEF000062EBEF8FC001ACEAA /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AEF000042EBEF8FC001ACEAA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		AEF000072EBEF8FC001ACEAA /* GoogleSignInSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AEF000042EBEF8FC001ACEAA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignInSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AEFBF4312F79ADFE00AA180E /* Project object */;
+}
