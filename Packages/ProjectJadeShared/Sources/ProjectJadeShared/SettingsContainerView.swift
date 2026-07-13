@@ -7,6 +7,7 @@ public struct SettingsContainerView<Vault: View>: View {
 
     @Binding public var isAddingAccount: Bool
     @State private var selectedPane: SettingsSidebarItem = .general
+    @State private var compactSelectedPane: SettingsSidebarItem?
     @State private var showClearCacheConfirm = false
     @State private var showSignOutConfirm = false
     @State private var showCacheClearedAlert = false
@@ -33,24 +34,23 @@ public struct SettingsContainerView<Vault: View>: View {
         self.onDismiss = onDismiss
     }
 
+    private var usesCompactSettingsNavigation: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             settingsChromeBar
-            NavigationSplitView {
-                NavigationStack {
-                    sidebar
-                }
-                #if os(macOS)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 228, max: 300)
-                #endif
-            } detail: {
-                NavigationStack {
-                    detailView(for: selectedPane)
-                        .id(selectedPane)
-                }
-                #if os(macOS)
-                .navigationSplitViewColumnWidth(min: 420, ideal: 560, max: 900)
-                #endif
+            if usesCompactSettingsNavigation {
+                compactSettingsNavigation
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                splitSettingsNavigation
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(SharedAppTheme.primaryBackground)
@@ -93,6 +93,7 @@ public struct SettingsContainerView<Vault: View>: View {
             await refreshConfiguredAPIKeyCount()
         }
         .onDisappear {
+            compactSelectedPane = nil
             AppearanceSettingsStore.shared.revertPaletteChanges()
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
@@ -123,10 +124,73 @@ public struct SettingsContainerView<Vault: View>: View {
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)
                 .tint(accentColor)
+                .accessibilityIdentifier("settings_close_button")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(SharedAppTheme.secondaryBackground.opacity(0.55))
+
+            Divider()
+                .opacity(0.35)
+        }
+    }
+
+    private var splitSettingsNavigation: some View {
+        NavigationSplitView {
+            NavigationStack {
+                sidebar
+            }
+            #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 228, max: 300)
+            #endif
+        } detail: {
+            NavigationStack {
+                detailView(for: selectedPane)
+                    .id(selectedPane)
+            }
+            #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 560, max: 900)
+            #endif
+        }
+    }
+
+    private var compactSettingsNavigation: some View {
+        Group {
+            if let compactSelectedPane {
+                VStack(spacing: 0) {
+                    compactDetailHeader(for: compactSelectedPane)
+                    detailView(for: compactSelectedPane)
+                }
+            } else {
+                sidebar
+            }
+        }
+    }
+
+    private func compactDetailHeader(for item: SettingsSidebarItem) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    self.compactSelectedPane = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(SharedAppTheme.primaryText)
+                        .frame(width: 28, height: 28)
+                        .background(SharedAppTheme.secondaryBackground.opacity(0.65))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings_detail_back_button")
+
+                Text(item.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(SharedAppTheme.primaryText)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(SharedAppTheme.secondaryBackground.opacity(0.35))
 
             Divider()
                 .opacity(0.35)
@@ -139,7 +203,11 @@ public struct SettingsContainerView<Vault: View>: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(SettingsSidebarItem.allCases) { item in
-                        sidebarRow(item)
+                        if usesCompactSettingsNavigation {
+                            compactSidebarRow(item)
+                        } else {
+                            sidebarRow(item)
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -153,53 +221,77 @@ public struct SettingsContainerView<Vault: View>: View {
         .background(SharedAppTheme.primaryBackground)
     }
 
+    private func compactSidebarRow(_ item: SettingsSidebarItem) -> some View {
+        Button {
+            compactSelectedPane = item
+        } label: {
+            sidebarRowLabel(item, isSelected: false, showsChevron: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings_sidebar_\(item.rawValue)")
+    }
+
     private func sidebarRow(_ item: SettingsSidebarItem) -> some View {
         let isSelected = selectedPane == item
         return Button {
             selectedPane = item
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: item.systemImage)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? accentColor : SharedAppTheme.secondaryText)
-                    .frame(width: 22, alignment: .center)
-                Text(item.title)
-                    .font(.body)
-                    .foregroundStyle(SharedAppTheme.primaryText)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-                if item == .keys, configuredAPIKeyCount > 0 {
-                    Text(keysSidebarBadge)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(accentColor)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(accentColor.opacity(0.18))
-                        )
-                        .accessibilityLabel("\(configuredAPIKeyCount) API keys saved")
-                }
-            }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.07) : Color.clear)
-            )
-            .overlay(alignment: .leading) {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(accentColor)
-                        .frame(width: 3)
-                        .padding(.vertical, 8)
-                        .padding(.leading, 3)
-                }
-            }
+            sidebarRowLabel(item, isSelected: isSelected, showsChevron: false)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("settings_sidebar_\(item.rawValue)")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    private func sidebarRowLabel(
+        _ item: SettingsSidebarItem,
+        isSelected: Bool,
+        showsChevron: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(isSelected ? accentColor : SharedAppTheme.secondaryText)
+                .frame(width: 22, alignment: .center)
+            Text(item.title)
+                .font(.body)
+                .foregroundStyle(SharedAppTheme.primaryText)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+            if item == .keys, configuredAPIKeyCount > 0 {
+                Text(keysSidebarBadge)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(accentColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(accentColor.opacity(0.18))
+                    )
+                    .accessibilityLabel("\(configuredAPIKeyCount) API keys saved")
+            }
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(SharedAppTheme.secondaryText.opacity(0.8))
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.white.opacity(0.07) : Color.clear)
+        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 3)
+            }
+        }
     }
 
     /// Pinned to the bottom of the sidebar; native bordered buttons (not list rows).
@@ -245,25 +337,28 @@ public struct SettingsContainerView<Vault: View>: View {
 
     @ViewBuilder
     private func detailView(for item: SettingsSidebarItem) -> some View {
-        switch item {
-        case .general:
-            SettingsGeneralView()
-        case .appearance:
-            SettingsAppearanceView()
-        case .connectedAccounts:
-            SettingsConnectedAccountsView(
-                isAddingAccount: $isAddingAccount,
-                accentColor: accentColor,
-                onAddGmailAccount: onAddGmailAccount
-            )
-        case .shortcuts:
-            SettingsShortcutsView()
-        case .storage:
-            SettingsStorageView(vaultSettings: vaultSettings, accentColor: accentColor)
-        case .keys:
-            SettingsKeysView()
-        case .corePlugins:
-            SettingsCorePluginsView()
+        Group {
+            switch item {
+            case .general:
+                SettingsGeneralView()
+            case .appearance:
+                SettingsAppearanceView()
+            case .connectedAccounts:
+                SettingsConnectedAccountsView(
+                    isAddingAccount: $isAddingAccount,
+                    accentColor: accentColor,
+                    onAddGmailAccount: onAddGmailAccount
+                )
+            case .shortcuts:
+                SettingsShortcutsView()
+            case .storage:
+                SettingsStorageView(vaultSettings: vaultSettings, accentColor: accentColor)
+            case .keys:
+                SettingsKeysView()
+            case .corePlugins:
+                SettingsCorePluginsView()
+            }
         }
+        .accessibilityIdentifier("settings_detail_\(item.rawValue)")
     }
 }

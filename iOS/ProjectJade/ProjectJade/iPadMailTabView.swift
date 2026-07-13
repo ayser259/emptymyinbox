@@ -92,6 +92,7 @@ struct iPadMailTabView: View {
                     iPadSidebarRow(
                         title: tool.title,
                         systemImage: tool.systemImage,
+                        accessibilityIdentifier: "ipad_sidebar_tool_\(tool.rawValue)",
                         isSelected: rootState.mailSidebarSelection == .tool(tool)
                     ) {
                         rootState.selectMailSidebar(.tool(tool))
@@ -208,8 +209,12 @@ struct iPadMailTabView: View {
             DashboardView(isMenuPresented: $rootState.showMenu)
                 .environmentObject(authManager)
         case .catchUp:
-            CatchUpView()
-                .environmentObject(authManager)
+            CatchUpView(
+                onExit: {
+                    rootState.selectMailSidebar(.tool(.dashboard))
+                }
+            )
+            .environmentObject(authManager)
         case .stories:
             if let snap = snapshot {
                 NewsletterInsightDeckView(
@@ -380,6 +385,7 @@ private struct iPadSidebarRow: View {
     let title: String
     let systemImage: String
     var badge: Int? = nil
+    var accessibilityIdentifier: String? = nil
     let isSelected: Bool
     let action: () -> Void
 
@@ -402,11 +408,24 @@ private struct iPadSidebarRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(OptionalAccessibilityIdentifierModifier(identifier: accessibilityIdentifier))
         .listRowBackground(
             isSelected
                 ? appearanceSettings.resolvedPalette.selectionHighlight
                 : Color.clear
         )
+    }
+}
+
+private struct OptionalAccessibilityIdentifierModifier: ViewModifier {
+    let identifier: String?
+
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
     }
 }
 

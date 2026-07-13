@@ -9,11 +9,16 @@ import SwiftUI
 import ProjectJadeShared
 
 struct CustomBackButton: View {
+    var onBack: (() -> Void)? = nil
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
         Button {
-            dismiss()
+            if let onBack {
+                onBack()
+            } else {
+                dismiss()
+            }
         } label: {
             Image(systemName: "chevron.left")
                 .font(.system(size: 16, weight: .semibold))
@@ -22,24 +27,27 @@ struct CustomBackButton: View {
                 .background(SharedAppTheme.cardBackground)
                 .clipShape(Circle())
         }
+        .accessibilityIdentifier("navigation_back_button")
     }
 }
 
 struct CustomBackButtonModifier: ViewModifier {
+    var onBack: (() -> Void)? = nil
+
     func body(content: Content) -> some View {
         content
             .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    CustomBackButton()
+                    CustomBackButton(onBack: onBack)
                 }
             }
     }
 }
 
 extension View {
-    func customBackButton() -> some View {
-        self.modifier(CustomBackButtonModifier())
+    func customBackButton(onBack: (() -> Void)? = nil) -> some View {
+        self.modifier(CustomBackButtonModifier(onBack: onBack))
     }
 }
 

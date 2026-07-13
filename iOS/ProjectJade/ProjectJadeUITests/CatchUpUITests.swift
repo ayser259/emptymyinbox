@@ -42,42 +42,36 @@ final class CatchUpUITests: XCTestCase {
         expectation(for: exists, evaluatedWith: app, handler: nil)
         waitForExpectations(timeout: 5, handler: nil)
         
-        // Note: These tests are basic structure tests
-        // Actual element identifiers would need to be added to the app for full testing
-        // This provides a foundation that can be expanded
-        
         // App should have some UI elements
         XCTAssertTrue(app.windows.count > 0, "App should have at least one window")
     }
-    
-    // Note: More specific UI tests would require:
-    // 1. Accessibility identifiers on UI elements (e.g., email cards, swipe actions)
-    // 2. Mock data setup for emails
-    // 3. Specific view hierarchy knowledge
-    // 4. Ability to simulate swipe gestures
-    //
-    // Example of what a full test might look like:
-    // func testEmailCardSwiping() {
-    //     let emailCard = app.otherElements["emailCard_1"]
-    //     XCTAssertTrue(emailCard.exists)
-    //     
-    //     // Simulate swipe right (mark as read)
-    //     emailCard.swipeRight()
-    //     // Verify email is marked as read
-    // }
-    //
-    // func testMarkAsReadAction() {
-    //     let emailCard = app.otherElements["emailCard_1"]
-    //     let markAsReadButton = emailCard.buttons["markAsRead"]
-    //     markAsReadButton.tap()
-    //     // Verify email is marked as read
-    // }
-    //
-    // func testStarAction() {
-    //     let emailCard = app.otherElements["emailCard_1"]
-    //     let starButton = emailCard.buttons["star"]
-    //     starButton.tap()
-    //     // Verify email is starred
-    // }
-}
 
+    @MainActor
+    func testIPadCatchUpExitReturnsToDashboard() throws {
+        let catchUpSidebar = app.buttons["ipad_sidebar_tool_catchUp"]
+        guard catchUpSidebar.waitForExistence(timeout: 8) else {
+            throw XCTSkip("Wide iPad layout is required for this navigation test")
+        }
+
+        catchUpSidebar.tap()
+
+        let returnButton = app.buttons["catchup_return_to_dashboard"]
+        let backButton = app.buttons["navigation_back_button"]
+        let exitControl = returnButton.waitForExistence(timeout: 8)
+            ? returnButton
+            : (backButton.waitForExistence(timeout: 3) ? backButton : nil)
+
+        XCTAssertNotNil(exitControl, "Catch Up should expose a return or back control on iPad")
+        exitControl?.tap()
+
+        let dashboardSidebar = app.buttons["ipad_sidebar_tool_dashboard"]
+        XCTAssertTrue(
+            dashboardSidebar.waitForExistence(timeout: 5),
+            "Dashboard sidebar item should remain available after exiting Catch Up"
+        )
+        XCTAssertFalse(
+            app.navigationBars["Catch Up"].waitForExistence(timeout: 2),
+            "Catch Up detail should no longer be visible after exit"
+        )
+    }
+}

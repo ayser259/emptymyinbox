@@ -58,6 +58,7 @@ private struct iPadWideTopBar: View {
                 }
                 .iconButton()
                 .accessibilityLabel("Menu")
+                .accessibilityIdentifier("main_menu_button")
             }
 
             Label(AdaptiveRootState.RootTab.mail.title, systemImage: AdaptiveRootState.RootTab.mail.systemImage)

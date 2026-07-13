@@ -43,6 +43,14 @@ public class AuthManager: ObservableObject {
         sessionState = .checking
         logDebug("Auth: checking saved session…", category: "Auth")
         Task { @MainActor in
+            if ProcessInfo.processInfo.arguments.contains("--uitesting") {
+                self.accounts = []
+                self.isAuthenticated = true
+                self.sessionState = .authenticated
+                logDebug("Auth: UI testing mode — bypassing sign-in", category: "Auth")
+                return
+            }
+
             let gmailAccounts = self.gmailService.getAllAccounts()
 
             if !gmailAccounts.isEmpty {

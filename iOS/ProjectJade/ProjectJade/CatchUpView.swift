@@ -21,6 +21,8 @@ import ProjectJadeShared
 struct CatchUpView: View {
     let accountId: Int?
     let accountEmail: String?
+    var onExit: (() -> Void)? = nil
+    var showsNavigationBack: Bool = true
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var debugSettings = DebugSettings.shared
@@ -89,9 +91,16 @@ struct CatchUpView: View {
     /// Opacity reduction per card in stack
     private let stackOpacityStep: Double = 0.12
     
-    init(accountId: Int? = nil, accountEmail: String? = nil) {
+    init(
+        accountId: Int? = nil,
+        accountEmail: String? = nil,
+        onExit: (() -> Void)? = nil,
+        showsNavigationBack: Bool = true
+    ) {
         self.accountId = accountId
         self.accountEmail = accountEmail
+        self.onExit = onExit
+        self.showsNavigationBack = showsNavigationBack
         _emailLoader = StateObject(wrappedValue: LazyEmailLoader(accountId: accountId, accountEmail: accountEmail))
     }
     
@@ -110,7 +119,10 @@ struct CatchUpView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .customBackButton()
+        .modifier(CatchUpBackButtonModifier(
+            showsNavigationBack: showsNavigationBack,
+            onBack: performExit
+        ))
         #endif
         .unsubscribeManualActionSheet(isPresented: $showUnsubscribeWebView, url: $unsubscribeManualURL)
         .sheet(item: $replyPresentation) { presentation in
@@ -238,6 +250,14 @@ struct CatchUpView: View {
     }
     
     // MARK: - Lifecycle
+
+    private func performExit() {
+        if let onExit {
+            onExit()
+        } else {
+            dismiss()
+        }
+    }
     
     private func onAppear() async {
         #if os(iOS)
@@ -280,7 +300,7 @@ struct CatchUpView: View {
                     sessionStartTime: sessionStartTime,
                     todaySendersReceived: todaySendersReceived,
                     todayUnsubscribesTotal: todayUnsubscribesTotal,
-                    onDone: { dismiss() }
+                    onDone: { performExit() }
                 )
                 .task { await loadCompletionContext() }
                 .onAppear { Task { await persistSessionMetricsIfNeeded() } }
@@ -310,12 +330,13 @@ struct CatchUpView: View {
                 Text("No unread emails in this view.")
             }
             Button("Return to Dashboard") {
-                dismiss()
+                performExit()
             }
             .buttonStyle(.borderedProminent)
             .tint(SharedAppTheme.accent)
             .keyboardShortcut(.defaultAction)
             .keyboardShortcut(.return, modifiers: [])
+            .accessibilityIdentifier("catchup_return_to_dashboard")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -968,6 +989,19 @@ private enum DismissDirection {
     case left
     case right
     case up
+}
+
+private struct CatchUpBackButtonModifier: ViewModifier {
+    let showsNavigationBack: Bool
+    let onBack: () -> Void
+
+    func body(content: Content) -> some View {
+        if showsNavigationBack {
+            content.customBackButton(onBack: onBack)
+        } else {
+            content
+        }
+    }
 }
 
 #Preview {

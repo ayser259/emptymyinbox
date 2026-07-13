@@ -29,6 +29,8 @@ struct MainAppTopBar<Center: View>: View {
                     .primaryText()
             }
             .iconButton()
+            .accessibilityLabel("Menu")
+            .accessibilityIdentifier("main_menu_button")
         }
         .padding(.horizontal, AppTheme.spacingMedium)
         .padding(.vertical, AppTheme.spacingMedium)
