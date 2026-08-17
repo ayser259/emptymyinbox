@@ -16,14 +16,40 @@ public struct EmailAccount: Codable {
     public let last_sync: String?
     public let created_at: String
     public let email_count: Int
+    /// Gmail INBOX label `messagesUnread` from the last refresh (authoritative while local sync catches up).
+    public let gmail_unread_count: Int?
     
-    public init(id: Int, email: String, is_active: Bool, last_sync: String?, created_at: String, email_count: Int) {
+    public init(
+        id: Int,
+        email: String,
+        is_active: Bool,
+        last_sync: String?,
+        created_at: String,
+        email_count: Int,
+        gmail_unread_count: Int? = nil
+    ) {
         self.id = id
         self.email = email
         self.is_active = is_active
         self.last_sync = last_sync
         self.created_at = created_at
         self.email_count = email_count
+        self.gmail_unread_count = gmail_unread_count
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        email = try container.decode(String.self, forKey: .email)
+        is_active = try container.decode(Bool.self, forKey: .is_active)
+        last_sync = try container.decodeIfPresent(String.self, forKey: .last_sync)
+        created_at = try container.decode(String.self, forKey: .created_at)
+        email_count = try container.decode(Int.self, forKey: .email_count)
+        gmail_unread_count = try container.decodeIfPresent(Int.self, forKey: .gmail_unread_count)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, email, is_active, last_sync, created_at, email_count, gmail_unread_count
     }
 }
 

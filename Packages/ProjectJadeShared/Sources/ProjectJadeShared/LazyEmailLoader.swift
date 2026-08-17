@@ -59,7 +59,10 @@ public class LazyEmailLoader: ObservableObject {
     /// Whether initial metadata is loading
     @Published public private(set) var isLoadingMetadata: Bool = false
     
-    /// Whether we're ready to show cards (first 2 emails loaded)
+    /// Whether live Gmail listing/metadata fetch is still running after the deck is shown.
+    @Published public private(set) var isFetchingLiveUpdates: Bool = false
+    
+    /// Whether we're ready to show cards (seeded snapshot or first thread loaded)
     @Published public private(set) var isReadyToShow: Bool = false
     
     /// Count of emails removed during this session
@@ -161,12 +164,12 @@ public class LazyEmailLoader: ObservableObject {
     
     // MARK: - Public Methods
     
-    /// Load metadata for all unread emails with priority loading for first email
-    /// This uses a streaming approach: first email loads fast while metadata continues in background
+    /// Load metadata for all unread emails, seeding from dashboard snapshot first.
     public func loadMetadata() async {
         isLoadingMetadata = true
+        isFetchingLiveUpdates = false
         
-        logInfo("LazyEmailLoader: Starting optimized load (priority first email)", category: "Email")
+        logInfo("LazyEmailLoader: Starting Catch Up load (snapshot seed + paginated unread listing)", category: "Email")
         
         let accounts = gmailService.getAllAccounts()
         let targetAccounts: [GmailAccount]
@@ -182,182 +185,235 @@ public class LazyEmailLoader: ObservableObject {
             isReadyToShow = true
             return
         }
-        
-        // PHASE 1: Get message IDs quickly (just IDs, very fast)
+
+        let allowedEmails = Set(targetAccounts.map(\.email))
+        let snapshot = await DashboardDataManager.shared.loadCachedSnapshot()
+        let seededMetadata = snapshot.map {
+            CatchUpLoadSupport.seedMetadata(
+                from: $0,
+                accountEmail: accountEmail,
+                allowedAccountEmails: allowedEmails
+            )
+        } ?? []
+
+        if !seededMetadata.isEmpty {
+            var seeded = seededMetadata
+            sortEmails(&seeded)
+            emailMetadata = seeded
+            for meta in seededMetadata where loadStates[meta.id] == nil {
+                loadStates[meta.id] = .pending
+            }
+            rebuildCatchUpThreads()
+            isReadyToShow = true
+            logInfo(
+                "LazyEmailLoader: Seeded \(seededMetadata.count) unread emails from dashboard snapshot (\(catchUpThreads.count) threads)",
+                category: "Email"
+            )
+            if !catchUpThreads.isEmpty {
+                await loadThread(at: 0)
+            }
+        }
+
+        let deferDelay = CatchUpLoadSupport.liveFetchDeferDelayNanoseconds(snapshotTimestamp: snapshot?.timestamp)
+        if deferDelay > 0 {
+            logInfo("LazyEmailLoader: Deferring live Gmail fetch briefly while dashboard sync finishes", category: "Email")
+            try? await Task.sleep(nanoseconds: deferDelay)
+        }
+
+        isFetchingLiveUpdates = true
+
+        // PHASE 1: Paginated unread ID listing via label IDs (not search).
         var allMessageRefs: [(account: GmailAccount, id: String, threadId: String)] = []
         
         for account in targetAccounts {
             do {
-                logInfo("LazyEmailLoader: Getting message IDs for \(account.email)", category: "Email")
-                let (messageRefs, _) = try await gmailService.listMessages(
-                    for: account,
-                    query: "is:unread in:inbox -is:starred",
-                    maxResults: 500,
-                    pageToken: nil,
-                    fields: "messages(id,threadId),nextPageToken"
-                )
+                logInfo("LazyEmailLoader: Listing unread inbox IDs for \(account.email)", category: "Email")
+                let messageRefs = try await gmailService.listAllUnreadInboxMessageRefs(for: account)
                 
                 for ref in messageRefs {
                     allMessageRefs.append((account: account, id: ref.id, threadId: ref.threadId))
                 }
-                logInfo("LazyEmailLoader: Got \(messageRefs.count) message IDs for \(account.email)", category: "Email")
+                logInfo("LazyEmailLoader: Got \(messageRefs.count) unread IDs for \(account.email)", category: "Email")
             } catch {
-                logError("LazyEmailLoader: Error getting message IDs for \(account.email): \(error)", category: "Email")
+                logError("LazyEmailLoader: Error listing unread IDs for \(account.email): \(error)", category: "Email")
             }
         }
-        
-        guard !allMessageRefs.isEmpty else {
+
+        let refsNeedingMetadata = CatchUpLoadSupport.messageRefsNeedingMetadata(
+            refs: allMessageRefs,
+            existingMetadata: emailMetadata
+        )
+
+        guard !allMessageRefs.isEmpty || !emailMetadata.isEmpty else {
             logInfo("LazyEmailLoader: No unread emails found", category: "Email")
             isLoadingMetadata = false
+            isFetchingLiveUpdates = false
             isReadyToShow = true
             return
         }
+
+        // PHASE 2: Priority-load the first thread if we don't have content yet.
+        if !isReadyToShow, let firstRef = allMessageRefs.first {
+            logInfo("LazyEmailLoader: Priority loading first unread email", category: "Email")
+            await priorityLoadFirstEmail(firstRef)
+        }
+
+        // PHASE 3: Fetch metadata only for IDs missing from the snapshot seed.
+        if !refsNeedingMetadata.isEmpty {
+            await loadRemainingMetadata(messageRefs: refsNeedingMetadata, rebuildIncrementally: true)
+        } else {
+            await finalizeMetadataSortAndNotify()
+        }
+
+        isLoadingMetadata = false
+        isFetchingLiveUpdates = false
+
+        if !isReadyToShow {
+            isReadyToShow = true
+        }
+
+        await loadNextBatchInBackground()
         
-        // PHASE 2: Load first email's FULL content immediately (priority)
-        // Don't wait for metadata - load full email right away for fastest display
-        logInfo("LazyEmailLoader: Priority loading first email", category: "Email")
-        
-        let firstRef = allMessageRefs[0]
-        var firstEmailLoaded = false
-        
-        // Start loading first email's full content
-        let firstEmailTask = Task {
-            do {
-                let details = try await gmailService.batchGetFullEmailDetails(
-                    for: firstRef.account,
-                    gmailIds: [firstRef.id]
-                )
-                
-                if let firstEmail = details.first {
-                    // Skip if email is starred (safety check)
-                    guard !firstEmail.is_starred else {
-                        logInfo("LazyEmailLoader: Skipping starred first email", category: "Email")
-                        return
-                    }
-                    
-                    await MainActor.run {
-                        // Create temporary metadata for this email
-                        let tempMetadata = EmailMetadata(
-                            id: firstEmail.id,
-                            gmail_id: firstEmail.gmail_id,
-                            thread_id: firstEmail.thread_id,
-                            subject: firstEmail.subject,
-                            sender: firstEmail.sender,
-                            sender_name: firstEmail.sender_name,
-                            snippet: firstEmail.snippet,
-                            is_read: firstEmail.is_read,
-                            is_starred: firstEmail.is_starred,
-                            labels: firstEmail.labels,
-                            received_at: firstEmail.received_at,
-                            account_email: firstEmail.account_email
-                        )
-                        
-                        // Add to our state
-                        if self.emailMetadata.isEmpty {
-                            self.emailMetadata = [tempMetadata]
-                        } else if !self.emailMetadata.contains(where: { $0.gmail_id == tempMetadata.gmail_id }) {
-                            self.emailMetadata.insert(tempMetadata, at: 0)
-                        }
-                        
-                        self.loadedEmails[firstEmail.id] = firstEmail
-                        self.loadStates[firstEmail.id] = .loaded
-                        self.rebuildCatchUpThreads()
-                        firstEmailLoaded = true
-                        
-                        logSuccess("LazyEmailLoader: First email loaded and ready!", category: "Email")
-                    }
-                }
-            } catch {
-                logError("LazyEmailLoader: Error loading first email: \(error)", category: "Email")
+        logInfo(
+            "LazyEmailLoader: Full initialization complete. \(emailMetadata.count) emails, \(catchUpThreads.count) threads",
+            category: "Email"
+        )
+    }
+
+    private func priorityLoadFirstEmail(_ firstRef: (account: GmailAccount, id: String, threadId: String)) async {
+        do {
+            let details = try await gmailService.batchGetFullEmailDetails(
+                for: firstRef.account,
+                gmailIds: [firstRef.id]
+            )
+
+            guard let firstEmail = details.first, !firstEmail.is_starred else {
+                logInfo("LazyEmailLoader: Skipping starred or missing first email", category: "Email")
+                return
             }
-        }
-        
-        // PHASE 3: In parallel, load metadata for all unread emails.
-        // Dedupe by Gmail ID to avoid duplicates with the priority-loaded first email.
-        let metadataTask = Task {
-            await self.loadRemainingMetadata(messageRefs: allMessageRefs)
-        }
-        
-        // Wait for first email to load (fast path - just 1 API call)
-        await firstEmailTask.value
-        
-        // Mark as ready once first thread can load
-        if firstEmailLoaded {
+
+            let tempMetadata = EmailMetadata(
+                id: firstEmail.id,
+                gmail_id: firstEmail.gmail_id,
+                thread_id: firstEmail.thread_id,
+                subject: firstEmail.subject,
+                sender: firstEmail.sender,
+                sender_name: firstEmail.sender_name,
+                snippet: firstEmail.snippet,
+                is_read: firstEmail.is_read,
+                is_starred: firstEmail.is_starred,
+                labels: firstEmail.labels,
+                received_at: firstEmail.received_at,
+                account_email: firstEmail.account_email
+            )
+
+            emailMetadata = CatchUpLoadSupport.mergeUniqueMetadata(existing: emailMetadata, adding: [tempMetadata])
+            loadedEmails[firstEmail.id] = firstEmail
+            loadStates[firstEmail.id] = .loaded
             rebuildCatchUpThreads()
+
             if !catchUpThreads.isEmpty {
                 await loadThread(at: 0)
             }
-            isLoadingMetadata = false
             isReadyToShow = true
-            logInfo("LazyEmailLoader: Ready to show! (first thread loading)", category: "Email")
+            logSuccess("LazyEmailLoader: First email loaded and ready!", category: "Email")
+        } catch {
+            logError("LazyEmailLoader: Error loading first email: \(error)", category: "Email")
         }
-        
-        // Wait for metadata to finish loading
-        await metadataTask.value
-        
-        // If first email didn't load, mark as ready anyway (will show skeleton)
-        if !isReadyToShow {
-            isLoadingMetadata = false
-            isReadyToShow = true
-        }
-        
-        // Load next few emails in background
-        await loadNextBatchInBackground()
-        
-        logInfo("LazyEmailLoader: Full initialization complete. \(emailMetadata.count) emails available", category: "Email")
     }
     
-    /// Load metadata for remaining emails (runs in background)
-    private func loadRemainingMetadata(messageRefs: [(account: GmailAccount, id: String, threadId: String)]) async {
-        // Group by account
+    /// Load metadata for emails not already seeded from the dashboard snapshot.
+    private func loadRemainingMetadata(
+        messageRefs: [(account: GmailAccount, id: String, threadId: String)],
+        rebuildIncrementally: Bool = false
+    ) async {
         let groupedByAccount = Dictionary(grouping: messageRefs) { $0.account.email }
         
         for (_, refs) in groupedByAccount {
             guard let account = refs.first?.account else { continue }
             let messageIds = refs.map { $0.id }
-            
-            // Load metadata in smaller batches with rate limiting
-            let batchSize = 10 // Smaller batches to avoid 429
+            let batchSize = CatchUpLoadSupport.metadataBatchSize
             let batches = stride(from: 0, to: messageIds.count, by: batchSize).map { start in
                 let end = min(start + batchSize, messageIds.count)
                 return Array(messageIds[start..<end])
             }
             
             for batch in batches {
+                if batch != batches.first {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
                 do {
-                    // Small delay between batches to avoid rate limiting
-                    if batch != batches.first {
-                        try await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
-                    }
-                    
-                    let messages = try await gmailService.batchGetMessagesMetadata(for: account, messageIds: batch)
-                    
+                    let messages = try await fetchMetadataBatchWithRetry(for: account, messageIds: batch)
+                    var batchMetadata: [EmailMetadata] = []
+
                     for gmailMessage in messages {
-                        // Only include emails that actually have UNREAD label and are not starred
-                        guard gmailMessage.labelIds.contains("UNREAD") && 
-                              gmailMessage.labelIds.contains("INBOX") &&
+                        guard gmailMessage.labelIds.contains("UNREAD"),
+                              gmailMessage.labelIds.contains("INBOX"),
                               !gmailMessage.labelIds.contains("STARRED") else {
                             continue
                         }
-                        
+
                         let emailId = gmailService.getEmailId(for: gmailMessage.id)
-                        let metadata = gmailService.parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                        
-                        // Add to metadata if not already present
-                        if !emailMetadata.contains(where: { $0.gmail_id == metadata.gmail_id }) {
-                            emailMetadata.append(metadata)
-                            loadStates[metadata.id] = .pending
-                        }
+                        let metadata = gmailService.parseEmailMetadata(
+                            from: gmailMessage,
+                            accountEmail: account.email,
+                            emailId: emailId
+                        )
+                        batchMetadata.append(metadata)
+                    }
+
+                    emailMetadata = CatchUpLoadSupport.mergeUniqueMetadata(
+                        existing: emailMetadata,
+                        adding: batchMetadata
+                    )
+                    for metadata in batchMetadata where loadStates[metadata.id] == nil {
+                        loadStates[metadata.id] = .pending
+                    }
+
+                    if rebuildIncrementally {
+                        sortMetadataPreservingProcessedPrefix()
+                        rebuildCatchUpThreads()
                     }
                 } catch {
-                    logError("LazyEmailLoader: Error loading metadata batch: \(error)", category: "Email")
+                    logError("LazyEmailLoader: Error loading metadata batch after retries: \(error)", category: "Email")
                 }
             }
         }
-        
-        // Sort by account order (if set) then by received_at descending within each account.
-        // Only sort the *unseen* portion (from currentIndex onwards) so that already-processed
-        // emails are never displaced back into the visible deck by a background sort.
+
+        await finalizeMetadataSortAndNotify()
+    }
+
+    private func fetchMetadataBatchWithRetry(
+        for account: GmailAccount,
+        messageIds: [String]
+    ) async throws -> [GmailMessage] {
+        var lastError: Error?
+        let maxRetries = CatchUpLoadSupport.metadataBatchMaxRetries
+
+        for attempt in 0..<maxRetries {
+            if attempt > 0 {
+                let delay = CatchUpLoadSupport.metadataBatchRetryDelayNanoseconds(attempt: attempt)
+                if delay > 0 {
+                    try await Task.sleep(nanoseconds: delay)
+                }
+            }
+
+            do {
+                return try await gmailService.batchGetMessagesMetadata(for: account, messageIds: messageIds)
+            } catch {
+                lastError = error
+                logError(
+                    "LazyEmailLoader: Metadata batch failed (attempt \(attempt + 1)/\(maxRetries)): \(error)",
+                    category: "Email"
+                )
+            }
+        }
+
+        throw lastError ?? GmailAPIError.apiError("Failed to load metadata batch")
+    }
+
+    private func sortMetadataPreservingProcessedPrefix() {
         if currentIndex > 0 && currentIndex <= emailMetadata.count {
             let seen = Array(emailMetadata[0..<currentIndex])
             var unseen = Array(emailMetadata[currentIndex...])
@@ -366,12 +422,16 @@ public class LazyEmailLoader: ObservableObject {
         } else {
             sortEmails(&emailMetadata)
         }
-        
-        // Save to cache and notify dashboard
+    }
+
+    private func finalizeMetadataSortAndNotify() async {
+        sortMetadataPreservingProcessedPrefix()
         await saveToCacheAndNotify(emailMetadata)
-        
         rebuildCatchUpThreads()
-        logInfo("LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails, \(catchUpThreads.count) threads", category: "Email")
+        logInfo(
+            "LazyEmailLoader: Metadata load complete. \(emailMetadata.count) emails, \(catchUpThreads.count) threads",
+            category: "Email"
+        )
     }
     
     private func rebuildCatchUpThreads() {
@@ -530,6 +590,7 @@ public class LazyEmailLoader: ObservableObject {
         loadStates = [:]
         currentIndex = 0
         isReadyToShow = false
+        isFetchingLiveUpdates = false
         removedCount = 0
         sessionSeenEmailIds = []
         sessionSeenThreadIds = []

@@ -15,6 +15,8 @@ class MockGmailAPIService {
     var messageReferences: [GmailMessageReference] = []
     var labels: [String: String] = [:]
     
+    var labelStatsById: [String: GmailLabelStats] = [:]
+    
     // Behavior control
     var shouldFailTokenRefresh = false
     var shouldFailAPI = false
@@ -140,9 +142,11 @@ class MockGmailAPIService {
     
     func listMessages(
         for account: GmailAccount,
-        query: String = "is:unread in:inbox",
+        query: String? = "is:unread in:inbox",
+        labelIds: [String]? = nil,
         maxResults: Int = 50,
-        pageToken: String? = nil
+        pageToken: String? = nil,
+        fields: String? = nil
     ) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
         if shouldFailAPI {
             throw apiError ?? GmailAPIError.apiError("Mock API error")
@@ -160,23 +164,35 @@ class MockGmailAPIService {
         
         let filteredMessages = messageReferences.filter { ref in
             guard let message = messages[ref.id] else { return false }
-            if query.contains("is:unread") {
+            if let labelIds, !labelIds.isEmpty {
+                return labelIds.allSatisfy { message.labelIds.contains($0) }
+            }
+            let effectiveQuery = query ?? "is:unread in:inbox"
+            if effectiveQuery.contains("is:unread") {
                 return message.labelIds.contains("UNREAD") && message.labelIds.contains("INBOX")
             }
-            if query.contains("is:starred"), !query.contains("in:inbox") {
+            if effectiveQuery.contains("is:starred"), !effectiveQuery.contains("in:inbox") {
                 return message.labelIds.contains("STARRED")
             }
-            if query.contains("in:sent") {
+            if effectiveQuery.contains("in:sent") {
                 return message.labelIds.contains("SENT")
             }
-            if query.contains("in:inbox") {
+            if effectiveQuery.contains("in:inbox") {
                 return message.labelIds.contains("INBOX")
             }
             return message.labelIds.contains("INBOX")
         }
         
-        let limited = Array(filteredMessages.prefix(maxResults))
-        return (limited, nil)
+        let startIndex: Int
+        if let pageToken, let tokenIndex = Int(pageToken) {
+            startIndex = tokenIndex
+        } else {
+            startIndex = 0
+        }
+        let endIndex = min(startIndex + maxResults, filteredMessages.count)
+        let page = startIndex < endIndex ? Array(filteredMessages[startIndex..<endIndex]) : []
+        let nextPageToken = endIndex < filteredMessages.count ? String(endIndex) : nil
+        return (page, nextPageToken)
     }
     
     func getMessage(
@@ -225,16 +241,64 @@ class MockGmailAPIService {
         return results
     }
     
+    func getLabelStats(for account: GmailAccount, labelId: String) async throws -> GmailLabelStats {
+        if shouldFailAPI {
+            throw apiError ?? GmailAPIError.apiError("Mock API error")
+        }
+        apiCallCount += 1
+        if let stats = labelStatsById[labelId] {
+            return stats
+        }
+        let unreadRefs = messageReferences.filter { ref in
+            guard let message = messages[ref.id] else { return false }
+            return message.labelIds.contains("UNREAD") && message.labelIds.contains("INBOX")
+        }
+        return GmailLabelStats(
+            id: labelId,
+            name: labelId,
+            messagesTotal: messageReferences.filter { messages[$0.id]?.labelIds.contains("INBOX") == true }.count,
+            messagesUnread: unreadRefs.count
+        )
+    }
+
+    func listAllUnreadInboxMessageRefs(
+        for account: GmailAccount,
+        maxTotal: Int = CatchUpLoadSupport.defaultUnreadListingCap,
+        pageSize: Int = CatchUpLoadSupport.defaultPageSize
+    ) async throws -> [GmailMessageReference] {
+        var allRefs: [GmailMessageReference] = []
+        var pageToken: String? = nil
+        repeat {
+            let remaining = maxTotal - allRefs.count
+            guard remaining > 0 else { break }
+            let (page, nextToken) = try await listMessages(
+                for: account,
+                query: nil,
+                labelIds: ["INBOX", "UNREAD"],
+                maxResults: min(pageSize, remaining),
+                pageToken: pageToken
+            )
+            allRefs.append(contentsOf: page)
+            pageToken = nextToken
+        } while pageToken != nil
+        return allRefs
+    }
+
     func syncUnreadEmailMetadata(
         for account: GmailAccount,
         maxResults: Int = 1000,
         progressCallback: ((Int, Int?) async -> Void)? = nil
     ) async throws -> [EmailMetadata] {
-        let (refs, _) = try await listMessages(for: account, query: "is:unread in:inbox", maxResults: maxResults)
+        let refs = try await listAllUnreadInboxMessageRefs(for: account, maxTotal: maxResults)
         
         var metadata: [EmailMetadata] = []
         for ref in refs {
             if let message = messages[ref.id] {
+                guard message.labelIds.contains("UNREAD"),
+                      message.labelIds.contains("INBOX"),
+                      !message.labelIds.contains("STARRED") else {
+                    continue
+                }
                 let emailId = StableID.emailId(gmailId: message.id)
                 let metadataItem = parseEmailMetadata(from: message, accountEmail: account.email, emailId: emailId)
                 metadata.append(metadataItem)

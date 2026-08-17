@@ -481,7 +481,11 @@ struct DashboardView: View {
     }
     
     private func getUnreadCount(for account: EmailAccount) -> Int {
-        allEmails.filter { $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read && !$0.is_starred }.count
+        let local = CatchUpLoadSupport.localUnreadCount(for: account.email, in: emails)
+        return CatchUpLoadSupport.displayUnreadCount(
+            localNonStarred: local,
+            gmailInboxUnread: account.gmail_unread_count
+        )
     }
     
     private func getStarredCount(for account: EmailAccount) -> Int {
@@ -537,7 +541,9 @@ struct DashboardView: View {
     }
     
     private var unreadCount: Int {
-        emails.filter { !$0.is_read && !$0.is_starred }.count
+        let local = emails.filter { !$0.is_read && !$0.is_starred }.count
+        let gmailTotal = accounts.compactMap(\.gmail_unread_count).reduce(0, +)
+        return CatchUpLoadSupport.displayUnreadCount(localNonStarred: local, gmailInboxUnread: gmailTotal > 0 ? gmailTotal : nil)
     }
     
     // MARK: - Sender Grouping

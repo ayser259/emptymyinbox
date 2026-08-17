@@ -14,6 +14,7 @@ public protocol GmailServiceProtocol: AnyObject {
     func getAccountsLoadStatus() -> GmailAPIService.AccountLoadStatus
     func signOut(accountEmail: String?)
     func getUserProfile(for account: GmailAccount) async throws -> GmailProfile
+    func getLabelStats(for account: GmailAccount, labelId: String) async throws -> GmailLabelStats
     func syncUnreadEmailMetadata(
         for account: GmailAccount,
         maxResults: Int,

@@ -85,7 +85,7 @@ struct MacCatchUpFeedView: View {
 
     var body: some View {
         Group {
-            if loader.isLoadingMetadata {
+            if loader.isLoadingMetadata && !loader.isReadyToShow {
                 ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !loader.hasMoreEmails {

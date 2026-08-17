@@ -46,6 +46,9 @@ public actor DashboardDataManager {
     private let gmailService: GmailServiceProtocol
     private let dashboardCache: DashboardCacheProtocol
     
+    /// Coalesces concurrent refresh requests so first-connect sync does not race Catch Up.
+    private var activeRefreshTask: Task<DashboardDataSnapshot?, Never>?
+    
     // Account health tracking
     private var accountHealthMap: [String: AccountHealth] = [:]
     
@@ -76,6 +79,23 @@ public actor DashboardDataManager {
     
     @discardableResult
     public func refreshData(shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
+        if shouldSync, let activeRefreshTask {
+            return await activeRefreshTask.value
+        }
+
+        if shouldSync {
+            let task = Task { await self.performRefreshData(shouldSync: shouldSync, progressCallback: progressCallback) }
+            activeRefreshTask = task
+            let snapshot = await task.value
+            activeRefreshTask = nil
+            return snapshot
+        }
+
+        return await performRefreshData(shouldSync: shouldSync, progressCallback: progressCallback)
+    }
+
+    @discardableResult
+    private func performRefreshData(shouldSync: Bool, progressCallback: ProgressCallback? = nil) async -> DashboardDataSnapshot? {
         let refreshStart = Date()
         logDebug("refreshData called - shouldSync: \(shouldSync), hasCallback: \(progressCallback != nil)", category: "Refresh")
         
@@ -107,9 +127,11 @@ public actor DashboardDataManager {
         
         // Fetch data from all accounts
         var allInboxMetadata: [EmailMetadata] = []
+        var allUnreadMetadata: [EmailMetadata] = []
         var allStarredMetadata: [EmailMetadata] = []
         var allSentMetadata: [EmailMetadata] = []
         var allLabelsDict: [String: (name: String, unreadCount: Int)] = [:]
+        var gmailUnreadCountsByEmail: [String: Int] = [:]
         
         // Convert GmailAccounts to EmailAccounts
         var emailAccounts: [EmailAccount] = []
@@ -127,13 +149,26 @@ public actor DashboardDataManager {
             
             do {
                 let inboxMetadata: [EmailMetadata]
-                
+                let unreadMetadata: [EmailMetadata]
+
                 if shouldSync {
+                    if let labelStats = try? await gmailService.getLabelStats(for: gmailAccount, labelId: "INBOX") {
+                        gmailUnreadCountsByEmail[gmailAccount.email] = labelStats.messagesUnread
+                    }
+
                     inboxMetadata = try await gmailService.syncInboxEmailMetadata(
                         for: gmailAccount,
                         maxResults: 1000,
                         progressCallback: { current, total in
                             await progressCallback?(.fetchingUnread, .inProgress, "Fetching inbox: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                        }
+                    )
+
+                    unreadMetadata = try await gmailService.syncUnreadEmailMetadata(
+                        for: gmailAccount,
+                        maxResults: CatchUpLoadSupport.defaultUnreadListingCap,
+                        progressCallback: { current, total in
+                            await progressCallback?(.fetchingUnread, .inProgress, "Syncing unread: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
                         }
                     )
                     
@@ -152,16 +187,25 @@ public actor DashboardDataManager {
                         inboxMetadata = existing.allEmails
                             .filter { $0.account_email == gmailAccount.email }
                             .map { $0.toEmailMetadata() }
+                        unreadMetadata = existing.emails
+                            .filter { $0.account_email == gmailAccount.email }
+                            .map { $0.toEmailMetadata() }
+                        if let account = existing.accounts.first(where: { $0.email == gmailAccount.email }),
+                           let gmailUnread = account.gmail_unread_count {
+                            gmailUnreadCountsByEmail[gmailAccount.email] = gmailUnread
+                        }
                     } else {
                         inboxMetadata = []
+                        unreadMetadata = []
                     }
                 }
                 
                 allInboxMetadata.append(contentsOf: inboxMetadata)
-                await progressCallback?(.fetchingUnread, .inProgress, "\(inboxMetadata.count) inbox messages from \(gmailAccount.email)", gmailAccount.email, inboxMetadata.count, nil)
+                allUnreadMetadata.append(contentsOf: unreadMetadata)
+                await progressCallback?(.fetchingUnread, .inProgress, "\(inboxMetadata.count) inbox / \(unreadMetadata.count) unread from \(gmailAccount.email)", gmailAccount.email, unreadMetadata.count, nil)
                 
-                // Count unread per label
-                for email in inboxMetadata where !email.is_read {
+                // Count unread per label from paginated unread sync
+                for email in unreadMetadata where CatchUpLoadSupport.isCatchUpEligible(email) {
                     for labelId in email.labels {
                         if allLabelsDict[labelId] == nil {
                             allLabelsDict[labelId] = (name: labelId, unreadCount: 0)
@@ -291,7 +335,8 @@ public actor DashboardDataManager {
                 is_active: true,
                 last_sync: lastSyncString,
                 created_at: dateFormatter.string(from: Date()),
-                email_count: allInboxMetadata.filter { $0.account_email == gmailAccount.email }.count
+                email_count: allInboxMetadata.filter { $0.account_email == gmailAccount.email }.count,
+                gmail_unread_count: gmailUnreadCountsByEmail[gmailAccount.email]
             )
             emailAccounts.append(emailAccount)
             logDebug("Created EmailAccount for \(gmailAccount.email), lastSync: \(lastSyncString ?? "nil")", category: "Refresh")
@@ -329,12 +374,19 @@ public actor DashboardDataManager {
         
         // Convert metadata to EmailListItem for storage
         let inboxEmails = allInboxMetadata.map { $0.toEmailListItem() }
+        let unreadEmails = allUnreadMetadata
+            .filter { CatchUpLoadSupport.isCatchUpEligible($0) }
+            .map { $0.toEmailListItem() }
         let starredEmails = allStarredMetadata.map { $0.toEmailListItem() }
         let sentEmails = allSentMetadata.map { $0.toEmailListItem() }
         
         // Sort by received_at descending
         let sortedInbox = inboxEmails.sorted { $0.received_at > $1.received_at }
-        let sortedUnreadOnly = sortedInbox.filter { !$0.is_read }
+        let sortedUnreadOnly = unreadEmails.sorted { $0.received_at > $1.received_at }
+        let mergedAllEmails = CatchUpLoadSupport.mergeUnreadIntoAllEmails(
+            inboxEmails: sortedInbox,
+            unreadEmails: sortedUnreadOnly
+        )
         let sortedStarred = starredEmails.sorted { $0.received_at > $1.received_at }
         let sortedSent = sentEmails.sorted { $0.received_at > $1.received_at }
         
@@ -359,13 +411,13 @@ public actor DashboardDataManager {
             timestamp: Date(),
             accounts: emailAccounts,
             emails: sortedUnreadOnly,
-            allEmails: sortedInbox,
+            allEmails: mergedAllEmails,
             starredEmails: sortedStarred,
             sentEmails: sortedSent,
             labels: labels
         )
         await dashboardCache.saveSnapshot(snapshot)
-        await InboxMetricsStore.shared.reconcileReceivedEmails(from: sortedInbox)
+        await InboxMetricsStore.shared.reconcileReceivedEmails(from: mergedAllEmails)
         Telemetry.event("dashboard.refresh.snapshot_saved", metadata: [
             "inbox_count": "\(sortedInbox.count)",
             "unread_count": "\(sortedUnreadOnly.count)",
@@ -408,6 +460,8 @@ public actor DashboardDataManager {
         await progressCallback?(.initializing, .inProgress, "Refreshing \(gmailAccount.email)...", gmailAccount.email, nil, nil)
 
         do {
+            let gmailInboxUnread = try? await gmailService.getLabelStats(for: gmailAccount, labelId: "INBOX").messagesUnread
+
             let inboxMetadata = try await gmailService.syncInboxEmailMetadata(
                 for: gmailAccount,
                 maxResults: 1000,
@@ -415,7 +469,16 @@ public actor DashboardDataManager {
                     await progressCallback?(.fetchingUnread, .inProgress, "Fetching inbox: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
                 }
             )
-            await progressCallback?(.fetchingUnread, .completed, "Fetched inbox", gmailAccount.email, inboxMetadata.count, nil)
+            await progressCallback?(.fetchingUnread, .inProgress, "Fetched inbox", gmailAccount.email, inboxMetadata.count, nil)
+
+            let unreadMetadata = try await gmailService.syncUnreadEmailMetadata(
+                for: gmailAccount,
+                maxResults: CatchUpLoadSupport.defaultUnreadListingCap,
+                progressCallback: { current, total in
+                    await progressCallback?(.fetchingUnread, .inProgress, "Syncing unread: \(current)/\(total ?? 0)", gmailAccount.email, current, total)
+                }
+            )
+            await progressCallback?(.fetchingUnread, .completed, "Fetched unread", gmailAccount.email, unreadMetadata.count, nil)
 
             let starredMetadata = try await gmailService.syncStarredEmailMetadata(
                 for: gmailAccount,
@@ -443,6 +506,9 @@ public actor DashboardDataManager {
             accountHealthMap[gmailAccount.email] = health
 
             let updatedInboxForAccount = inboxMetadata.map { $0.toEmailListItem() }
+            let updatedUnreadForAccount = unreadMetadata
+                .filter { CatchUpLoadSupport.isCatchUpEligible($0) }
+                .map { $0.toEmailListItem() }
             let updatedStarredForAccount = starredMetadata.map { $0.toEmailListItem() }
             let updatedSentForAccount = sentMetadata.map { $0.toEmailListItem() }
 
@@ -458,7 +524,12 @@ public actor DashboardDataManager {
 
             let mergedInbox = (baseSnapshot.allEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedInboxForAccount)
                 .sorted { $0.received_at > $1.received_at }
-            let mergedUnreadOnly = mergedInbox.filter { !$0.is_read }
+            let mergedUnreadOnly = (baseSnapshot.emails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedUnreadForAccount)
+                .sorted { $0.received_at > $1.received_at }
+            let mergedAllEmails = CatchUpLoadSupport.mergeUnreadIntoAllEmails(
+                inboxEmails: mergedInbox,
+                unreadEmails: mergedUnreadOnly
+            )
             let mergedStarred = (baseSnapshot.starredEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedStarredForAccount)
                 .sorted { $0.received_at > $1.received_at }
             let mergedSent = (baseSnapshot.sentEmails.filter { $0.account_email.lowercased() != normalizedTarget } + updatedSentForAccount)
@@ -476,7 +547,8 @@ public actor DashboardDataManager {
                     is_active: current.is_active,
                     last_sync: nowString,
                     created_at: current.created_at,
-                    email_count: mergedInbox.filter { $0.account_email.lowercased() == normalizedTarget }.count
+                    email_count: mergedInbox.filter { $0.account_email.lowercased() == normalizedTarget }.count,
+                    gmail_unread_count: gmailInboxUnread
                 )
             } else {
                 mergedAccounts.append(
@@ -486,7 +558,8 @@ public actor DashboardDataManager {
                         is_active: true,
                         last_sync: nowString,
                         created_at: nowString,
-                        email_count: mergedInbox.filter { $0.account_email.lowercased() == normalizedTarget }.count
+                        email_count: mergedInbox.filter { $0.account_email.lowercased() == normalizedTarget }.count,
+                        gmail_unread_count: gmailInboxUnread
                     )
                 )
             }
@@ -496,7 +569,7 @@ public actor DashboardDataManager {
                 timestamp: Date(),
                 accounts: mergedAccounts,
                 emails: mergedUnreadOnly,
-                allEmails: mergedInbox,
+                allEmails: mergedAllEmails,
                 starredEmails: mergedStarred,
                 sentEmails: mergedSent,
                 labels: labels

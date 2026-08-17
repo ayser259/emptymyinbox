@@ -152,6 +152,20 @@ public struct GmailMessageReference: Codable {
     }
 }
 
+public struct GmailLabelStats: Codable, Sendable {
+    public let id: String
+    public let name: String
+    public let messagesTotal: Int
+    public let messagesUnread: Int
+
+    public init(id: String, name: String, messagesTotal: Int, messagesUnread: Int) {
+        self.id = id
+        self.name = name
+        self.messagesTotal = messagesTotal
+        self.messagesUnread = messagesUnread
+    }
+}
+
 public struct GmailProfile: Codable {
     public let emailAddress: String
 
@@ -594,15 +608,31 @@ public class GmailAPIService {
         return try JSONDecoder().decode(GmailProfile.self, from: data)
     }
     
-    public func listMessages(for account: GmailAccount, query: String = "is:unread in:inbox", maxResults: Int = 50, pageToken: String? = nil, fields: String? = nil) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
+    public func listMessages(
+        for account: GmailAccount,
+        query: String? = "is:unread in:inbox",
+        labelIds: [String]? = nil,
+        maxResults: Int = 50,
+        pageToken: String? = nil,
+        fields: String? = nil
+    ) async throws -> (messages: [GmailMessageReference], nextPageToken: String?) {
         let token = try await getValidAccessToken(for: account)
         let start = Date()
         
         var urlComponents = URLComponents(string: "\(baseURL)/users/me/messages")!
-        urlComponents.queryItems = [
-            URLQueryItem(name: "q", value: query),
+        var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "maxResults", value: "\(maxResults)")
         ]
+
+        if let labelIds, !labelIds.isEmpty {
+            for labelId in labelIds {
+                queryItems.append(URLQueryItem(name: "labelIds", value: labelId))
+            }
+        } else if let query {
+            queryItems.append(URLQueryItem(name: "q", value: query))
+        }
+
+        urlComponents.queryItems = queryItems
         
         if let pageToken = pageToken {
             urlComponents.queryItems?.append(URLQueryItem(name: "pageToken", value: pageToken))
@@ -651,6 +681,52 @@ public class GmailAPIService {
             ])
             throw GmailAPIError.apiError("Failed to list messages: status \(httpResponse.statusCode)")
         }
+    }
+
+    /// List all unread inbox message refs, paginating via label IDs (not search).
+    public func listAllUnreadInboxMessageRefs(
+        for account: GmailAccount,
+        maxTotal: Int = CatchUpLoadSupport.defaultUnreadListingCap,
+        pageSize: Int = CatchUpLoadSupport.defaultPageSize
+    ) async throws -> [GmailMessageReference] {
+        var allRefs: [GmailMessageReference] = []
+        var pageToken: String? = nil
+        let fields = "messages(id,threadId),nextPageToken"
+        var truncated = false
+
+        repeat {
+            let remaining = maxTotal - allRefs.count
+            guard remaining > 0 else {
+                truncated = true
+                break
+            }
+
+            let (page, nextToken) = try await listMessages(
+                for: account,
+                query: nil,
+                labelIds: ["INBOX", "UNREAD"],
+                maxResults: min(pageSize, remaining),
+                pageToken: pageToken,
+                fields: fields
+            )
+
+            allRefs.append(contentsOf: page)
+            pageToken = nextToken
+
+            if allRefs.count >= maxTotal, nextToken != nil {
+                truncated = true
+                break
+            }
+        } while pageToken != nil
+
+        if truncated {
+            logWarning(
+                "GmailAPIService: unread listing truncated at \(maxTotal) for \(account.email)",
+                category: "Email"
+            )
+        }
+
+        return allRefs
     }
     
     public func getMessage(for account: GmailAccount, messageId: String, format: String = "full") async throws -> GmailMessage {
@@ -832,6 +908,37 @@ public class GmailAPIService {
         }
         
         return labelDict
+    }
+
+    /// Fetch Gmail label statistics including authoritative unread count.
+    public func getLabelStats(for account: GmailAccount, labelId: String) async throws -> GmailLabelStats {
+        let token = try await getValidAccessToken(for: account)
+        let url = URL(string: "\(baseURL)/users/me/labels/\(labelId)")!
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await urlSession.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw GmailAPIError.apiError("Failed to get label stats: \(response)")
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = json["id"] as? String,
+              let name = json["name"] as? String else {
+            throw GmailAPIError.apiError("Invalid label stats response")
+        }
+
+        let messagesTotal = json["messagesTotal"] as? Int ?? 0
+        let messagesUnread = json["messagesUnread"] as? Int ?? 0
+        return GmailLabelStats(
+            id: id,
+            name: name,
+            messagesTotal: messagesTotal,
+            messagesUnread: messagesUnread
+        )
     }
     
     // MARK: - Filters
@@ -1296,66 +1403,111 @@ public class GmailAPIService {
     
     // MARK: - Lightweight Metadata Sync (Fast - No Body Content)
     
-    /// Sync unread email metadata only - FAST, no body content downloaded
-    /// Returns EmailMetadata array for counts and lists, sorted by date descending
-    public func syncUnreadEmailMetadata(for account: GmailAccount, maxResults: Int = 1000, progressCallback: ((Int, Int?) async -> Void)? = nil) async throws -> [EmailMetadata] {
-        // Step 1: Get all message IDs (very fast - just IDs)
-        let (messageRefs, _) = try await listMessages(
+    /// Sync unread email metadata only - paginated via label IDs, no body content downloaded.
+    /// Returns EmailMetadata array for counts and lists, sorted by date descending.
+    public func syncUnreadEmailMetadata(
+        for account: GmailAccount,
+        maxResults: Int = CatchUpLoadSupport.defaultUnreadListingCap,
+        progressCallback: ((Int, Int?) async -> Void)? = nil
+    ) async throws -> [EmailMetadata] {
+        let messageRefs = try await listAllUnreadInboxMessageRefs(
             for: account,
-            query: "is:unread in:inbox",
-            maxResults: maxResults,
-            pageToken: nil,
-            fields: "messages(id,threadId),nextPageToken"
+            maxTotal: maxResults,
+            pageSize: CatchUpLoadSupport.defaultPageSize
         )
-        
+
         guard !messageRefs.isEmpty else {
-            // Still update lastSync even if no emails
             updateAccountLastSync(email: account.email)
             persistAccountsIfNeeded()
             return []
         }
-        
+
         let totalCount = messageRefs.count
         await progressCallback?(0, totalCount)
-        
-        // Step 2: Batch fetch metadata (no body) with rate limiting
+
+        let messageIds = messageRefs.map(\.id)
+        var allMetadata = try await fetchCatchUpEligibleMetadataBatches(
+            for: account,
+            messageIds: messageIds,
+            progressCallback: progressCallback,
+            totalCount: totalCount
+        )
+
+        allMetadata.sort { $0.received_at > $1.received_at }
+
+        updateAccountLastSync(email: account.email)
+        persistAccountsIfNeeded()
+
+        return allMetadata
+    }
+
+    private func fetchCatchUpEligibleMetadataBatches(
+        for account: GmailAccount,
+        messageIds: [String],
+        progressCallback: ((Int, Int?) async -> Void)?,
+        totalCount: Int
+    ) async throws -> [EmailMetadata] {
         var allMetadata: [EmailMetadata] = []
-        let batchSize = 20 // Reduced batch size to avoid rate limits
-        
-        let batches = stride(from: 0, to: messageRefs.count, by: batchSize).map { start in
-            let end = min(start + batchSize, messageRefs.count)
-            return Array(messageRefs[start..<end])
+        let batchSize = CatchUpLoadSupport.metadataBatchSize
+        let batches = stride(from: 0, to: messageIds.count, by: batchSize).map { start in
+            let end = min(start + batchSize, messageIds.count)
+            return Array(messageIds[start..<end])
         }
-        
+
         var processedCount = 0
-        
+
         for batch in batches {
-            let batchIds = batch.map { $0.id }
-            let messages = try await batchGetMessagesMetadata(for: account, messageIds: batchIds)
-            
+            if batch != batches.first {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+
+            let messages = try await fetchMetadataBatchWithRetry(for: account, messageIds: batch)
             for gmailMessage in messages {
-                // Only include emails that actually have UNREAD label
-                guard gmailMessage.labelIds.contains("UNREAD") && gmailMessage.labelIds.contains("INBOX") else {
+                guard gmailMessage.labelIds.contains("UNREAD"),
+                      gmailMessage.labelIds.contains("INBOX"),
+                      !gmailMessage.labelIds.contains("STARRED") else {
                     continue
                 }
-                
+
                 let emailId = getEmailId(for: gmailMessage.id)
                 let metadata = parseEmailMetadata(from: gmailMessage, accountEmail: account.email, emailId: emailId)
-                allMetadata.append(metadata)
+                allMetadata = CatchUpLoadSupport.mergeUniqueMetadata(existing: allMetadata, adding: [metadata])
             }
-            
+
             processedCount += batch.count
             await progressCallback?(processedCount, totalCount)
         }
-        
-        // Sort by received_at descending (newest first)
-        allMetadata.sort { $0.received_at > $1.received_at }
-        
-        // Update lastSync timestamp
-        updateAccountLastSync(email: account.email)
-        persistAccountsIfNeeded()
-        
+
         return allMetadata
+    }
+
+    private func fetchMetadataBatchWithRetry(
+        for account: GmailAccount,
+        messageIds: [String]
+    ) async throws -> [GmailMessage] {
+        var lastError: Error?
+        let maxRetries = CatchUpLoadSupport.metadataBatchMaxRetries
+
+        for attempt in 0..<maxRetries {
+            if attempt > 0 {
+                let delay = CatchUpLoadSupport.metadataBatchRetryDelayNanoseconds(attempt: attempt)
+                if delay > 0 {
+                    try await Task.sleep(nanoseconds: delay)
+                }
+            }
+
+            do {
+                return try await batchGetMessagesMetadata(for: account, messageIds: messageIds)
+            } catch {
+                lastError = error
+                logError(
+                    "GmailAPIService: metadata batch failed (attempt \(attempt + 1)/\(maxRetries)): \(error)",
+                    category: "Gmail"
+                )
+            }
+        }
+
+        throw lastError ?? GmailAPIError.apiError("Failed to load metadata batch")
     }
 
     /// Sync inbox email metadata (read and unread) — same lightweight path as unread sync, wider query.

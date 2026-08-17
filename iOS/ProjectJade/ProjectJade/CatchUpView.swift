@@ -291,7 +291,7 @@ struct CatchUpView: View {
     
     @ViewBuilder
     private var mainContent: some View {
-        if emailLoader.isLoadingMetadata {
+        if emailLoader.isLoadingMetadata && !emailLoader.isReadyToShow {
             loadingView
         } else if !emailLoader.hasMoreEmails {
             if sessionStats.reviewed > 0 {

@@ -34,7 +34,13 @@ struct MacUnifiedDashboardView: View {
     }
 
     private var totalUnread: Int {
-        snapshot?.emails.count ?? 0
+        guard let snapshot else { return 0 }
+        let local = snapshot.emails.filter { CatchUpLoadSupport.isCatchUpEligible($0) }.count
+        let gmailTotal = snapshot.accounts.compactMap(\.gmail_unread_count).reduce(0, +)
+        return CatchUpLoadSupport.displayUnreadCount(
+            localNonStarred: local,
+            gmailInboxUnread: gmailTotal > 0 ? gmailTotal : nil
+        )
     }
 
     private var totalStarred: Int {
@@ -188,9 +194,11 @@ struct MacUnifiedDashboardView: View {
     }
 
     private func unreadCount(for account: EmailAccount, snapshot: DashboardDataSnapshot) -> Int {
-        snapshot.allEmails.filter {
-            $0.account_email.lowercased() == account.email.lowercased() && !$0.is_read && !$0.is_starred
-        }.count
+        let local = CatchUpLoadSupport.localUnreadCount(for: account.email, in: snapshot.emails)
+        return CatchUpLoadSupport.displayUnreadCount(
+            localNonStarred: local,
+            gmailInboxUnread: account.gmail_unread_count
+        )
     }
 
     private func starredCount(for account: EmailAccount, snapshot: DashboardDataSnapshot) -> Int {
