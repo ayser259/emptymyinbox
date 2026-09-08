@@ -123,7 +123,7 @@ public actor StoriesFeedStore {
         await ensureLoaded()
         state.lastGeneratedAt = date
         pruneState(now: Date())
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     public func promptStates() async -> [Int: StoryPromptState] {
@@ -138,7 +138,7 @@ public actor StoriesFeedStore {
         let appendable = newStories.filter { !existingStoryIDs.contains($0.id) }
         state.stories.append(contentsOf: appendable)
         pruneState(now: Date())
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     public func applyPromptOutcome(_ outcome: StoryPromptOutcome) async {
@@ -168,7 +168,7 @@ public actor StoriesFeedStore {
 
         state.promptStates[outcome.emailId] = promptState
         pruneState(now: now)
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     /// Mark story as read. Bookmarked stories stay in storage for the Bookmarked list; others are removed.
@@ -182,7 +182,7 @@ public actor StoriesFeedStore {
             state.stories.removeAll { $0.id == storyId }
         }
         pruneState(now: Date())
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     public func bookmarkStory(storyId: Int) async {
@@ -191,7 +191,7 @@ public actor StoriesFeedStore {
             state.bookmarkedStoryIds.append(storyId)
         }
         pruneState(now: Date())
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     public func unbookmarkStory(storyId: Int) async {
@@ -202,7 +202,7 @@ public actor StoriesFeedStore {
             state.stories.removeAll { $0.id == storyId }
         }
         pruneState(now: Date())
-        await persistCacheAndMirrorVault()
+        await persistCacheOnly()
     }
 
     /// Legacy name — forwards to `markReviewed`.
@@ -240,7 +240,6 @@ public actor StoriesFeedStore {
             lastGeneratedAt: nil,
             promptStates: [:]
         )
-        await mergeFromVaultIfAvailable()
         pruneState(now: Date())
     }
 
@@ -291,24 +290,6 @@ public actor StoriesFeedStore {
         return nil
     }
 
-    /// When a vault file exists, it wins over local cache (Drive sync / explicit mirror).
-    private func mergeFromVaultIfAvailable() async {
-        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
-        guard ready else { return }
-        do {
-            guard let payload = try await VaultManager.shared.loadStoriesFeedFromVault() else { return }
-            state.stories = payload.stories
-            state.bookmarkedStoryIds = payload.bookmarkedStoryIds
-            state.reviewedStoryIds = payload.reviewedStoryIds
-            state.lastGeneratedAt = payload.lastGeneratedAt
-            state.promptStates = payload.promptStates
-            state.schemaVersion = Self.schemaVersion
-            await persistCacheOnly()
-        } catch {
-            logError("Stories: vault merge failed: \(error)", category: "Vault")
-        }
-    }
-
     private func persistCacheOnly() async {
         let url = appSupportURL().appendingPathComponent(fileName)
         do {
@@ -316,32 +297,6 @@ public actor StoriesFeedStore {
             try data.write(to: url, options: .atomic)
         } catch {
             logError("Failed to persist stories feed: \(error)", category: "Settings")
-        }
-    }
-
-    private func persistCacheAndMirrorVault() async {
-        await persistCacheOnly()
-        await mirrorToVaultIfPossible()
-    }
-
-    private func mirrorToVaultIfPossible() async {
-        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
-        guard ready else { return }
-        let payload = VaultStoriesFeedPayload(
-            stories: state.stories,
-            bookmarkedStoryIds: state.bookmarkedStoryIds,
-            reviewedStoryIds: state.reviewedStoryIds,
-            lastGeneratedAt: state.lastGeneratedAt,
-            promptStates: state.promptStates
-        )
-        let bookmarkedCards = await bookmarkedStories()
-        do {
-            try await VaultManager.shared.saveStoriesFeedToVault(payload)
-            try await VaultManager.shared.saveBookmarkedStoriesMirrorToVault(
-                VaultStoriesBookmarkedPayload(stories: bookmarkedCards)
-            )
-        } catch {
-            logError("Stories: vault mirror failed: \(error)", category: "Vault")
         }
     }
 

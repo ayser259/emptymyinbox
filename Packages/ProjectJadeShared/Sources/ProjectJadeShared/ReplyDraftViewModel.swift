@@ -405,18 +405,18 @@ public final class ReplyDraftViewModel {
 
         let featureEnabled = FeatureFlagsStore.shared.isQuickReplyEnabled
         let accountIncluded = await AccountInclusionStore.shared.isIncludedInQuickReply(accountEmail: email.account_email)
-        let hasProviderKey = await LLMProviderRouter.shared.hasUsableAPIKeyForQuickReply()
+        let capability = await LLMProviderRouter.shared.quickReplyGenerationCapability()
 
-        let available = featureEnabled && accountIncluded && hasProviderKey
+        let available = featureEnabled && accountIncluded && capability.allowsGeneration
         let reason: String?
         if !featureEnabled {
             reason = "Turn on Quick Reply under Settings → Core Plugins."
         } else if !accountIncluded {
             reason = "Enable this account under Settings → Core Plugins → Quick Reply → Mail accounts."
-        } else if !hasProviderKey {
-            let provider = await LLMProviderRouter.shared.selectedProvider()
-            let providerName = provider == .openAI ? "OpenAI" : "Claude"
-            reason = "Add a \(providerName) API key under Settings → Keys."
+        } else if capability == .onDeviceUnavailable {
+            reason = capability.upsellSubtitle
+        } else if case .missingAPIKey(let provider) = capability {
+            reason = "Add a \(provider.displayName) API key under Settings → Keys."
         } else {
             reason = nil
         }

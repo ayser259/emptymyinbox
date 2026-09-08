@@ -2,24 +2,17 @@ import SwiftUI
 
 public struct SettingsConnectedAccountRow: View {
     let account: GmailAccount
-    let vaultConfiguration: VaultActiveConfiguration?
     let accent: Color
     let onDisconnect: () -> Void
 
     public init(
         account: GmailAccount,
-        vaultConfiguration: VaultActiveConfiguration?,
         accent: Color,
         onDisconnect: @escaping () -> Void
     ) {
         self.account = account
-        self.vaultConfiguration = vaultConfiguration
         self.accent = accent
         self.onDisconnect = onDisconnect
-    }
-
-    private var summary: GmailAccount.ConnectionSummary {
-        account.connectionSummary(activeVault: vaultConfiguration)
     }
 
     public var body: some View {
@@ -66,17 +59,13 @@ public struct SettingsConnectedAccountRow: View {
             }
 
             serviceChipsRow
-
-            vaultLinkRow
         }
         .padding(.vertical, 4)
     }
 
     private var serviceChipsRow: some View {
         HStack(spacing: 10) {
-            serviceChip(title: "Mail", on: summary.gmail)
-            serviceChip(title: "Drive", on: summary.drive)
-            serviceChip(title: "Vault", on: summary.vaultLinked)
+            serviceChip(title: "Mail", on: true)
         }
     }
 
@@ -97,39 +86,5 @@ public struct SettingsConnectedAccountRow: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title): \(on ? "connected" : "not connected")")
-    }
-
-    @ViewBuilder
-    private var vaultLinkRow: some View {
-        if summary.vaultLinked, let line = summary.vaultDetailLine {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "shippingbox")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 16, alignment: .leading)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Vault linked to this account")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(SharedAppTheme.secondaryText)
-                    Text(line)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(SharedAppTheme.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.leading, 2)
-        } else {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "shippingbox")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(SharedAppTheme.secondaryText.opacity(0.6))
-                    .frame(width: 16, alignment: .leading)
-                Text("No vault linked to this account (or vault is owned by another account).")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(SharedAppTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, 2)
-        }
     }
 }

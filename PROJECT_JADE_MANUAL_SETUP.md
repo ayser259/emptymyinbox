@@ -98,6 +98,5 @@ This rename intentionally does not preserve old pre-launch app data.
 3. Build and run the iOS app target `ProjectJade`.
 4. Build and run the macOS app target `ProjectJadeMac`.
 5. Sign in with Google on iOS and macOS.
-6. Create a local vault and a Google Drive vault.
-7. Confirm new files are written under `ProjectJade` app support paths.
-8. Confirm the app display name appears as `Jade`.
+6. Confirm new files are written under `ProjectJade` app support paths.
+7. Confirm the app display name appears as `Jade`.

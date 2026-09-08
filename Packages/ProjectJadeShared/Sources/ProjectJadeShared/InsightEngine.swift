@@ -1,12 +1,12 @@
 import Foundation
 
-public enum StoryPromptStatus: String, Codable {
+public enum StoryPromptStatus: String, Codable, Sendable {
     case attempted
     case failed
     case succeeded
 }
 
-public struct StoryPromptState: Codable {
+public struct StoryPromptState: Codable, Sendable {
     public var status: StoryPromptStatus = .attempted
     public var attempts: Int = 0
     public var lastAttemptAt: Date = .distantPast

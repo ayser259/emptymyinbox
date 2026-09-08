@@ -19,7 +19,6 @@ struct MenuView: View {
 
     var body: some View {
         SettingsContainerView(
-            vaultSettings: { VaultSettingsView() },
             isAddingAccount: $isAddingAccount,
             onAddGmailAccount: { addGmailAccount() },
             onDismiss: { dismiss() },

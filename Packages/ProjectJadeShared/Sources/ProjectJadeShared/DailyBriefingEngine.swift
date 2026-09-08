@@ -3,23 +3,25 @@ import Foundation
 public actor DailyBriefingEngine {
     public static let shared = DailyBriefingEngine()
 
-    private let maxCandidatesPerBucket = 12
+    private let maxCloudCandidatesPerBucket = 12
 
     public func buildPayload(from emails: [EmailListItem], sinceDate: Date?) async -> DailyBriefingPayload {
         let startedAt = Date()
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        guard hasKey else {
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
+        guard capability == .ready else {
             Telemetry.event("daily_briefing.generate.completed", metadata: [
                 "candidate_count": "0",
                 "item_count": "0",
-                "has_key": "false",
+                "can_generate": "false",
+                "capability": "\(capability)",
                 "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
             ])
-            return emptyPayload(sinceDate: sinceDate)
+            return emptyPayload(sinceDate: sinceDate, capability: capability)
         }
 
+        let settings = await LLMSettingsStore.shared.currentSettings()
         let includedEmails = await includedAccounts(from: emails)
-        let candidates = buildCandidates(from: includedEmails)
+        let candidates = buildCandidates(from: includedEmails, briefProvider: settings.briefProvider)
         let candidateCount = candidates.urgentToday.count
             + candidates.criticalReminders.count
             + candidates.unreadFromYesterday.count
@@ -29,7 +31,7 @@ public actor DailyBriefingEngine {
             Telemetry.event("daily_briefing.generate.completed", metadata: [
                 "candidate_count": "0",
                 "item_count": "0",
-                "has_key": "true",
+                "can_generate": "true",
                 "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
             ])
             return DailyBriefingPayload(
@@ -53,7 +55,7 @@ public actor DailyBriefingEngine {
                 "candidate_count": "\(candidateCount)",
                 "item_count": "\(payload.items.count)",
                 "section_count": "\(payload.sections.count)",
-                "has_key": "true",
+                "can_generate": "true",
                 "elapsed_ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))"
             ])
             return payload
@@ -73,16 +75,30 @@ public actor DailyBriefingEngine {
         }
     }
 
-    private func emptyPayload(sinceDate: Date?) -> DailyBriefingPayload {
-        DailyBriefingPayload(
+    private func emptyPayload(sinceDate: Date?, capability: AIGenerationCapability) -> DailyBriefingPayload {
+        let introText: String
+        switch capability {
+        case .ready:
+            introText = "Your inbox looks clear — no urgent items, reminders, or receipts to highlight today."
+        case .onDeviceUnavailable:
+            introText = "Turn on Apple Intelligence in System Settings to generate your daily brief on device, or switch Brief to a cloud model in Settings."
+        case .missingAPIKey(let provider):
+            introText = "Add a \(provider.displayName) API key in Settings to generate your daily executive brief."
+        }
+
+        return DailyBriefingPayload(
             generatedAt: Date(),
             sinceDate: sinceDate,
-            introText: "Add an API key in Settings to generate your daily executive brief.",
+            introText: introText,
             sections: []
         )
     }
 
-    private func buildCandidates(from emails: [EmailListItem]) -> DailyBriefCandidates {
+    private func buildCandidates(from emails: [EmailListItem], briefProvider: LLMProvider) -> DailyBriefCandidates {
+        let maxCandidatesPerBucket = briefProvider == .onDevice
+            ? OnDeviceAIService.maxCandidatesPerBucket
+            : maxCloudCandidatesPerBucket
+
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today

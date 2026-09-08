@@ -18,10 +18,11 @@ struct MacUnifiedDashboardView: View {
     var onOpenCatchUp: (() -> Void)?
     var onOpenBrief: (() -> Void)?
     var onOpenStories: (() -> Void)?
+    var onOpenLLMSettings: (() -> Void)?
 
     @State private var dailyBriefingPayload: DailyBriefingPayload?
     @State private var recentStories: [InsightCard] = []
-    @State private var hasLLMKey = false
+    @State private var briefCapability: AIGenerationCapability = .onDeviceUnavailable
     @State private var isBriefGenerating = false
 
     private var calendar: Calendar { Calendar.current }
@@ -66,10 +67,10 @@ struct MacUnifiedDashboardView: View {
             Task { await refreshBriefBadge() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
-            Task { await refreshLLMKeyStatus() }
+            Task { await refreshBriefCapability() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
-            Task { await refreshLLMKeyStatus() }
+            Task { await refreshBriefCapability() }
         }
     }
 
@@ -107,6 +108,14 @@ struct MacUnifiedDashboardView: View {
                         .foregroundStyle(MacAppTheme.secondaryText)
                 }
 
+                MacDailyBriefCard(
+                    payload: dailyBriefingPayload,
+                    briefCapability: briefCapability,
+                    isGenerating: isBriefGenerating,
+                    onRefresh: { refreshBrief() },
+                    onOpenBrief: onOpenBrief,
+                    onOpenLLMSettings: { onOpenLLMSettings?() }
+                )
 
                 // Account Updates
                 MacAccountUpdatesCard(
@@ -220,13 +229,12 @@ struct MacUnifiedDashboardView: View {
 
     private func loadWidgetData() async {
         await refreshBriefBadge()
-        await refreshLLMKeyStatus()
+        await refreshBriefCapability()
         await loadRecentStories()
     }
 
     private func refreshBriefBadge() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        guard hasKey else {
+        if case .missingAPIKey = await LLMProviderRouter.shared.briefGenerationCapability() {
             await MainActor.run { dailyBriefingPayload = nil }
             return
         }
@@ -238,9 +246,9 @@ struct MacUnifiedDashboardView: View {
         await MainActor.run { dailyBriefingPayload = payload }
     }
 
-    private func refreshLLMKeyStatus() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        await MainActor.run { hasLLMKey = hasKey }
+    private func refreshBriefCapability() async {
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
+        await MainActor.run { briefCapability = capability }
     }
 
     private func loadRecentStories() async {
@@ -250,7 +258,7 @@ struct MacUnifiedDashboardView: View {
 
     private func refreshBrief() {
         Task {
-            guard hasLLMKey else { return }
+            guard briefCapability.allowsGeneration else { return }
             await MainActor.run { isBriefGenerating = true }
             let built = await DailyBriefingEngine.shared.buildPayload(
                 from: snapshot?.allEmails ?? [],
@@ -355,7 +363,7 @@ private struct MacCardEmptyState: View {
 
 private struct MacDailyBriefCard: View {
     let payload: DailyBriefingPayload?
-    let hasLLMKey: Bool
+    let briefCapability: AIGenerationCapability
     let isGenerating: Bool
     let onRefresh: () -> Void
     let onOpenBrief: (() -> Void)?
@@ -392,32 +400,42 @@ private struct MacDailyBriefCard: View {
             } else {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(hasLLMKey ? MacAppTheme.accent : MacAppTheme.secondaryText.opacity(0.3))
+                    .foregroundStyle(briefCapability.allowsGeneration ? MacAppTheme.accent : MacAppTheme.secondaryText.opacity(0.3))
             }
         }
         .buttonStyle(.plain)
-        .disabled(isGenerating || !hasLLMKey)
-        .help(hasLLMKey ? "Regenerate brief" : "Add an AI API key first")
+        .disabled(isGenerating || !briefCapability.allowsGeneration)
+        .help(briefCapability.allowsGeneration ? "Regenerate brief" : briefCapability.upsellSubtitle)
         .animation(.easeOut(duration: 0.15), value: isGenerating)
     }
 
     @ViewBuilder
     private var briefContent: some View {
-        if !hasLLMKey {
-            VStack(alignment: .leading, spacing: 6) {
-                MacCardEmptyState(
-                    icon: "lock.fill",
-                    title: "Set up AI",
-                    subtitle: "Add an API key to enable your daily brief"
-                )
-                Button("Configure in Settings") {
+        if !briefCapability.allowsGeneration, payload == nil {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: briefCapability == .onDeviceUnavailable ? "apple.intelligence" : "lock.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(MacAppTheme.secondaryText.opacity(0.45))
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(briefCapability.upsellTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(MacAppTheme.primaryText)
+                    Text(briefCapability.upsellSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(MacAppTheme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(briefCapability.upsellActionTitle) {
                     onOpenLLMSettings()
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(MacAppTheme.accent)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .buttonStyle(.borderedProminent)
+                .tint(MacAppTheme.accent)
+                .controlSize(.small)
             }
+            .padding(.vertical, 4)
         } else if let payload {
             Button {
                 onOpenBrief?()

@@ -254,22 +254,32 @@ public actor LLMSettingsStore {
     }
 
     private func validatedSettings(_ candidate: LLMSettings) -> LLMSettings {
-        let defaults = LLMModelCatalog.defaults(for: candidate.provider)
+        let cloudDefaults = LLMModelCatalog.defaults(for: candidate.provider)
+        let briefDefaults = LLMModelCatalog.defaults(for: candidate.briefProvider)
+        let storiesDefaults = LLMModelCatalog.defaults(for: candidate.storiesProvider)
+        let quickReplyDefaults = LLMModelCatalog.defaults(for: candidate.quickReplyProvider)
         let defaultCandidate = canonicalModel(candidate.defaultModel, provider: candidate.provider)
         let initialPassCandidate = canonicalModel(candidate.initialPassModel, provider: candidate.provider)
         let proCandidate = canonicalModel(candidate.proModel, provider: candidate.provider)
-        let briefCandidate = canonicalModel(candidate.briefModel, provider: candidate.provider)
-        let storiesCandidate = canonicalModel(candidate.storiesModel, provider: candidate.provider)
-        let quickReplyCandidate = canonicalModel(candidate.quickReplyModel, provider: candidate.provider)
+        let briefCandidate = canonicalModel(candidate.briefModel, provider: candidate.briefProvider)
+        let storiesCandidate = canonicalModel(candidate.storiesModel, provider: candidate.storiesProvider)
+        let quickReplyCandidate = canonicalModel(candidate.quickReplyModel, provider: candidate.quickReplyProvider)
 
-        let defaultModel = LLMModelCatalog.contains(defaultCandidate, provider: candidate.provider) ? defaultCandidate : defaults.defaultModel
-        let initialPassModel = LLMModelCatalog.contains(initialPassCandidate, provider: candidate.provider) ? initialPassCandidate : defaults.initialPassModel
-        let proModel = LLMModelCatalog.contains(proCandidate, provider: candidate.provider) ? proCandidate : defaults.proModel
-        let briefModel = LLMModelCatalog.contains(briefCandidate, provider: candidate.provider) ? briefCandidate : initialPassModel
-        let storiesModel = LLMModelCatalog.contains(storiesCandidate, provider: candidate.provider) ? storiesCandidate : initialPassModel
-        let quickReplyModel = LLMModelCatalog.contains(quickReplyCandidate, provider: candidate.provider) ? quickReplyCandidate : defaultModel
+        let defaultModel = LLMModelCatalog.contains(defaultCandidate, provider: candidate.provider) ? defaultCandidate : cloudDefaults.defaultModel
+        let initialPassModel = LLMModelCatalog.contains(initialPassCandidate, provider: candidate.provider) ? initialPassCandidate : cloudDefaults.initialPassModel
+        let proModel = LLMModelCatalog.contains(proCandidate, provider: candidate.provider) ? proCandidate : cloudDefaults.proModel
+        let briefModel = LLMModelCatalog.contains(briefCandidate, provider: candidate.briefProvider) ? briefCandidate : briefDefaults.defaultModel
+        let storiesModel = LLMModelCatalog.contains(storiesCandidate, provider: candidate.storiesProvider) ? storiesCandidate : storiesDefaults.defaultModel
+        let quickReplyModel = LLMModelCatalog.contains(quickReplyCandidate, provider: candidate.quickReplyProvider) ? quickReplyCandidate : quickReplyDefaults.defaultModel
+        let briefProvider = LLMProvider.briefProviders.contains(candidate.briefProvider) ? candidate.briefProvider : .onDevice
+        let storiesProvider = LLMProvider.briefProviders.contains(candidate.storiesProvider) ? candidate.storiesProvider : .onDevice
+        let quickReplyProvider = LLMProvider.briefProviders.contains(candidate.quickReplyProvider) ? candidate.quickReplyProvider : .onDevice
+        let provider = LLMProvider.cloudProviders.contains(candidate.provider) ? candidate.provider : .openAI
         return LLMSettings(
-            provider: candidate.provider,
+            provider: provider,
+            briefProvider: briefProvider,
+            storiesProvider: storiesProvider,
+            quickReplyProvider: quickReplyProvider,
             defaultModel: defaultModel,
             initialPassModel: initialPassModel,
             proModel: proModel,
@@ -284,6 +294,8 @@ public actor LLMSettingsStore {
 
     private func canonicalModel(_ model: String, provider: LLMProvider) -> String {
         switch provider {
+        case .onDevice:
+            return model
         case .openAI:
             return model
         case .claude:

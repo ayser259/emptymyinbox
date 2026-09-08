@@ -643,7 +643,7 @@ public struct DailyBriefingPayload: Codable {
 
 // MARK: - Newsletter Insights
 
-public struct NewsletterTheme: Codable, Hashable {
+public struct NewsletterTheme: Codable, Hashable, Sendable {
     public let tag: String
     public let confidence: Double
 
@@ -653,7 +653,7 @@ public struct NewsletterTheme: Codable, Hashable {
     }
 }
 
-public struct InsightCard: Codable, Identifiable, Hashable {
+public struct InsightCard: Codable, Identifiable, Hashable, Sendable {
     public let id: Int
     public let emailId: Int
     public let gmailId: String
@@ -780,6 +780,9 @@ public struct FeatureAccountInclusion: Codable, Identifiable, Hashable {
 
 public struct LLMSettings: Codable {
     public var provider: LLMProvider
+    public var briefProvider: LLMProvider
+    public var storiesProvider: LLMProvider
+    public var quickReplyProvider: LLMProvider
     public var defaultModel: String
     public var initialPassModel: String
     public var proModel: String
@@ -792,6 +795,9 @@ public struct LLMSettings: Codable {
 
     public init(
         provider: LLMProvider = .openAI,
+        briefProvider: LLMProvider = .onDevice,
+        storiesProvider: LLMProvider = .onDevice,
+        quickReplyProvider: LLMProvider = .onDevice,
         defaultModel: String,
         initialPassModel: String,
         proModel: String,
@@ -803,12 +809,33 @@ public struct LLMSettings: Codable {
         maxRetries: Int
     ) {
         self.provider = provider
+        self.briefProvider = briefProvider
+        self.storiesProvider = storiesProvider
+        self.quickReplyProvider = quickReplyProvider
         self.defaultModel = defaultModel
         self.initialPassModel = initialPassModel
         self.proModel = proModel
-        self.briefModel = briefModel ?? initialPassModel
-        self.storiesModel = storiesModel ?? initialPassModel
-        self.quickReplyModel = quickReplyModel ?? defaultModel
+        if let briefModel {
+            self.briefModel = briefModel
+        } else if briefProvider == .onDevice {
+            self.briefModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            self.briefModel = initialPassModel
+        }
+        if let storiesModel {
+            self.storiesModel = storiesModel
+        } else if storiesProvider == .onDevice {
+            self.storiesModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            self.storiesModel = initialPassModel
+        }
+        if let quickReplyModel {
+            self.quickReplyModel = quickReplyModel
+        } else if quickReplyProvider == .onDevice {
+            self.quickReplyModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            self.quickReplyModel = defaultModel
+        }
         self.useProModelForDeepAnalysis = useProModelForDeepAnalysis
         self.requestTimeoutSeconds = requestTimeoutSeconds
         self.maxRetries = maxRetries
@@ -817,14 +844,34 @@ public struct LLMSettings: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         provider = try container.decodeIfPresent(LLMProvider.self, forKey: .provider) ?? .openAI
+        briefProvider = try container.decodeIfPresent(LLMProvider.self, forKey: .briefProvider) ?? .onDevice
+        storiesProvider = try container.decodeIfPresent(LLMProvider.self, forKey: .storiesProvider) ?? .onDevice
+        quickReplyProvider = try container.decodeIfPresent(LLMProvider.self, forKey: .quickReplyProvider) ?? .onDevice
         defaultModel = try container.decode(String.self, forKey: .defaultModel)
         initialPassModel = try container.decode(String.self, forKey: .initialPassModel)
         proModel = try container.decode(String.self, forKey: .proModel)
         useProModelForDeepAnalysis = try container.decode(Bool.self, forKey: .useProModelForDeepAnalysis)
-        briefModel = try container.decodeIfPresent(String.self, forKey: .briefModel) ?? initialPassModel
-        storiesModel = try container.decodeIfPresent(String.self, forKey: .storiesModel)
-            ?? (useProModelForDeepAnalysis ? proModel : initialPassModel)
-        quickReplyModel = try container.decodeIfPresent(String.self, forKey: .quickReplyModel) ?? defaultModel
+        if let decodedBriefModel = try container.decodeIfPresent(String.self, forKey: .briefModel) {
+            briefModel = decodedBriefModel
+        } else if briefProvider == .onDevice {
+            briefModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            briefModel = initialPassModel
+        }
+        if let decodedStoriesModel = try container.decodeIfPresent(String.self, forKey: .storiesModel) {
+            storiesModel = decodedStoriesModel
+        } else if storiesProvider == .onDevice {
+            storiesModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            storiesModel = useProModelForDeepAnalysis ? proModel : initialPassModel
+        }
+        if let decodedQuickReplyModel = try container.decodeIfPresent(String.self, forKey: .quickReplyModel) {
+            quickReplyModel = decodedQuickReplyModel
+        } else if quickReplyProvider == .onDevice {
+            quickReplyModel = LLMModelCatalog.onDeviceModelID
+        } else {
+            quickReplyModel = defaultModel
+        }
         requestTimeoutSeconds = try container.decode(Double.self, forKey: .requestTimeoutSeconds)
         maxRetries = try container.decode(Int.self, forKey: .maxRetries)
     }
@@ -832,6 +879,9 @@ public struct LLMSettings: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(provider, forKey: .provider)
+        try container.encode(briefProvider, forKey: .briefProvider)
+        try container.encode(storiesProvider, forKey: .storiesProvider)
+        try container.encode(quickReplyProvider, forKey: .quickReplyProvider)
         try container.encode(defaultModel, forKey: .defaultModel)
         try container.encode(initialPassModel, forKey: .initialPassModel)
         try container.encode(proModel, forKey: .proModel)
@@ -845,6 +895,9 @@ public struct LLMSettings: Codable {
 
     enum CodingKeys: String, CodingKey {
         case provider
+        case briefProvider
+        case storiesProvider
+        case quickReplyProvider
         case defaultModel
         case initialPassModel
         case proModel
@@ -859,12 +912,15 @@ public struct LLMSettings: Codable {
     public static var `default`: LLMSettings {
         LLMSettings(
             provider: .openAI,
+            briefProvider: .onDevice,
+            storiesProvider: .onDevice,
+            quickReplyProvider: .onDevice,
             defaultModel: "gpt-4o-mini",
             initialPassModel: "gpt-4o-mini",
             proModel: "gpt-4.1",
-            briefModel: "gpt-4o-mini",
-            storiesModel: "gpt-4o-mini",
-            quickReplyModel: "gpt-4o-mini",
+            briefModel: LLMModelCatalog.onDeviceModelID,
+            storiesModel: LLMModelCatalog.onDeviceModelID,
+            quickReplyModel: LLMModelCatalog.onDeviceModelID,
             useProModelForDeepAnalysis: false,
             requestTimeoutSeconds: 30,
             maxRetries: 2
@@ -872,16 +928,31 @@ public struct LLMSettings: Codable {
     }
 }
 
-public enum LLMProvider: String, Codable, CaseIterable {
+public enum LLMProvider: String, Codable, CaseIterable, Sendable {
+    case onDevice
     case openAI
     case claude
 
+    public static let cloudProviders: [LLMProvider] = [.openAI, .claude]
+    public static let briefProviders: [LLMProvider] = [.onDevice, .openAI, .claude]
+
     public var displayName: String {
         switch self {
+        case .onDevice:
+            return "On Device"
         case .openAI:
             return "OpenAI"
         case .claude:
             return "Anthropic Claude"
+        }
+    }
+
+    public var requiresAPIKey: Bool {
+        switch self {
+        case .onDevice:
+            return false
+        case .openAI, .claude:
+            return true
         }
     }
 }

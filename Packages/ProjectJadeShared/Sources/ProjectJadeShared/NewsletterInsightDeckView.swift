@@ -7,10 +7,6 @@ private enum StoriesSubRoute: Hashable {
     case bookmarked
 }
 
-private enum StoriesVaultNudge {
-    static let userDefaultsKey = "vaultNudgeStoriesShown"
-}
-
 public struct NewsletterInsightDeckView: View {
     let emails: [EmailListItem]
     let onDiveDeeper: (Int) -> Void
@@ -19,12 +15,11 @@ public struct NewsletterInsightDeckView: View {
     @State private var cards: [InsightCard] = []
     @State private var bookmarkedIds: Set<Int> = []
     @State private var isLoading = true
-    @State private var hasKey = false
+    @State private var storiesCapability: AIGenerationCapability = .onDeviceUnavailable
     @State private var isRefreshingStories = false
     @State private var refreshGeneration = 0
     @State private var refreshTask: Task<Void, Never>?
     @State private var aiStatusMessage: String?
-    @State private var showVaultNudgeAlert = false
 
     #if os(iOS)
     private let impact = UIImpactFeedbackGenerator(style: .light)
@@ -50,11 +45,11 @@ public struct NewsletterInsightDeckView: View {
             if isLoading {
                 ProgressView("Building stories...")
                     .tint(SharedAppTheme.accent)
-            } else if !hasKey {
+            } else if !storiesCapability.allowsGeneration, cards.isEmpty {
                 LLMUpsellView(
-                    title: "Unlock Stories",
-                    subtitle: "Add your selected provider API key to generate personalized stories from newsletters.",
-                    actionTitle: "Add API Key",
+                    title: storiesCapability.upsellTitle,
+                    subtitle: storiesCapability.upsellSubtitle,
+                    actionTitle: storiesCapability.upsellActionTitle,
                     onAction: onOpenLLMSettings
                 )
             } else if cards.isEmpty {
@@ -115,7 +110,7 @@ public struct NewsletterInsightDeckView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .disabled(isRefreshingStories || !hasKey)
+                .disabled(isRefreshingStories || !storiesCapability.allowsGeneration)
                 NavigationLink(value: StoriesSubRoute.bookmarked) {
                     Image(systemName: "bookmark.fill")
                 }
@@ -138,11 +133,6 @@ public struct NewsletterInsightDeckView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
             scheduleRefreshContent(forceRefresh: false)
-        }
-        .alert("Back up Stories", isPresented: $showVaultNudgeAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Add a Vault in Settings to sync your Stories to Google Drive or a folder.")
         }
     }
 
@@ -294,9 +284,9 @@ public struct NewsletterInsightDeckView: View {
             aiStatusMessage = nil
         }
 
-        let hasAPIKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        let capability = await LLMProviderRouter.shared.storiesGenerationCapability()
         var loadedStories: [InsightCard] = persistedStories
-        if hasAPIKey {
+        if capability.allowsGeneration {
             let promptStates = await StoriesFeedStore.shared.promptStates()
             let candidates = await InsightEngine.shared.selectUnpromptedCandidates(
                 from: emails,
@@ -321,7 +311,6 @@ public struct NewsletterInsightDeckView: View {
                 }
                 if !batch.cards.isEmpty {
                     await StoriesFeedStore.shared.setLastGeneratedAt(Date())
-                    await maybeOfferVaultNudgeAfterGeneration()
                 }
                 await MainActor.run {
                     isRefreshingStories = false
@@ -334,21 +323,10 @@ public struct NewsletterInsightDeckView: View {
             }
         }
         await MainActor.run {
-            hasKey = hasAPIKey
+            storiesCapability = capability
             cards = loadedStories
             isLoading = false
             isRefreshingStories = false
-        }
-    }
-
-    private func maybeOfferVaultNudgeAfterGeneration() async {
-        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
-        guard !ready else { return }
-        let shown = UserDefaults.standard.bool(forKey: StoriesVaultNudge.userDefaultsKey)
-        guard !shown else { return }
-        UserDefaults.standard.set(true, forKey: StoriesVaultNudge.userDefaultsKey)
-        await MainActor.run {
-            showVaultNudgeAlert = true
         }
     }
 

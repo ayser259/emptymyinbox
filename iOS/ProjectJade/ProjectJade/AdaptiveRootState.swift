@@ -10,22 +10,6 @@ import ProjectJadeShared
 
 @MainActor
 final class AdaptiveRootState: ObservableObject {
-    enum RootTab: Int, CaseIterable {
-        case mail = 0
-
-        var title: String {
-            switch self {
-            case .mail: return "Mail"
-            }
-        }
-
-        var systemImage: String {
-            switch self {
-            case .mail: return "envelope.fill"
-            }
-        }
-    }
-
     enum MailTool: String, CaseIterable, Identifiable, Hashable {
         case dashboard
         case catchUp
@@ -58,20 +42,14 @@ final class AdaptiveRootState: ObservableObject {
         case mailbox(MailboxScope)
     }
 
-    @Published var selectedTab: Int = RootTab.mail.rawValue
     @Published var showMenu = false
-    /// True when `iPadWideRootView` chrome is active (hide per-tab duplicate top bars).
+    /// True when `iPadWideRootView` chrome is active (hide compact duplicate top bars).
     @Published var usesWideChrome = false
 
     @Published var mailSidebarSelection: MailSidebarSelection = .tool(.dashboard)
     @Published var selectedThreadId: Int?
     @Published var selectedThread: EmailThreadSummary?
     @Published var mailNavigationPath = NavigationPath()
-
-    var rootTab: RootTab {
-        get { RootTab(rawValue: selectedTab) ?? .mail }
-        set { selectedTab = newValue.rawValue }
-    }
 
     func resetMailSelection() {
         selectedThreadId = nil

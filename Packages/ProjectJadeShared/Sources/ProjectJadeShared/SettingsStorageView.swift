@@ -1,18 +1,13 @@
 import SwiftUI
 
-/// Local cache stats + vault management (shared iOS + macOS).
-public struct SettingsStorageView<Vault: View>: View {
+/// Local cache stats (shared iOS + macOS).
+public struct SettingsStorageView: View {
     @State private var cachedEmailCount: Int = 0
     @State private var showClearedAlert = false
 
-    private let vaultSettings: () -> Vault
     private let accentColor: Color
 
-    public init(
-        vaultSettings: @escaping () -> Vault,
-        accentColor: Color = AppThemePalette.defaultDarkGold.accent
-    ) {
-        self.vaultSettings = vaultSettings
+    public init(accentColor: Color = AppThemePalette.defaultDarkGold.accent) {
         self.accentColor = accentColor
     }
 
@@ -45,22 +40,6 @@ public struct SettingsStorageView<Vault: View>: View {
                 Text("Local Cache")
             } footer: {
                 Text("Email content is stored locally for fast access and offline viewing.")
-            }
-
-            Section {
-                NavigationLink {
-                    vaultSettings()
-                } label: {
-                    HStack {
-                        Image(systemName: "shippingbox")
-                            .foregroundStyle(accentColor)
-                        Text("Vault")
-                    }
-                }
-            } header: {
-                Text("Vault")
-            } footer: {
-                Text("Store mail, stories, and brief data as files in Inbox, Stories, and Brief folders—locally, in a synced folder, or on Google Drive.")
             }
         }
         .scrollContentBackground(.hidden)

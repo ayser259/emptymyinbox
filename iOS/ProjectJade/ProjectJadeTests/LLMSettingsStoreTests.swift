@@ -24,9 +24,14 @@ struct LLMSettingsStoreTests {
     func testDefaultSettingsValues() {
         let settings = LLMSettings.default
         #expect(settings.provider == .openAI)
+        #expect(settings.briefProvider == .onDevice)
+        #expect(settings.storiesProvider == .onDevice)
+        #expect(settings.quickReplyProvider == .onDevice)
         #expect(settings.defaultModel == "gpt-4o-mini")
         #expect(settings.initialPassModel == "gpt-4o-mini")
-        #expect(settings.quickReplyModel == "gpt-4o-mini")
+        #expect(settings.briefModel == LLMModelCatalog.onDeviceModelID)
+        #expect(settings.storiesModel == LLMModelCatalog.onDeviceModelID)
+        #expect(settings.quickReplyModel == LLMModelCatalog.onDeviceModelID)
         #expect(settings.proModel.contains("gpt"))
         #expect(settings.maxRetries >= 0)
     }
@@ -45,9 +50,12 @@ struct LLMSettingsStoreTests {
         await store.updateSettings(newSettings)
         let loaded = await store.currentSettings()
         #expect(loaded.defaultModel == "gpt-4.1-mini")
-        #expect(loaded.briefModel == "gpt-4o-mini")
-        #expect(loaded.storiesModel == "gpt-4o-mini")
-        #expect(loaded.quickReplyModel == "gpt-4.1-mini")
+        #expect(loaded.briefProvider == .onDevice)
+        #expect(loaded.storiesProvider == .onDevice)
+        #expect(loaded.quickReplyProvider == .onDevice)
+        #expect(loaded.briefModel == LLMModelCatalog.onDeviceModelID)
+        #expect(loaded.storiesModel == LLMModelCatalog.onDeviceModelID)
+        #expect(loaded.quickReplyModel == LLMModelCatalog.onDeviceModelID)
         #expect(loaded.useProModelForDeepAnalysis == true)
         #expect(loaded.requestTimeoutSeconds == 45)
     }
@@ -125,7 +133,7 @@ struct LLMSettingsStoreTests {
         let loaded = await store.currentSettings()
         #expect(loaded.defaultModel == "gpt-4o-mini")
         #expect(loaded.proModel == "gpt-4.1")
-        #expect(loaded.quickReplyModel == "gpt-4o-mini")
+        #expect(loaded.quickReplyModel == LLMModelCatalog.onDeviceModelID)
     }
 
     @Test("LLM settings persist provider and Claude models")
@@ -133,6 +141,9 @@ struct LLMSettingsStoreTests {
         let (store, _) = makeStore(testName: "provider-roundtrip")
         let newSettings = LLMSettings(
             provider: .claude,
+            briefProvider: .claude,
+            storiesProvider: .claude,
+            quickReplyProvider: .claude,
             defaultModel: "claude-sonnet-4-6",
             initialPassModel: "claude-haiku-4-5",
             proModel: "claude-sonnet-4-6",
@@ -146,6 +157,9 @@ struct LLMSettingsStoreTests {
         await store.updateSettings(newSettings)
         let loaded = await store.currentSettings()
         #expect(loaded.provider == .claude)
+        #expect(loaded.briefProvider == .claude)
+        #expect(loaded.storiesProvider == .claude)
+        #expect(loaded.quickReplyProvider == .claude)
         #expect(loaded.defaultModel == "claude-sonnet-4-6")
         #expect(loaded.briefModel == "claude-haiku-4-5")
         #expect(loaded.storiesModel == "claude-sonnet-4-6")
@@ -159,6 +173,9 @@ struct LLMSettingsStoreTests {
         await store.updateSettings(
             LLMSettings(
                 provider: .claude,
+                briefProvider: .claude,
+                storiesProvider: .claude,
+                quickReplyProvider: .claude,
                 defaultModel: "unknown-claude-default",
                 initialPassModel: "unknown-claude-initial",
                 proModel: "unknown-claude-pro",
@@ -172,8 +189,8 @@ struct LLMSettingsStoreTests {
         #expect(loaded.defaultModel == "claude-sonnet-4-6")
         #expect(loaded.initialPassModel == "claude-haiku-4-5")
         #expect(loaded.proModel == "claude-sonnet-4-6")
-        #expect(loaded.briefModel == "claude-haiku-4-5")
-        #expect(loaded.storiesModel == "claude-haiku-4-5")
+        #expect(loaded.briefModel == "claude-sonnet-4-6")
+        #expect(loaded.storiesModel == "claude-sonnet-4-6")
         #expect(loaded.quickReplyModel == "claude-sonnet-4-6")
     }
 
@@ -183,6 +200,9 @@ struct LLMSettingsStoreTests {
         await store.updateSettings(
             LLMSettings(
                 provider: .claude,
+                briefProvider: .claude,
+                storiesProvider: .claude,
+                quickReplyProvider: .claude,
                 defaultModel: "claude-3-5-sonnet-latest",
                 initialPassModel: "claude-3-5-haiku-latest",
                 proModel: "claude-3-5-sonnet-latest",
@@ -218,6 +238,41 @@ struct LLMSettingsStoreTests {
         let data = Data(legacyJSON.utf8)
         let decoded = try JSONDecoder().decode(LLMSettings.self, from: data)
         #expect(decoded.provider == .openAI)
-        #expect(decoded.quickReplyModel == "gpt-4o-mini")
+        #expect(decoded.briefProvider == .onDevice)
+        #expect(decoded.storiesProvider == .onDevice)
+        #expect(decoded.quickReplyProvider == .onDevice)
+        #expect(decoded.briefModel == LLMModelCatalog.onDeviceModelID)
+        #expect(decoded.storiesModel == LLMModelCatalog.onDeviceModelID)
+        #expect(decoded.quickReplyModel == LLMModelCatalog.onDeviceModelID)
+    }
+
+    @Test("On-device plugin models survive validation while cloud provider is OpenAI")
+    func testOnDevicePluginModelsSurviveValidation() async {
+        let (store, _) = makeStore(testName: "on-device-plugin-validation")
+        await store.updateSettings(
+            LLMSettings(
+                provider: .openAI,
+                briefProvider: .onDevice,
+                storiesProvider: .onDevice,
+                quickReplyProvider: .onDevice,
+                defaultModel: "gpt-4o-mini",
+                initialPassModel: "gpt-4o-mini",
+                proModel: "gpt-4.1",
+                briefModel: LLMModelCatalog.onDeviceModelID,
+                storiesModel: LLMModelCatalog.onDeviceModelID,
+                quickReplyModel: LLMModelCatalog.onDeviceModelID,
+                useProModelForDeepAnalysis: false,
+                requestTimeoutSeconds: 30,
+                maxRetries: 2
+            )
+        )
+        let loaded = await store.currentSettings()
+        #expect(loaded.provider == .openAI)
+        #expect(loaded.briefProvider == .onDevice)
+        #expect(loaded.storiesProvider == .onDevice)
+        #expect(loaded.quickReplyProvider == .onDevice)
+        #expect(loaded.briefModel == LLMModelCatalog.onDeviceModelID)
+        #expect(loaded.storiesModel == LLMModelCatalog.onDeviceModelID)
+        #expect(loaded.quickReplyModel == LLMModelCatalog.onDeviceModelID)
     }
 }

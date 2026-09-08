@@ -149,7 +149,7 @@ private struct ViewMoreRow: View {
 
 struct DashboardDailyBriefCard: View {
     let payload: DailyBriefingPayload?
-    let hasLLMKey: Bool
+    let briefCapability: AIGenerationCapability
     let isGenerating: Bool
     let onRefresh: () -> Void
     let onOpenLLMSettings: () -> Void
@@ -185,31 +185,46 @@ struct DashboardDailyBriefCard: View {
             } else {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(hasLLMKey ? AppTheme.accent : AppTheme.secondaryText.opacity(0.35))
+                    .foregroundStyle(briefCapability.allowsGeneration ? AppTheme.accent : AppTheme.secondaryText.opacity(0.35))
             }
         }
         .buttonStyle(.plain)
-        .disabled(isGenerating || !hasLLMKey)
+        .disabled(isGenerating || !briefCapability.allowsGeneration)
         .animation(.easeOut(duration: 0.15), value: isGenerating)
     }
 
     @ViewBuilder
     private var briefContent: some View {
-        if !hasLLMKey {
-            VStack(alignment: .leading, spacing: AppTheme.spacingSmall) {
-                CardEmptyState(
-                    icon: "lock.fill",
-                    title: "Set up AI",
-                    subtitle: "Add an API key to enable your daily brief"
-                )
-                Button("Configure") {
+        if !briefCapability.allowsGeneration, payload == nil {
+            HStack(alignment: .center, spacing: AppTheme.spacingMedium) {
+                Image(systemName: briefCapability == .onDeviceUnavailable ? "apple.intelligence" : "lock.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(AppTheme.secondaryText.opacity(0.45))
+                    .frame(width: 36)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(briefCapability.upsellTitle)
+                        .font(AppTheme.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text(briefCapability.upsellSubtitle)
+                        .font(AppTheme.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(briefCapability.upsellActionTitle) {
                     onOpenLLMSettings()
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 4)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(AppTheme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall))
+                .buttonStyle(.plain)
             }
+            .padding(.vertical, 4)
         } else if let payload {
             NavigationLink(value: "daily_brief") {
                 VStack(alignment: .leading, spacing: 8) {

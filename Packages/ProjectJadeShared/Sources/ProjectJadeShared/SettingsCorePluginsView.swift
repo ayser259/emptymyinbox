@@ -127,13 +127,13 @@ struct SettingsPluginModelSettingsView: View {
 
         var description: String {
             switch self {
-            case .brief:
-                return "Pick the model used when generating your daily executive brief."
-            case .stories:
-                return "Pick the model used when generating newsletter insight cards."
-            case .quickReply:
-                return "Pick the model used when generating AI quick-reply drafts."
+            case .brief, .stories, .quickReply:
+                return onDeviceProviderFooter
             }
+        }
+
+        private var onDeviceProviderFooter: String {
+            "On Device runs Apple Intelligence locally with no API key. Cloud models require a key under Settings → Keys."
         }
     }
 
@@ -179,14 +179,42 @@ struct SettingsPluginModelSettingsView: View {
                     Spacer()
                 }
             } else {
-                Picker("Provider", selection: $settings.provider) {
-                    ForEach(LLMProvider.allCases, id: \.self) { provider in
+                Picker("Provider", selection: providerSelectionBinding) {
+                    ForEach(providerOptions, id: \.self) { provider in
                         Text(provider.displayName).tag(provider)
                     }
                 }
-                Picker("Model", selection: selectedModelBinding) {
-                    ForEach(modelOptionsIncludingCurrent(selectedModel), id: \.self) { model in
-                        Text(model).tag(model)
+                .onChange(of: settings.briefProvider) { _, newProvider in
+                    if kind == .brief {
+                        applyProviderDefaultsIfNeeded(newProvider)
+                    }
+                }
+                .onChange(of: settings.storiesProvider) { _, newProvider in
+                    if kind == .stories {
+                        applyProviderDefaultsIfNeeded(newProvider)
+                    }
+                }
+                .onChange(of: settings.quickReplyProvider) { _, newProvider in
+                    if kind == .quickReply {
+                        applyProviderDefaultsIfNeeded(newProvider)
+                    }
+                }
+                .onChange(of: settings.provider) { _, newProvider in
+                    if kind != .brief && kind != .stories && kind != .quickReply {
+                        applyProviderDefaultsIfNeeded(newProvider)
+                    }
+                }
+
+                if showsModelPicker {
+                    Picker("Model", selection: selectedModelBinding) {
+                        ForEach(modelOptionsIncludingCurrent(selectedModel), id: \.self) { model in
+                            Text(modelDisplayName(model)).tag(model)
+                        }
+                    }
+                } else if activeProvider == .onDevice {
+                    LabeledContent("Model") {
+                        Text("Apple Intelligence")
+                            .foregroundStyle(SharedAppTheme.secondaryText)
                     }
                 }
             }
@@ -216,6 +244,109 @@ struct SettingsPluginModelSettingsView: View {
         }
     }
 
+    private var providerOptions: [LLMProvider] {
+        LLMProvider.briefProviders
+    }
+
+    private var providerSelectionBinding: Binding<LLMProvider> {
+        switch kind {
+        case .brief:
+            return $settings.briefProvider
+        case .stories:
+            return $settings.storiesProvider
+        case .quickReply:
+            return $settings.quickReplyProvider
+        }
+    }
+
+    private var activeProvider: LLMProvider {
+        switch kind {
+        case .brief:
+            return settings.briefProvider
+        case .stories:
+            return settings.storiesProvider
+        case .quickReply:
+            return settings.quickReplyProvider
+        }
+    }
+
+    private var showsModelPicker: Bool {
+        activeProvider != .onDevice
+    }
+
+    private var isOnDeviceProviderSelected: Bool {
+        activeProvider == .onDevice
+    }
+
+    private func testOnDeviceConnection() async {
+        do {
+            switch kind {
+            case .brief:
+                let sample = DailyBriefCandidates(
+                    todayDate: "2026-05-18",
+                    yesterdayDate: "2026-05-17",
+                    urgentToday: [
+                        DailyBriefEmailCandidate(
+                            emailId: 1,
+                            sender: "boss@company.com",
+                            senderName: "Boss",
+                            subject: "Need your review before noon",
+                            snippet: "Please review the attached deck and reply today.",
+                            receivedAt: "2026-05-18T09:00:00Z",
+                            isRead: false,
+                            labels: ["INBOX", "UNREAD"]
+                        )
+                    ],
+                    criticalReminders: [],
+                    unreadFromYesterday: [],
+                    receiptsAndTransactions: []
+                )
+                _ = try await OnDeviceAIService.shared.generateDailyBrief(candidates: sample)
+            case .stories:
+                _ = try await OnDeviceAIService.shared.summarizeNewsletterStories(
+                    subject: "Weekly Product Digest",
+                    snippet: "Top product and AI stories this week.",
+                    sender: "newsletter@example.com",
+                    body: nil,
+                    preferenceContext: "preferredThemes=AI,Product"
+                )
+            case .quickReply:
+                _ = try await OnDeviceAIService.shared.quickReply(
+                    subject: "Can we move this meeting?",
+                    sender: "teammate@example.com",
+                    snippet: "Would Thursday work for you instead?",
+                    body: "Hey, can we move our meeting to Thursday afternoon?",
+                    userAsk: "Say yes and offer 2pm as an option."
+                )
+            }
+            await MainActor.run {
+                statusMessage = "Apple Intelligence is available."
+                isTestingConnection = false
+            }
+        } catch {
+            await MainActor.run {
+                statusMessage = error.localizedDescription
+                isTestingConnection = false
+            }
+        }
+    }
+
+    private func modelDisplayName(_ model: String) -> String {
+        LLMModelCatalog.displayName(for: model, provider: activeProvider)
+    }
+
+    private func applyProviderDefaultsIfNeeded(_ provider: LLMProvider) {
+        let defaults = LLMModelCatalog.defaults(for: provider)
+        switch kind {
+        case .brief:
+            settings.briefModel = defaults.defaultModel
+        case .stories:
+            settings.storiesModel = defaults.defaultModel
+        case .quickReply:
+            settings.quickReplyModel = defaults.defaultModel
+        }
+    }
+
     private var selectedModel: String {
         switch kind {
         case .brief:
@@ -230,7 +361,7 @@ struct SettingsPluginModelSettingsView: View {
     private var selectedModelBinding: Binding<String> {
         Binding(
             get: {
-                let defaults = LLMModelCatalog.defaults(for: settings.provider)
+                let defaults = LLMModelCatalog.defaults(for: activeProvider)
                 let fallback: String
                 switch kind {
                 case .brief, .stories:
@@ -238,7 +369,7 @@ struct SettingsPluginModelSettingsView: View {
                 case .quickReply:
                     fallback = defaults.defaultModel
                 }
-                return LLMModelCatalog.contains(selectedModel, provider: settings.provider) ? selectedModel : fallback
+                return LLMModelCatalog.contains(selectedModel, provider: activeProvider) ? selectedModel : fallback
             },
             set: { newValue in
                 switch kind {
@@ -254,7 +385,7 @@ struct SettingsPluginModelSettingsView: View {
     }
 
     private func modelOptionsIncludingCurrent(_ current: String) -> [String] {
-        let options = LLMModelCatalog.models(for: settings.provider)
+        let options = LLMModelCatalog.models(for: activeProvider)
         if options.contains(current) {
             return options
         }
@@ -291,10 +422,25 @@ struct SettingsPluginModelSettingsView: View {
 
         // Persist current picker selection so the request uses the exact feature model.
         await LLMSettingsStore.shared.updateSettings(settings)
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+
+        if isOnDeviceProviderSelected {
+            await testOnDeviceConnection()
+            return
+        }
+
+        let testProvider: LLMProvider
+        switch kind {
+        case .brief:
+            testProvider = settings.briefProvider
+        case .stories:
+            testProvider = settings.storiesProvider
+        case .quickReply:
+            testProvider = settings.quickReplyProvider
+        }
+        let hasKey = await LLMProviderRouter.shared.hasAPIKey(for: testProvider)
         guard hasKey else {
             await MainActor.run {
-                statusMessage = "Add a \(settings.provider.displayName) API key under Settings → Keys first."
+                statusMessage = "Add a \(testProvider.displayName) API key under Settings → Keys first."
                 isTestingConnection = false
             }
             return

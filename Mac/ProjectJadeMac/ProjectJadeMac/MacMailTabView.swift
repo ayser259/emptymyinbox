@@ -288,6 +288,9 @@ struct MacMailTabView: View {
                 },
                 onOpenStories: {
                     selection = .tool(.stories)
+                },
+                onOpenLLMSettings: {
+                    showLLMSettings = true
                 }
             )
         case .catchUp:

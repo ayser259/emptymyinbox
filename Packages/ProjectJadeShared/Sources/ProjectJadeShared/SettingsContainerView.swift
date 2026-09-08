@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Obsidian-style settings: sidebar + detail (shared iOS + macOS).
-public struct SettingsContainerView<Vault: View>: View {
+public struct SettingsContainerView: View {
     @EnvironmentObject public var authManager: AuthManager
     @ObservedObject private var appearance = AppearanceSettingsStore.shared
 
@@ -13,7 +13,6 @@ public struct SettingsContainerView<Vault: View>: View {
     @State private var showCacheClearedAlert = false
     @State private var configuredAPIKeyCount = 0
 
-    private let vaultSettings: () -> Vault
     private let onAddGmailAccount: () -> Void
     private let onDismiss: () -> Void
 
@@ -22,13 +21,11 @@ public struct SettingsContainerView<Vault: View>: View {
     }
 
     public init(
-        vaultSettings: @escaping () -> Vault,
         isAddingAccount: Binding<Bool>,
         onAddGmailAccount: @escaping () -> Void,
         onDismiss: @escaping () -> Void,
         accentColor _: Color = AppThemePalette.defaultDarkGold.accent
     ) {
-        self.vaultSettings = vaultSettings
         self._isAddingAccount = isAddingAccount
         self.onAddGmailAccount = onAddGmailAccount
         self.onDismiss = onDismiss
@@ -352,7 +349,7 @@ public struct SettingsContainerView<Vault: View>: View {
             case .shortcuts:
                 SettingsShortcutsView()
             case .storage:
-                SettingsStorageView(vaultSettings: vaultSettings, accentColor: accentColor)
+                SettingsStorageView(accentColor: accentColor)
             case .keys:
                 SettingsKeysView()
             case .corePlugins:

@@ -8,9 +8,30 @@ public actor LLMProviderRouter {
         return settings.provider
     }
 
+    public func briefProvider() async -> LLMProvider {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return settings.briefProvider
+    }
+
+    public func storiesProvider() async -> LLMProvider {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return settings.storiesProvider
+    }
+
+    public func quickReplyProvider() async -> LLMProvider {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return settings.quickReplyProvider
+    }
+
     public func hasSelectedProviderAPIKey() async -> Bool {
         let provider = await selectedProvider()
+        return await hasAPIKey(for: provider)
+    }
+
+    public func hasAPIKey(for provider: LLMProvider) async -> Bool {
         switch provider {
+        case .onDevice:
+            return false
         case .openAI:
             return await LLMSettingsStore.shared.hasAPIKey()
         case .claude:
@@ -18,17 +39,38 @@ public actor LLMProviderRouter {
         }
     }
 
-    /// True if the selected provider has a key, or any provider has a key (Quick Reply can still run).
-    public func hasUsableAPIKeyForQuickReply() async -> Bool {
-        if await hasSelectedProviderAPIKey() { return true }
-        let hasOpenAI = await LLMSettingsStore.shared.hasAPIKey()
-        let hasClaude = await ClaudeAPIKeyStore.shared.hasAPIKey()
-        return hasOpenAI || hasClaude
+    public func briefGenerationCapability() async -> AIGenerationCapability {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return await capability(for: settings.briefProvider)
+    }
+
+    public func storiesGenerationCapability() async -> AIGenerationCapability {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return await capability(for: settings.storiesProvider)
+    }
+
+    public func quickReplyGenerationCapability() async -> AIGenerationCapability {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        return await capability(for: settings.quickReplyProvider)
+    }
+
+    public func canGenerateBrief() async -> Bool {
+        await briefGenerationCapability() == .ready
+    }
+
+    public func canGenerateStories() async -> Bool {
+        await storiesGenerationCapability() == .ready
+    }
+
+    public func canGenerateQuickReply() async -> Bool {
+        await quickReplyGenerationCapability() == .ready
     }
 
     public func generateDailyBrief(candidates: DailyBriefCandidates) async throws -> DailyBriefLLMResponse {
-        let provider = await selectedProvider()
-        switch provider {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        switch settings.briefProvider {
+        case .onDevice:
+            return try await OnDeviceAIService.shared.generateDailyBrief(candidates: candidates)
         case .openAI:
             return try await OpenAIService.shared.generateDailyBrief(candidates: candidates)
         case .claude:
@@ -43,8 +85,16 @@ public actor LLMProviderRouter {
         body: String?,
         preferenceContext: String
     ) async throws -> [InsightGenerationResult] {
-        let provider = await selectedProvider()
-        switch provider {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        switch settings.storiesProvider {
+        case .onDevice:
+            return try await OnDeviceAIService.shared.summarizeNewsletterStories(
+                subject: subject,
+                snippet: snippet,
+                sender: sender,
+                body: body,
+                preferenceContext: preferenceContext
+            )
         case .openAI:
             return try await OpenAIService.shared.summarizeNewsletterStories(
                 subject: subject,
@@ -74,81 +124,67 @@ public actor LLMProviderRouter {
         recipientsTo: String = "",
         recipientsCc: String = ""
     ) async throws -> String {
-        let args = (
-            subject: subject,
-            sender: sender,
-            snippet: snippet,
-            body: body,
-            userAsk: userAsk,
-            currentDraft: currentDraft,
-            recipientsTo: recipientsTo,
-            recipientsCc: recipientsCc
-        )
-        let selected = await selectedProvider()
-        switch selected {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        switch settings.quickReplyProvider {
+        case .onDevice:
+            return try await OnDeviceAIService.shared.quickReply(
+                subject: subject,
+                sender: sender,
+                snippet: snippet,
+                body: body,
+                userAsk: userAsk,
+                currentDraft: currentDraft,
+                recipientsTo: recipientsTo,
+                recipientsCc: recipientsCc
+            )
         case .openAI:
-            if await LLMSettingsStore.shared.hasAPIKey() {
-                return try await openAIQuickReply(args)
-            }
-            if await ClaudeAPIKeyStore.shared.hasAPIKey() {
-                return try await claudeQuickReply(args)
-            }
+            return try await OpenAIService.shared.quickReply(
+                subject: subject,
+                sender: sender,
+                snippet: snippet,
+                body: body,
+                userAsk: userAsk,
+                currentDraft: currentDraft,
+                recipientsTo: recipientsTo,
+                recipientsCc: recipientsCc
+            )
         case .claude:
-            if await ClaudeAPIKeyStore.shared.hasAPIKey() {
-                return try await claudeQuickReply(args)
-            }
-            if await LLMSettingsStore.shared.hasAPIKey() {
-                return try await openAIQuickReply(args)
-            }
+            return try await ClaudeService.shared.quickReply(
+                subject: subject,
+                sender: sender,
+                snippet: snippet,
+                body: body,
+                userAsk: userAsk,
+                currentDraft: currentDraft,
+                recipientsTo: recipientsTo,
+                recipientsCc: recipientsCc
+            )
         }
-        throw LLMProviderRouterError.missingAPIKey(provider: selected)
     }
 
-    private typealias QuickReplyArgs = (
-        subject: String,
-        sender: String,
-        snippet: String,
-        body: String,
-        userAsk: String,
-        currentDraft: String,
-        recipientsTo: String,
-        recipientsCc: String
-    )
-
-    private func openAIQuickReply(_ args: QuickReplyArgs) async throws -> String {
-        try await OpenAIService.shared.quickReply(
-            subject: args.subject,
-            sender: args.sender,
-            snippet: args.snippet,
-            body: args.body,
-            userAsk: args.userAsk,
-            currentDraft: args.currentDraft,
-            recipientsTo: args.recipientsTo,
-            recipientsCc: args.recipientsCc
-        )
-    }
-
-    private func claudeQuickReply(_ args: QuickReplyArgs) async throws -> String {
-        try await ClaudeService.shared.quickReply(
-            subject: args.subject,
-            sender: args.sender,
-            snippet: args.snippet,
-            body: args.body,
-            userAsk: args.userAsk,
-            currentDraft: args.currentDraft,
-            recipientsTo: args.recipientsTo,
-            recipientsCc: args.recipientsCc
-        )
+    private func capability(for provider: LLMProvider) async -> AIGenerationCapability {
+        switch provider {
+        case .onDevice:
+            return OnDeviceAIService.isAvailable() ? .ready : .onDeviceUnavailable
+        case .openAI, .claude:
+            if await hasAPIKey(for: provider) {
+                return .ready
+            }
+            return .missingAPIKey(provider: provider)
+        }
     }
 }
 
 public enum LLMProviderRouterError: LocalizedError, Sendable {
     case missingAPIKey(provider: LLMProvider)
+    case unsupportedProvider(provider: LLMProvider)
 
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey(let provider):
             return "Add a \(provider.displayName) API key under Settings → Keys."
+        case .unsupportedProvider(let provider):
+            return "\(provider.displayName) is not supported for this feature. Choose OpenAI or Claude under Settings."
         }
     }
 }

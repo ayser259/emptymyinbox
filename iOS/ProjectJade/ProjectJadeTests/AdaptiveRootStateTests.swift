@@ -8,17 +8,11 @@ import XCTest
 
 @MainActor
 final class AdaptiveRootStateTests: XCTestCase {
-    func testDefaultTabIsMail() {
+    func testDefaultMailSidebarIsDashboard() {
         let state = AdaptiveRootState()
-        XCTAssertEqual(state.selectedTab, AdaptiveRootState.RootTab.mail.rawValue)
-        XCTAssertEqual(state.rootTab, .mail)
-    }
-
-    func testRootTabSetter() {
-        let state = AdaptiveRootState()
-        state.rootTab = .mail
-        XCTAssertEqual(state.selectedTab, AdaptiveRootState.RootTab.mail.rawValue)
-        XCTAssertEqual(state.rootTab, .mail)
+        XCTAssertEqual(state.mailSidebarSelection, .tool(.dashboard))
+        XCTAssertFalse(state.usesWideChrome)
+        XCTAssertFalse(state.showMenu)
     }
 
     func testSelectMailSidebarUpdatesSelectionAndClearsNavigation() {

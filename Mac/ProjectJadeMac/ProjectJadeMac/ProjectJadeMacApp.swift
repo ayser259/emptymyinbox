@@ -53,8 +53,6 @@ struct ProjectJadeMacApp: App {
                 .tint(appearanceSettings.resolvedPalette.accent)
                 .appThemePalette(appearanceSettings.resolvedPalette)
                 .task {
-                    await VaultManager.shared.reloadFromPreferences()
-                    await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
                     await AppLifecycleCloudSync.performStartupSync()
                 }
                 .onOpenURL { url in
@@ -63,15 +61,6 @@ struct ProjectJadeMacApp: App {
         }
         .commands {
             CommandMenu("Go") {
-                Button("Mail") {
-                    NotificationCenter.default.post(name: .macSelectRootTab, object: MacRootTab.mail.rawValue)
-                }
-                .keyboardShortcut("1", modifiers: .command)
-                Divider()
-                Button("Next Primary Tab") {
-                    NotificationCenter.default.post(name: .macCycleRootTabForward, object: nil)
-                }
-                .keyboardShortcut(.tab, modifiers: .control)
                 Button("Refresh") {
                     NotificationCenter.default.post(name: .macRefreshCurrentRootTab, object: nil)
                 }
@@ -95,12 +84,6 @@ struct ProjectJadeMacApp: App {
                     authManager.logout()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
-            }
-            CommandMenu("Vault") {
-                Button("Vault Settings…") {
-                    NotificationCenter.default.post(name: .macOpenVaultSettings, object: nil)
-                }
-                .keyboardShortcut("b", modifiers: [.command, .shift])
             }
         }
     }

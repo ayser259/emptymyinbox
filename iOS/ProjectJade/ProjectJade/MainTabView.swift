@@ -2,7 +2,7 @@
 //  MainTabView.swift
 //  ProjectJade
 //
-//  Root tab bar: Mail (dashboard).
+//  Compact iPhone / iPad-narrow shell: dashboard with menu sheet (no bottom tab bar).
 //
 
 import SwiftUI
@@ -14,19 +14,13 @@ struct MainTabView: View {
     @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
 
     var body: some View {
-        TabView(selection: $rootState.selectedTab) {
-            DashboardView(isMenuPresented: $rootState.showMenu)
-                .tabItem {
-                    Label("Mail", systemImage: "envelope.fill")
-                }
-                .tag(AdaptiveRootState.RootTab.mail.rawValue)
-        }
-        .id(appearanceSettings.paletteRevision)
-        .tint(appearanceSettings.resolvedPalette.accent)
-        .sheet(isPresented: $rootState.showMenu) {
-            MenuView()
-                .environmentObject(authManager)
-        }
+        DashboardView(isMenuPresented: $rootState.showMenu)
+            .id(appearanceSettings.paletteRevision)
+            .tint(appearanceSettings.resolvedPalette.accent)
+            .sheet(isPresented: $rootState.showMenu) {
+                MenuView()
+                    .environmentObject(authManager)
+            }
     }
 }
 

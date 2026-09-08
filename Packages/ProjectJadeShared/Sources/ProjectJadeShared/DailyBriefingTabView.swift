@@ -1,11 +1,7 @@
 import Foundation
 import SwiftUI
 
-private enum BriefVaultNudge {
-    static let userDefaultsKey = "vaultNudgeBriefShown"
-}
-
-/// Inline Brief tab: loads cached briefing, runs LLM once per day (or on refresh), persists to UserDefaults and vault.
+/// Inline Brief tab: loads cached briefing, runs LLM once per day (or on refresh), persists to UserDefaults.
 public struct DailyBriefingTabView: View {
     let allEmails: [EmailListItem]
     let onItemTap: (DailyBriefingItem) -> Void
@@ -14,8 +10,7 @@ public struct DailyBriefingTabView: View {
     @State private var payload: DailyBriefingPayload?
     @State private var isLoading = true
     @State private var isRefreshing = false
-    @State private var hasLLMKey = false
-    @State private var showVaultNudgeAlert = false
+    @State private var briefCapability: AIGenerationCapability = .onDeviceUnavailable
 
     public init(
         allEmails: [EmailListItem],
@@ -37,11 +32,11 @@ public struct DailyBriefingTabView: View {
             if isLoading {
                 ProgressView("Loading briefing…")
                     .tint(SharedAppTheme.accent)
-            } else if !hasLLMKey {
+            } else if !briefCapability.allowsGeneration, payload == nil {
                 LLMUpsellView(
-                    title: "Unlock AI Summary",
-                    subtitle: "Add your selected provider API key to enable the Daily Executive Summary.",
-                    actionTitle: "Add API Key",
+                    title: briefCapability.upsellTitle,
+                    subtitle: briefCapability.upsellSubtitle,
+                    actionTitle: briefCapability.upsellActionTitle,
                     onAction: onOpenLLMSettings
                 )
             } else if let payload {
@@ -68,7 +63,7 @@ public struct DailyBriefingTabView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .disabled(isRefreshing || !hasLLMKey)
+                .disabled(isRefreshing || !briefCapability.allowsGeneration)
             }
         }
         .task {
@@ -80,20 +75,15 @@ public struct DailyBriefingTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
             Task { await loadOrGenerate(forceRefresh: false) }
         }
-        .alert("Back up Brief", isPresented: $showVaultNudgeAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Add a Vault in Settings to sync your Daily Briefing to Google Drive or a folder.")
-        }
     }
 
     private func loadOrGenerate(forceRefresh: Bool) async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
         await MainActor.run {
-            hasLLMKey = hasKey
+            briefCapability = capability
         }
 
-        guard hasKey else {
+        if case .missingAPIKey = capability {
             UserDefaults.standard.removeObject(forKey: DailyBriefingDefaults.persistedPayloadKey)
             await MainActor.run {
                 isLoading = false
@@ -113,6 +103,10 @@ public struct DailyBriefingTabView: View {
             isLoading = false
         }
 
+        guard capability.allowsGeneration else {
+            return
+        }
+
         let ranToday = payload.map { Calendar.current.isDateInToday($0.generatedAt) } ?? false
         if !forceRefresh, ranToday {
             return
@@ -120,37 +114,18 @@ public struct DailyBriefingTabView: View {
 
         await MainActor.run { isRefreshing = true }
         let built = await DailyBriefingEngine.shared.buildPayload(from: allEmails, sinceDate: nil)
-        await persistEverywhere(built)
+        await persistLocal(built)
         await MainActor.run {
             payload = built
             isRefreshing = false
         }
-        await maybeVaultNudge()
     }
 
-    private func persistEverywhere(_ p: DailyBriefingPayload) async {
+    private func persistLocal(_ p: DailyBriefingPayload) async {
         if let data = try? JSONEncoder().encode(p) {
             UserDefaults.standard.set(data, forKey: DailyBriefingDefaults.persistedPayloadKey)
         }
         UserDefaults.standard.set(Date(), forKey: DailyBriefingDefaults.lastCheckDateKey)
         NotificationCenter.default.post(name: .briefingPayloadDidPersist, object: nil)
-        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
-        guard ready else { return }
-        do {
-            try await VaultManager.shared.saveDailyBriefToVault(p)
-        } catch {
-            logError("Brief: vault save failed: \(error)", category: "Vault")
-        }
-    }
-
-    private func maybeVaultNudge() async {
-        let ready = await MainActor.run { VaultManager.shared.isVaultReady }
-        guard !ready else { return }
-        let shown = UserDefaults.standard.bool(forKey: BriefVaultNudge.userDefaultsKey)
-        guard !shown else { return }
-        UserDefaults.standard.set(true, forKey: BriefVaultNudge.userDefaultsKey)
-        await MainActor.run {
-            showVaultNudgeAlert = true
-        }
     }
 }

@@ -276,7 +276,6 @@ struct iPadMailTabView: View {
     private func refreshMailbox() async {
         isRefreshing = true
         defer { isRefreshing = false }
-        await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
     }

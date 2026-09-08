@@ -2,7 +2,7 @@
 //  IOSFeatureShellViews.swift
 //  ProjectJade
 //
-//  Shared top chrome for mail tabs.
+//  Shared top chrome for the compact dashboard shell.
 //
 
 import SwiftUI

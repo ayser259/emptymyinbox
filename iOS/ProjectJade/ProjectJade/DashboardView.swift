@@ -29,7 +29,7 @@ struct DashboardView: View {
     @State private var dailyBriefingPayload: DailyBriefingPayload?
     @State private var storiesCount = 0
     @State private var recentStories: [InsightCard] = []
-    @State private var hasLLMKey = false
+    @State private var briefCapability: AIGenerationCapability = .onDeviceUnavailable
     @State private var isBriefGenerating = false
     
     var body: some View {
@@ -136,13 +136,13 @@ struct DashboardView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .llmAPIKeyChanged)) { _ in
             Task {
-                await refreshLLMKeyStatus()
+                await refreshBriefCapability()
                 await refreshBriefBadgeFromPersisted()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .claudeAPIKeyChanged)) { _ in
             Task {
-                await refreshLLMKeyStatus()
+                await refreshBriefCapability()
                 await refreshBriefBadgeFromPersisted()
             }
         }
@@ -198,10 +198,9 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             topBarSection
 
-            VaultRefreshStatusLabel(font: .caption)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, AppTheme.spacingMedium)
-                .padding(.bottom, AppTheme.spacingSmall)
+            if !rootState.usesWideChrome {
+                compactTopNav
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.spacingLarge) {
@@ -217,26 +216,21 @@ struct DashboardView: View {
         }
     }
 
-    /// Mail/dashboard feed: greeting, widgets, quick actions, account inbox cards.
+    /// Mail/dashboard feed: greeting, widgets, and account inbox cards.
     private var feedColumnContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.spacingMedium) {
             DashboardGreetingSection(name: firstName)
                 .padding(.top, AppTheme.spacingSmall)
 
-            HStack(alignment: .top, spacing: AppTheme.spacingSmall) {
-                DashboardDailyBriefCard(
-                    payload: dailyBriefingPayload,
-                    hasLLMKey: hasLLMKey,
-                    isGenerating: isBriefGenerating,
-                    onRefresh: { refreshBrief() },
-                    onOpenLLMSettings: {
-                        navigationPath.append("llm_management")
-                    }
-                )
-                .frame(maxWidth: .infinity)
-
-                .frame(width: 160)
-            }
+            DashboardDailyBriefCard(
+                payload: dailyBriefingPayload,
+                briefCapability: briefCapability,
+                isGenerating: isBriefGenerating,
+                onRefresh: { refreshBrief() },
+                onOpenLLMSettings: {
+                    navigationPath.append("llm_management")
+                }
+            )
 
             DashboardAccountUpdatesCard(
                 unreadCount: unreadCount,
@@ -245,8 +239,10 @@ struct DashboardView: View {
 
             DashboardStoriesFeedCard(stories: recentStories)
 
-            actionButtonsSection
-                .padding(.top, AppTheme.spacingSmall)
+            if rootState.usesWideChrome {
+                actionButtonsSection
+                    .padding(.top, AppTheme.spacingSmall)
+            }
 
             inboxFeedHeader
                 .padding(.top, AppTheme.spacingSmall)
@@ -278,6 +274,13 @@ struct DashboardView: View {
                 isMenuPresented = true
             })
         }
+    }
+
+    /// Compact (iPhone / iPad narrow) primary nav: Catch Up, Stories, Brief, and mailbox shortcuts.
+    private var compactTopNav: some View {
+        actionButtonsSection
+            .padding(.bottom, AppTheme.spacingSmall)
+            .background(AppTheme.secondaryBackground.opacity(0.35))
     }
 
     private var actionButtonsSection: some View {
@@ -596,7 +599,7 @@ struct DashboardView: View {
         await AccountInclusionStore.shared.refreshFromConnectedAccounts()
         await refreshStoriesCount()
         await refreshBriefBadgeFromPersisted()
-        await refreshLLMKeyStatus()
+        await refreshBriefCapability()
         await loadRecentStories()
 
         let cached = await DashboardDataManager.shared.loadCachedSnapshot()
@@ -665,9 +668,6 @@ struct DashboardView: View {
         }
         
         do {
-            if shouldSync {
-                await VaultManager.shared.performLifecycleSync(postNotification: false)
-            }
             if let snapshot = await DashboardDataManager.shared.refreshData(shouldSync: shouldSync, progressCallback: progressCallback) {
                 // Get health statuses after refresh
                 let healthStatuses = await DashboardDataManager.shared.getAccountHealth()
@@ -688,7 +688,7 @@ struct DashboardView: View {
 
                 await refreshStoriesCount()
                 await refreshBriefBadgeFromPersisted()
-                await refreshLLMKeyStatus()
+                await refreshBriefCapability()
                 await loadRecentStories()
             } else {
                 logWarning("refreshData returned nil", category: "Dashboard")
@@ -726,8 +726,7 @@ struct DashboardView: View {
     }
 
     private func refreshBriefBadgeFromPersisted() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        guard hasKey else {
+        if case .missingAPIKey = await LLMProviderRouter.shared.briefGenerationCapability() {
             await MainActor.run {
                 dailyBriefingPayload = nil
             }
@@ -745,9 +744,9 @@ struct DashboardView: View {
         }
     }
 
-    private func refreshLLMKeyStatus() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        await MainActor.run { hasLLMKey = hasKey }
+    private func refreshBriefCapability() async {
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
+        await MainActor.run { briefCapability = capability }
     }
 
     private func loadRecentStories() async {
@@ -760,7 +759,7 @@ struct DashboardView: View {
 
     private func refreshBrief() {
         Task {
-            guard hasLLMKey else { return }
+            guard briefCapability.allowsGeneration else { return }
             await MainActor.run { isBriefGenerating = true }
             let built = await DailyBriefingEngine.shared.buildPayload(from: allEmails, sinceDate: nil)
             if let data = try? JSONEncoder().encode(built) {

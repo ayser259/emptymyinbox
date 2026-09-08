@@ -27,8 +27,6 @@ public struct GmailAccount: Codable, Identifiable {
     public var tokenExpiry: Date?
     public var lastSync: Date?
     public var unreadEmailsNextPageToken: String?
-    /// Last known Drive `drive.file` scope grant (vault). `nil`/false until user authorizes Drive.
-    public var hasGoogleDriveFileScope: Bool?
 
     public init(
         id: String,
@@ -38,8 +36,7 @@ public struct GmailAccount: Codable, Identifiable {
         refreshToken: String?,
         tokenExpiry: Date?,
         lastSync: Date?,
-        unreadEmailsNextPageToken: String?,
-        hasGoogleDriveFileScope: Bool? = nil
+        unreadEmailsNextPageToken: String?
     ) {
         self.id = id
         self.email = email
@@ -49,13 +46,6 @@ public struct GmailAccount: Codable, Identifiable {
         self.tokenExpiry = tokenExpiry
         self.lastSync = lastSync
         self.unreadEmailsNextPageToken = unreadEmailsNextPageToken
-        self.hasGoogleDriveFileScope = hasGoogleDriveFileScope
-    }
-
-
-    /// Drive file access is granted only after the vault / Drive scope flow.
-    public var hasDriveFileAccessForSettings: Bool {
-        hasGoogleDriveFileScope ?? false
     }
     
     // Generate a stable numeric ID for compatibility with existing code
@@ -262,12 +252,6 @@ public class GmailAPIService {
     }
 
     @MainActor
-    private func applyGrantedScopes(from user: GIDGoogleUser, to account: inout GmailAccount) {
-        let granted = Set(user.grantedScopes ?? [])
-        account.hasGoogleDriveFileScope = granted.contains(Self.googleDriveFileScope)
-    }
-
-    @MainActor
     private func upsertGmailAccountFromGoogleUser(_ user: GIDGoogleUser) throws -> GmailAccount {
         guard user.idToken != nil else {
             throw GmailAPIError.noToken
@@ -289,12 +273,11 @@ public class GmailAPIService {
             if let name = name {
                 updatedAccount.name = name
             }
-            applyGrantedScopes(from: user, to: &updatedAccount)
             accounts[existingIndex] = updatedAccount
             saveAccounts()
             return updatedAccount
         } else {
-            var account = GmailAccount(
+            let account = GmailAccount(
                 id: email,
                 email: email,
                 name: name,
@@ -304,7 +287,6 @@ public class GmailAPIService {
                 lastSync: nil,
                 unreadEmailsNextPageToken: nil
             )
-            applyGrantedScopes(from: user, to: &account)
             accounts.append(account)
             saveAccounts()
             return account
@@ -476,12 +458,7 @@ public class GmailAPIService {
         }
     }
 
-    // MARK: - Google Drive (vault)
-
-    public static let googleDriveFileScope = "https://www.googleapis.com/auth/drive.file"
-
-
-    /// Restores the Google Sign-In SDK session so `GIDSignIn.sharedInstance.currentUser` is set. Call after launch if you persist Gmail accounts; otherwise `addScopes` / Drive vault flows see no `currentUser` and throw "Not authenticated with Gmail".
+    /// Restores the Google Sign-In SDK session so `GIDSignIn.sharedInstance.currentUser` is set. Call after launch if you persist Gmail accounts.
     @MainActor
     public func restoreGoogleSignInSessionIfNeeded() async {
         guard !accounts.isEmpty else { return }
@@ -503,66 +480,6 @@ public class GmailAPIService {
                 logWarning("Google Sign-In: restorePreviousSignIn — \(message)", category: "Auth")
             }
         }
-    }
-
-    #if canImport(UIKit)
-    @MainActor
-    public func requestGoogleDriveFileScope(presentingViewController: UIViewController) async throws {
-        await restoreGoogleSignInSessionIfNeeded()
-        guard let user = GIDSignIn.sharedInstance.currentUser else {
-            throw GmailAPIError.notAuthenticated
-        }
-        do {
-            let result = try await user.addScopes([Self.googleDriveFileScope], presenting: presentingViewController)
-            try updateAccountAccessTokenFromGoogleUser(result.user)
-        } catch {
-            if Self.isGoogleSignInScopesAlreadyGranted(error) {
-                try updateAccountAccessTokenFromGoogleUser(user)
-            } else {
-                throw error
-            }
-        }
-    }
-    #endif
-
-    #if os(macOS)
-    @MainActor
-    public func requestGoogleDriveFileScope(presentingWindow: NSWindow?) async throws {
-        await restoreGoogleSignInSessionIfNeeded()
-        guard let user = GIDSignIn.sharedInstance.currentUser else {
-            throw GmailAPIError.notAuthenticated
-        }
-        guard let window = presentingWindow ?? NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
-            throw GmailAPIError.configurationError
-        }
-        do {
-            let result = try await user.addScopes([Self.googleDriveFileScope], presenting: window)
-            try updateAccountAccessTokenFromGoogleUser(result.user)
-        } catch {
-            if Self.isGoogleSignInScopesAlreadyGranted(error) {
-                try updateAccountAccessTokenFromGoogleUser(user)
-            } else {
-                throw error
-            }
-        }
-    }
-    #endif
-
-    @MainActor
-    private func updateAccountAccessTokenFromGoogleUser(_ user: GIDGoogleUser) throws {
-        let email = user.profile?.email ?? ""
-        guard !email.isEmpty else { throw GmailAPIError.noToken }
-        let accessToken = user.accessToken.tokenString
-        let tokenExpiry = Date().addingTimeInterval(3600)
-        guard let idx = accounts.firstIndex(where: { $0.email == email }) else {
-            throw GmailAPIError.notAuthenticated
-        }
-        var acc = accounts[idx]
-        acc.accessToken = accessToken
-        acc.tokenExpiry = tokenExpiry
-        applyGrantedScopes(from: user, to: &acc)
-        accounts[idx] = acc
-        saveAccounts()
     }
 
     private func refreshAccessToken(refreshToken: String, clientID: String, clientSecret: String) async throws -> String {

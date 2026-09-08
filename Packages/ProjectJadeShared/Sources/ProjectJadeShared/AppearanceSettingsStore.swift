@@ -55,10 +55,6 @@ public final class AppearanceSettingsStore: ObservableObject {
         return trimmed.isEmpty ? AppBranding.defaultDisplayName : trimmed
     }
 
-    public var resolvedVaultDisplayName: String {
-        AppBranding.vaultDisplayName(using: displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : displayName)
-    }
-
     public var resolvedPalette: AppThemePalette {
         switch paletteMode {
         case .preset:

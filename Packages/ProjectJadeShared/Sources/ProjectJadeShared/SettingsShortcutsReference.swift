@@ -14,11 +14,9 @@ public struct SettingsShortcutReference: Identifiable, Hashable, Sendable {
 }
 
 public enum SettingsShortcutsReference {
-    /// Primary navigation + refresh (every tab).
+    /// Refresh (Mac / iPad with keyboard).
     public static let global: [SettingsShortcutReference] = [
-        SettingsShortcutReference(title: "Mail", shortcutDisplay: "⌘1"),
         SettingsShortcutReference(title: "Refresh", shortcutDisplay: "⌘R"),
-        SettingsShortcutReference(title: "Next primary tab", shortcutDisplay: "⌃Tab"),
     ]
 
     /// Mail tab — detail tools.

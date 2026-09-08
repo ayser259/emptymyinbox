@@ -29,11 +29,9 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var appearanceSettings: AppearanceSettingsStore
-    @State private var rootTab: MacRootTab = .mail
     @State private var snapshot: DashboardDataSnapshot?
     @State private var isRefreshing = false
     @State private var refreshMessage: String?
-    @State private var showVaultSettings = false
     @State private var showAppSettings = false
     @State private var isAddingGmailAccount = false
     @State private var lastMailRefreshAt: Date?
@@ -60,15 +58,8 @@ struct ContentView: View {
         .frame(minWidth: 960, minHeight: 600)
         .background(MacAppTheme.primaryBackground)
         .environmentObject(sidebarShortcutsStore)
-        .sheet(isPresented: $showVaultSettings) {
-            NavigationStack {
-                MacVaultSettingsView()
-            }
-            .frame(minWidth: 440, minHeight: 400)
-        }
         .sheet(isPresented: $showAppSettings) {
             SettingsContainerView(
-                vaultSettings: { MacVaultSettingsView(showDismissToolbar: false) },
                 isAddingAccount: $isAddingGmailAccount,
                 onAddGmailAccount: { Task { await addGmailAccountFromSettings() } },
                 onDismiss: { showAppSettings = false },
@@ -76,9 +67,6 @@ struct ContentView: View {
             )
             .environmentObject(authManager)
             .frame(minWidth: 760, minHeight: 560)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .macOpenVaultSettings)) { _ in
-            showVaultSettings = true
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background {
@@ -98,59 +86,27 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainChrome: some View {
-        VStack(spacing: 0) {
-            mailSplitView
-                .id(appearanceSettings.paletteRevision)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(MacAppTheme.primaryBackground)
-
-            Divider()
-                .opacity(0.35)
-
-            VaultRefreshStatusLabel(font: .caption)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(MacAppTheme.secondaryBackground.opacity(0.45))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MacAppTheme.primaryBackground)
-        .tint(appearanceSettings.resolvedPalette.accent)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                MacRootTabBar(selection: $rootTab)
-                    .frame(minWidth: 420, idealWidth: 520, maxWidth: 560)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    showVaultSettings = true
-                } label: {
-                    Label("Vault", systemImage: "shippingbox")
+        mailSplitView
+            .id(appearanceSettings.paletteRevision)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MacAppTheme.primaryBackground)
+            .tint(appearanceSettings.resolvedPalette.accent)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        Task { await refreshMailbox() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(isRefreshing)
+                    .help("Refresh mail (⌘R)")
+                    .keyboardShortcut("r", modifiers: .command)
                 }
-                .labelStyle(.iconOnly)
-                .help("Vault storage settings")
-
-                Button {
-                    Task { await refreshMailbox() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .labelStyle(.iconOnly)
-                .disabled(isRefreshing)
-                .help("Refresh mail (⌘R)")
-                .keyboardShortcut("r", modifiers: .command)
             }
-        }
         .toolbarBackground(MacAppTheme.secondaryBackground.opacity(0.65), for: .windowToolbar)
-        .onReceive(NotificationCenter.default.publisher(for: .macSelectRootTab)) { notification in
-            guard let raw = notification.object as? Int, let tab = MacRootTab(rawValue: raw) else { return }
-            rootTab = tab
-        }
         .onReceive(NotificationCenter.default.publisher(for: .macRefreshCurrentRootTab)) { _ in
             Task { await refreshMailbox() }
-        }
-        .onChange(of: rootTab) { _, _ in
-            sidebarShortcutsStore.clearAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .dashboardNeedsUpdate)) { _ in
             Task { await loadSnapshot() }
@@ -194,7 +150,6 @@ struct ContentView: View {
         isRefreshing = true
         refreshMessage = nil
         defer { isRefreshing = false }
-        await VaultManager.shared.performLifecycleSync(postNotification: false)
         _ = await DashboardDataManager.shared.refreshData(shouldSync: true, progressCallback: nil)
         await loadSnapshot()
         let stamp = snapshot?.timestamp.formatted(date: .abbreviated, time: .shortened) ?? "—"

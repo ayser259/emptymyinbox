@@ -27,16 +27,6 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertEqual(AppThemePalette.preset(withID: "preset-ocean")?.name, "Ocean")
     }
 
-    func testVaultDisplayNameUsesCustomAppName() {
-        let name = AppBranding.vaultDisplayName(using: "My Mail")
-        XCTAssertEqual(name, "My Mail Vault")
-    }
-
-    func testVaultDisplayNameDefault() {
-        XCTAssertEqual(AppBranding.vaultDisplayName(using: nil), AppBranding.defaultVaultDisplayName)
-        XCTAssertEqual(AppBranding.vaultDisplayName(using: ""), AppBranding.defaultVaultDisplayName)
-    }
-
     func testPaletteSelectionHighlightUsesAccent() {
         let palette = AppThemePalette.presetForest
         XCTAssertEqual(palette.selectionHighlight, palette.accent.opacity(0.22))

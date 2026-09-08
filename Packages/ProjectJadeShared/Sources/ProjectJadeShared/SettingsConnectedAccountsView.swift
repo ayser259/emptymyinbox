@@ -3,7 +3,6 @@ import SwiftUI
 /// Gmail accounts, add account, per-account disconnect (shared iOS + macOS).
 public struct SettingsConnectedAccountsView: View {
     @EnvironmentObject public var authManager: AuthManager
-    @ObservedObject private var vaultManager = VaultManager.shared
     @Binding public var isAddingAccount: Bool
 
     public let accentColor: Color
@@ -28,7 +27,6 @@ public struct SettingsConnectedAccountsView: View {
                 ForEach(authManager.accounts) { account in
                     SettingsConnectedAccountRow(
                         account: account,
-                        vaultConfiguration: vaultManager.activeConfiguration,
                         accent: accentColor,
                         onDisconnect: {
                             accountToDisconnect = account
@@ -95,19 +93,10 @@ public struct SettingsConnectedAccountsView: View {
     }
 
     private func disconnectExplanation(for account: GmailAccount) -> String {
-        let s = account.connectionSummary(activeVault: vaultManager.activeConfiguration)
         var lines: [String] = []
         lines.append("You will remove \(account.email) from \(AppearanceSettingsStore.shared.resolvedDisplayName).")
-        lines.append(
-            s.drive
-                ? "Google Drive file access for this account will be removed on this device (the cloud copy is not deleted)."
-                : "This account has not granted the Google Drive scope (used for a Drive-backed vault)."
-        )
-        if s.vaultLinked, let v = s.vaultDetailLine {
-            lines.append("Active vault tied to this account: \(v).")
-        }
         if authManager.accounts.count == 1 {
-            lines.append("This is your only account: signing out clears local vault mirrors on this device per your sign-out settings.")
+            lines.append("This is your only account: signing out clears local app data on this device.")
         }
         return lines.joined(separator: "\n\n")
     }

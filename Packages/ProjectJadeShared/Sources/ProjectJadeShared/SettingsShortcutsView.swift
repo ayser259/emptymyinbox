@@ -18,7 +18,7 @@ public struct SettingsShortcutsView: View {
             #else
             if horizontalSizeClass == .compact {
                 Section {
-                    Text("Keyboard shortcuts are listed for iPad (with an external keyboard) and Mac. On iPhone, use the on-screen controls in each tab.")
+                    Text("Keyboard shortcuts are listed for iPad (with an external keyboard) and Mac. On iPhone, use the on-screen controls.")
                         .foregroundStyle(SharedAppTheme.secondaryText)
                 }
             } else {

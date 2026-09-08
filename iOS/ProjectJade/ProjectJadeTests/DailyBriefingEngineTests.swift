@@ -3,30 +3,58 @@ import Testing
 import ProjectJadeShared
 
 struct DailyBriefingEngineTests {
-    @Test("Daily briefing requires an API key")
-    func testDailyBriefingRequiresAPIKey() async {
-        let hasKey = await LLMProviderRouter.shared.hasSelectedProviderAPIKey()
-        guard !hasKey else { return }
+    @Test("On-device brief can generate without a cloud API key")
+    func testOnDeviceBriefDoesNotRequireCloudKey() async {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        guard settings.briefProvider == .onDevice else { return }
+        guard OnDeviceAIService.isAvailable() else { return }
 
-        let now = ISO8601DateFormatter().string(from: Date())
-        let emails = [
-            EmailListItem(
-                id: 1,
-                gmail_id: "msg-1",
-                subject: "Urgent: security alert",
-                sender: "alerts@example.com",
-                sender_name: "Security",
-                snippet: "Please review immediately",
-                is_read: false,
-                is_starred: false,
-                labels: ["INBOX", "UNREAD"],
-                received_at: now,
-                account_email: "briefing@example.com",
-                marked_read_at: nil
-            )
-        ]
+        let canGenerate = await LLMProviderRouter.shared.canGenerateBrief()
+        #expect(canGenerate == true)
+    }
 
-        let payload = await DailyBriefingEngine.shared.buildPayload(from: emails, sinceDate: nil)
+    @Test("Unavailable on-device brief returns setup guidance")
+    func testOnDeviceUnavailableIntro() async {
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
+        guard capability == .onDeviceUnavailable else { return }
+
+        let payload = await DailyBriefingEngine.shared.buildPayload(from: [], sinceDate: nil)
         #expect(payload.items.isEmpty)
+        #expect(payload.introText.contains("Apple Intelligence"))
+    }
+
+    @Test("Cloud brief without API key returns key setup guidance")
+    func testCloudBriefMissingKeyIntro() async {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        guard settings.briefProvider == .openAI || settings.briefProvider == .claude else { return }
+
+        let capability = await LLMProviderRouter.shared.briefGenerationCapability()
+        guard case .missingAPIKey = capability else { return }
+
+        let payload = await DailyBriefingEngine.shared.buildPayload(from: [], sinceDate: nil)
+        #expect(payload.items.isEmpty)
+        #expect(payload.introText.contains("API key"))
+    }
+}
+
+struct OnDeviceAICapabilityTests {
+    @Test("On-device stories can generate without a cloud API key")
+    func testOnDeviceStoriesCapability() async {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        guard settings.storiesProvider == .onDevice else { return }
+        guard OnDeviceAIService.isAvailable() else { return }
+
+        let canGenerate = await LLMProviderRouter.shared.canGenerateStories()
+        #expect(canGenerate == true)
+    }
+
+    @Test("On-device quick reply can generate without a cloud API key")
+    func testOnDeviceQuickReplyCapability() async {
+        let settings = await LLMSettingsStore.shared.currentSettings()
+        guard settings.quickReplyProvider == .onDevice else { return }
+        guard OnDeviceAIService.isAvailable() else { return }
+
+        let canGenerate = await LLMProviderRouter.shared.canGenerateQuickReply()
+        #expect(canGenerate == true)
     }
 }

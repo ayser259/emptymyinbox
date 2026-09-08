@@ -63,8 +63,6 @@ struct ProjectJadeApp: App {
             .appThemePalette(appearanceSettings.resolvedPalette)
             .background(appearanceSettings.resolvedPalette.primaryBackground)
             .task {
-                await VaultManager.shared.reloadFromPreferences()
-                await VaultManager.shared.detachActiveVaultIfOwnerNotAmongConnectedAccounts()
                 await AppLifecycleCloudSync.performStartupSync()
                 // Clean up old cached emails in background
                 Task.detached(priority: .background) {
